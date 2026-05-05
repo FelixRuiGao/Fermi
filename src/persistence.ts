@@ -38,7 +38,6 @@ import type { MCPServerConfig } from "./config.js";
 // Constants
 // ------------------------------------------------------------------
 
-const GLOBAL_TUI_PREFERENCES_FILE = "tui-preferences.json";
 const SETTINGS_FILE = "settings.json";
 const STATE_DIR = "state";
 const MODEL_SELECTION_FILE = "model-selection.json";
@@ -183,25 +182,6 @@ export class SessionStore {
     );
   }
 
-  private _globalPreferenceBaseDirs(): string[] {
-    const candidates = [
-      this._activeBaseDir,
-      ...this._candidateBaseDirs(),
-    ].filter((v): v is string => typeof v === "string" && v.length > 0);
-    const seen = new Set<string>();
-    const dedup: string[] = [];
-    for (const c of candidates) {
-      if (seen.has(c)) continue;
-      seen.add(c);
-      dedup.push(c);
-    }
-    return dedup;
-  }
-
-  private _globalPreferencesPath(baseDir: string): string {
-    return join(baseDir, GLOBAL_TUI_PREFERENCES_FILE);
-  }
-
   private static _findUniqueSessionDir(projectDir: string): string {
     // UUIDv7 collisions are astronomically unlikely; if it ever happens,
     // we just regenerate.
@@ -323,71 +303,6 @@ export class SessionStore {
 
   predictNextArtifactsDir(): string {
     return join(this.predictNextSessionDir(), "artifacts");
-  }
-
-  loadGlobalPreferences(): GlobalTuiPreferences {
-    for (const baseDir of this._globalPreferenceBaseDirs()) {
-      const path = this._globalPreferencesPath(baseDir);
-      if (!existsSync(path)) continue;
-      try {
-        const raw = JSON.parse(readFileSync(path, "utf-8"));
-        return createGlobalTuiPreferences({
-          version: raw.version ?? 1,
-          modelConfigName: raw.model_config_name ?? undefined,
-          modelProvider: raw.model_provider ?? undefined,
-          modelSelectionKey: raw.model_selection_key ?? undefined,
-          modelId: raw.model_id ?? undefined,
-          thinkingLevel: raw.thinking_level ?? "",
-          accentColor: raw.accent_color ?? undefined,
-          disabledSkills: Array.isArray(raw.disabled_skills) ? raw.disabled_skills : undefined,
-          providerEnvVars: raw.provider_env_vars ?? undefined,
-          localProviders: raw.local_providers ?? undefined,
-          contextBudgetPercent: typeof raw.context_budget_percent === "number" ? raw.context_budget_percent : undefined,
-          permissionMode: raw.permission_mode ?? undefined,
-        });
-      } catch {
-        continue;
-      }
-    }
-    return createGlobalTuiPreferences();
-  }
-
-  saveGlobalPreferences(preferences: GlobalTuiPreferences): void {
-    const payload = createGlobalTuiPreferences(preferences);
-    const errors: string[] = [];
-
-    for (const baseDir of this._globalPreferenceBaseDirs()) {
-      try {
-        mkdirSync(baseDir, { recursive: true });
-        const file = this._globalPreferencesPath(baseDir);
-        const tmp = file + ".tmp";
-        writeFileSync(
-          tmp,
-          JSON.stringify({
-            version: payload.version,
-            model_config_name: payload.modelConfigName ?? null,
-            model_provider: payload.modelProvider ?? null,
-            model_selection_key: payload.modelSelectionKey ?? null,
-            model_id: payload.modelId ?? null,
-            thinking_level: payload.thinkingLevel,
-            accent_color: payload.accentColor ?? null,
-            disabled_skills: payload.disabledSkills ?? null,
-            provider_env_vars: payload.providerEnvVars ?? null,
-            local_providers: payload.localProviders ?? null,
-            context_budget_percent: payload.contextBudgetPercent ?? null,
-            permission_mode: payload.permissionMode ?? null,
-          }, null, 2),
-        );
-        renameSync(tmp, file);
-        this._activeBaseDir = baseDir;
-        return;
-      } catch (exc) {
-        errors.push(`${baseDir}: ${exc}`);
-      }
-    }
-
-    const detail = errors.length > 0 ? errors.join(" | ") : "no writable base directory available";
-    throw new Error(`Unable to save TUI preferences. Tried: ${detail}`);
   }
 
   listSessions(): Array<{ sessionId: string; path: string; created: string; lastActiveAt: string; summary: string; title?: string; turns: number }> {

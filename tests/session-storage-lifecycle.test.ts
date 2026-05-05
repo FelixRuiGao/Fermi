@@ -132,35 +132,6 @@ function countMessageTokens(messages: Array<Record<string, unknown>>): number {
 }
 
 describe("session storage lifecycle", () => {
-  it("round-trips global TUI preferences through SessionStore", () => {
-    const baseDir = makeTempDir("fermi-prefs-base-");
-    const projectRoot = makeTempDir("fermi-prefs-project-");
-    try {
-      const store = new SessionStore({ baseDir, projectPath: projectRoot });
-      store.saveGlobalPreferences({
-        version: 1,
-        modelConfigName: "my-openrouter",
-        modelProvider: "openrouter",
-        modelSelectionKey: "moonshotai/kimi-k2.5",
-        modelId: "moonshotai/kimi-k2.5",
-        thinkingLevel: "high",
-      });
-
-      expect(store.loadGlobalPreferences()).toEqual(
-        expect.objectContaining({
-          modelConfigName: "my-openrouter",
-          modelProvider: "openrouter",
-          modelSelectionKey: "moonshotai/kimi-k2.5",
-          modelId: "moonshotai/kimi-k2.5",
-          thinkingLevel: "high",
-          }),
-      );
-    } finally {
-      rmSync(baseDir, { recursive: true, force: true });
-      rmSync(projectRoot, { recursive: true, force: true });
-    }
-  });
-
   it("constructs with a store that has no active session directory", () => {
     const baseDir = makeTempDir("fermi-lifecycle-base-");
     const projectRoot = makeTempDir("fermi-lifecycle-project-");
