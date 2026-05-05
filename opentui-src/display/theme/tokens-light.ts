@@ -22,6 +22,7 @@ export const LIGHT_TOKENS: DisplayThemeTokens = {
     dim: "#656d76",             // secondary fg — readable but quieter
     muted: "#afb8c1",           // tertiary fg — close to surface
     accent: "#0969da",          // deep saturated blue (brand)
+    accentDim: "#5a7eaf",       // dimmed accent for inactive tabs
     orange: "#bc4c00",
     red: "#cf222e",
     yellow: "#9a6700",          // olive — pure yellow is unreadable on white

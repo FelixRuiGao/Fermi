@@ -379,9 +379,6 @@ export function OpenTuiScreen({
         colors={theme.colors}
       />
 
-      {/* Spacer between tab bar and content */}
-      <box height={1} />
-
       {/* Content area: main column + optional right sidebar */}
       <box flexDirection="row" flexGrow={1} gap={0}>
         {/* Main content column */}

@@ -39,34 +39,33 @@ function TabButton({
 }): React.ReactNode {
   const [hovered, setHovered] = useState(false);
   const label = formatTabLabel(tab, maxWidth);
+  const fg = isActive ? colors.accent : hovered ? colors.accent : colors.accentDim;
+  const totalWidth = Bun.stringWidth(label) + (tab.closeable ? 2 : 0);
+  const indicator = isActive ? "─".repeat(totalWidth) : " ".repeat(totalWidth);
 
   return (
     <box
-      flexDirection="row"
+      flexDirection="column"
       flexShrink={0}
-      backgroundColor={undefined}
-      border={true}
-      borderStyle="rounded"
-      borderColor={isActive ? colors.dim : hovered ? colors.dim : "#3e3a48"}
       onMouseOver={() => setHovered(true)}
       onMouseOut={() => setHovered(false)}
       onMouseDown={(e: any) => { e.stopPropagation(); e.preventDefault(); onSelect(); }}
     >
-      <text
-        fg={isActive ? colors.accent : colors.dim}
-        content={label}
-      />
-      {tab.closeable ? (
-        <box
-          onMouseDown={(e: any) => {
-            e.stopPropagation();
-            e.preventDefault();
-            onClose();
-          }}
-        >
-          <text fg={colors.dim} content="✕ " />
-        </box>
-      ) : null}
+      <box flexDirection="row">
+        <text fg={fg} content={label} />
+        {tab.closeable ? (
+          <box
+            onMouseDown={(e: any) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onClose();
+            }}
+          >
+            <text fg={fg} content="✕ " />
+          </box>
+        ) : null}
+      </box>
+      <text fg={fg} content={indicator} />
     </box>
   );
 }
@@ -79,6 +78,8 @@ function HorizontalTabBarInner({
   colors,
   maxTabWidth = DEFAULT_MAX_TAB_WIDTH,
 }: HorizontalTabBarProps): React.ReactNode {
+  if (tabs.length <= 1) return null;
+
   return (
     <box flexDirection="row" width="100%" gap={1} flexShrink={0}>
       {tabs.map((tab) => (

@@ -14,6 +14,7 @@ export const DARK_TOKENS: DisplayThemeTokens = {
     dim: "#636a76",
     muted: "#454a54",
     accent: "#8ab4f8",
+    accentDim: "#5a7eb0",
     orange: "#fb8500",
     red: "#f85656",
     yellow: "#e8c468",

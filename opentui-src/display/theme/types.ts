@@ -18,6 +18,7 @@ export interface DisplayThemeColorTokens {
   dim: string;
   muted: string;
   accent: string;
+  accentDim: string;
   orange: string;
   red: string;
   yellow: string;
