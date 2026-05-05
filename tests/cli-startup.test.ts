@@ -1,32 +1,233 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { main, type MainDeps } from "../src/cli.js";
+import { VERSION } from "../src/version.js";
+
+let tempHome = "";
+let events: string[] = [];
+let stagedVersion: string | null = null;
+let updateNotice: string | null = null;
+let settings: Record<string, unknown> = {};
+let hasGitHubTokens = true;
+let serverCalls: unknown[] = [];
+
+function writeSettings(next: Record<string, unknown>): void {
+  settings = next;
+  mkdirSync(tempHome, { recursive: true });
+  writeFileSync(join(tempHome, "settings.json"), JSON.stringify(next, null, 2));
+}
+
+function startupDeps(extra: MainDeps = {}): MainDeps {
+  return {
+    homeDir: tempHome,
+    loadDotenv: () => {
+      events.push("dotenv");
+      process.env["FERMI_TEST_KEY"] = "loaded";
+    },
+    loadGlobalSettings: () => settings,
+    applyStaged: () => {
+      events.push("applyStaged");
+      return stagedVersion;
+    },
+    checkForUpdates: () => {
+      events.push("checkForUpdates");
+      return () => {
+        events.push("getUpdateNotice");
+        return updateNotice;
+      };
+    },
+    runInitWizard: async () => {
+      events.push(`init:${process.env["FERMI_TEST_KEY"] ?? "missing"}`);
+      writeSettings({
+        providers: {
+          openai: { api_key_env: "FERMI_TEST_KEY" },
+        },
+        auto_update: true,
+      });
+    },
+    runServerMode: async (opts) => {
+      events.push("server");
+      serverCalls.push(opts);
+    },
+    hasGitHubTokens: () => hasGitHubTokens,
+    ...extra,
+  };
+}
 
 describe("CLI startup", () => {
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "fermi-cli-home-"));
+    events = [];
+    stagedVersion = null;
+    updateNotice = null;
+    settings = {};
+    hasGitHubTokens = true;
+    serverCalls = [];
+    delete process.env["FERMI_RESUME_SESSION_DIR"];
+    delete process.env["FERMI_TEST_KEY"];
+  });
+
   afterEach(() => {
-    mock.restore();
+    rmSync(tempHome, { recursive: true, force: true });
+    delete process.env["FERMI_RESUME_SESSION_DIR"];
     delete process.env["FERMI_TEST_KEY"];
   });
 
   it("loads dotenv before dispatching the init subcommand", async () => {
-    const events: string[] = [];
-
-    mock.module("../src/dotenv.js", () => ({
-      loadDotenv: () => {
-        events.push("dotenv");
-        process.env["FERMI_TEST_KEY"] = "loaded";
-      },
-      setDotenvKey: () => {},
-    }));
-
-    mock.module("../src/init-wizard.js", () => ({
-      runInitWizard: async () => {
-        events.push(`init:${process.env["FERMI_TEST_KEY"] ?? "missing"}`);
-        return { homeDir: "/tmp/fermi-test" };
-      },
-    }));
-
-    const { main } = await import("../src/cli.js");
-    await main(["node", "fermi", "init"]);
+    await main(["node", "fermi", "init"], startupDeps());
 
     expect(events).toEqual(["dotenv", "init:loaded"]);
+  });
+
+  it("runs startup preflight before launching the TUI", async () => {
+    writeSettings({
+      providers: {
+        openai: { api_key_env: "FERMI_TEST_KEY" },
+      },
+      auto_update: true,
+    });
+    stagedVersion = "9.9.9";
+    updateNotice = "Update available";
+
+    await main(["node", "fermi"], startupDeps({
+      launchTui: async () => {
+        events.push("launch");
+      },
+    }));
+
+    expect(events).toEqual([
+      "dotenv",
+      "applyStaged",
+      "checkForUpdates",
+      "getUpdateNotice",
+      "launch",
+    ]);
+  });
+
+  it("runs the init wizard once before launch when no providers are configured", async () => {
+    writeSettings({ auto_update: true });
+
+    await main(["node", "fermi"], startupDeps({
+      launchTui: async () => {
+        events.push("launch");
+      },
+    }));
+
+    expect(events).toEqual([
+      "dotenv",
+      "applyStaged",
+      "checkForUpdates",
+      "init:loaded",
+      "getUpdateNotice",
+      "launch",
+    ]);
+  });
+
+  it("routes server mode before TUI startup preflight", async () => {
+    await main([
+      "node",
+      "fermi",
+      "--server",
+      "--work-dir",
+      "/tmp/fermi-work",
+      "-c",
+      "context_budget_percent=50",
+    ], startupDeps({
+      launchTui: async () => {
+        events.push("launch");
+      },
+    }));
+
+    expect(events).toEqual(["server"]);
+    expect(serverCalls).toEqual([{
+      workDir: "/tmp/fermi-work",
+      sessionId: undefined,
+      selectedModel: undefined,
+      selectedAgent: undefined,
+      templates: undefined,
+      configOverrides: ["context_budget_percent=50"],
+    }]);
+  });
+
+  it("resolves --resume before launching the TUI", async () => {
+    writeSettings({
+      providers: {
+        openai: { api_key_env: "FERMI_TEST_KEY" },
+      },
+      auto_update: false,
+    });
+    const sessionId = "00000000-0000-7000-8000-000000000001";
+    const sessionDir = join(tempHome, "projects", "demo_123456", sessionId);
+
+    await main(["node", "fermi", "--resume", sessionId], startupDeps({
+      findSessionById: (id) => id === sessionId
+        ? {
+            sessionDir,
+            projectDir: join(tempHome, "projects", "demo_123456"),
+            projectPath: process.cwd(),
+            title: "Demo",
+          }
+        : null,
+      launchTui: async () => {
+        events.push(`launch:${process.env["FERMI_RESUME_SESSION_DIR"] ?? "missing"}`);
+      },
+    }));
+
+    expect(events).toEqual([
+      "dotenv",
+      "applyStaged",
+      `launch:${sessionDir}`,
+    ]);
+  });
+
+  it("warns once for configured Copilot without stored GitHub tokens", async () => {
+    writeSettings({
+      providers: {
+        copilot: { api_key_env: "_COPILOT_OAUTH" },
+      },
+      auto_update: false,
+    });
+    hasGitHubTokens = false;
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await main(["node", "fermi"], startupDeps({
+        launchTui: async () => {
+          events.push("launch");
+        },
+      }));
+
+      expect(warnSpy).toHaveBeenCalledWith("Warning: GitHub Copilot credentials missing.");
+      expect(events).toEqual(["dotenv", "applyStaged", "launch"]);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("supports options before subcommands through the unified CLI dispatcher", async () => {
+    await main(["node", "fermi", "--verbose", "init"], startupDeps({
+      launchTui: async () => {
+        events.push("launch");
+      },
+    }));
+
+    expect(events).toEqual(["dotenv", "init:loaded"]);
+  });
+
+  it("keeps -v, -V, and --version working at the compiled entry", () => {
+    for (const flag of ["-v", "-V", "--version"]) {
+      const result = Bun.spawnSync(["bun", "opentui-src/main.tsx", flag], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toBe(`${VERSION}\n`);
+      expect(result.stderr.toString()).toBe("");
+    }
   });
 });

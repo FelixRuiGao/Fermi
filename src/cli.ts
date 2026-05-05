@@ -11,23 +11,14 @@
  *   fermi --verbose             # enable debug logging
  */
 
-import { existsSync, realpathSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 
-import { Config, resolveAssetPaths, getBundledAssetsDir } from "./config.js";
-import { Agent } from "./agents/agent.js";
-import { Session } from "./session.js";
-import { loadTemplates } from "./templates/loader.js";
-import { loadSkillsMulti } from "./skills/loader.js";
 import {
-  SessionStore,
   fixStorage,
   loadGlobalSettings,
-  loadLocalSettings,
-  mergeSettings,
-  loadModelSelectionState,
   parseSettingsOverrides,
   settingsToConfigInputs,
 } from "./persistence.js";
@@ -35,16 +26,40 @@ import { loadDotenv } from "./dotenv.js";
 import { getFermiHomeDir } from "./home-path.js";
 import { checkForUpdates, applyStaged } from "./update-check.js";
 import { VERSION } from "./version.js";
-import {
-  buildDefaultRegistry,
-  registerSkillCommands,
-  reRegisterSkillCommands,
-} from "./commands.js";
-import type { PersistedModelSelection } from "./model-selection.js";
-import { applyPersistedModelSelectionToSession } from "./model-restore.js";
 import { hasAnyManagedCredential } from "./managed-provider-credentials.js";
-import { setAccent } from "./accent.js";
 import { findSessionById } from "./session-resume.js";
+
+export interface MainDeps {
+  launchTui?: () => Promise<void>;
+  homeDir?: string;
+  loadDotenv?: (homeDir?: string) => void;
+  loadGlobalSettings?: typeof loadGlobalSettings;
+  applyStaged?: typeof applyStaged;
+  checkForUpdates?: typeof checkForUpdates;
+  runInitWizard?: () => Promise<unknown>;
+  runServerMode?: (opts: {
+    workDir: string;
+    sessionId?: string;
+    selectedModel?: string;
+    selectedAgent?: string;
+    templates?: string;
+    configOverrides?: readonly string[];
+  }) => Promise<void>;
+  findSessionById?: typeof findSessionById;
+  hasAnyManagedCredential?: typeof hasAnyManagedCredential;
+  hasGitHubTokens?: () => boolean;
+}
+
+const VALUE_FLAGS = new Set([
+  "--resume",
+  "--templates",
+  "--config",
+  "-c",
+  "--work-dir",
+  "--session-id",
+  "--model",
+  "--agent",
+]);
 
 /**
  * Handle `fermi --resume <id>` before Commander parses argv.
@@ -55,7 +70,10 @@ import { findSessionById } from "./session-resume.js";
  * `launchTui()` can call `applySessionRestore` after bootstrap. The flag and
  * its argument are spliced out of argv so Commander never sees them.
  */
-async function maybeHandleResumeFlag(argv: string[]): Promise<void> {
+async function maybeHandleResumeFlag(
+  argv: string[],
+  findSession: typeof findSessionById = findSessionById,
+): Promise<void> {
   const idx = argv.indexOf("--resume");
   if (idx < 0) return;
 
@@ -66,7 +84,7 @@ async function maybeHandleResumeFlag(argv: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const found = findSessionById(id);
+  const found = findSession(id);
   if (!found) {
     console.error(`Error: session not found: ${id}`);
     process.exit(1);
@@ -97,31 +115,6 @@ async function maybeHandleResumeFlag(argv: string[]): Promise<void> {
   argv.splice(idx, 2);
 }
 
-// ------------------------------------------------------------------
-// Primary agent resolution
-// ------------------------------------------------------------------
-
-function identifyPrimaryAgent(
-  agents: Record<string, Agent>,
-  name = "main",
-): Agent {
-  const agent = agents[name];
-  if (agent) return agent;
-
-  // Fallback: first agent alphabetically
-  const names = Object.keys(agents).sort();
-  if (names.length > 0) {
-    const firstName = names[0];
-    console.warn(
-      `Warning: '${name}' agent not found, using '${firstName}' instead.`,
-    );
-    return agents[firstName];
-  }
-
-  console.error("Error: no agent templates found.");
-  process.exit(1);
-}
-
 // Validate -c overrides up front and exit with a friendly message on bad
 // input — `parseSettingsOverrides` throws raw Errors, which bubble up as
 // stack traces if uncaught.
@@ -134,16 +127,95 @@ function parseConfigOverridesOrExit(overrides: readonly string[]) {
   }
 }
 
+function normalizeLegacyVersionAlias(argv: string[]): void {
+  for (let index = 2; index < argv.length; index += 1) {
+    if (argv[index] !== "-v") continue;
+    if (VALUE_FLAGS.has(argv[index - 1] ?? "")) continue;
+    argv[index] = "-V";
+  }
+}
+
+function hasConfiguredProviders(
+  settings: ReturnType<typeof loadGlobalSettings>,
+  hasManagedCredential: typeof hasAnyManagedCredential = hasAnyManagedCredential,
+): boolean {
+  const { providerEnvVars, localProviders } = settingsToConfigInputs(settings);
+  return (
+    Object.keys(providerEnvVars).length > 0
+    || Object.keys(localProviders).length > 0
+    || hasManagedCredential()
+  );
+}
+
+async function ensureProvidersConfigured(
+  homeDir: string,
+  deps: Pick<MainDeps, "loadGlobalSettings" | "runInitWizard" | "hasAnyManagedCredential">,
+): Promise<ReturnType<typeof loadGlobalSettings>> {
+  const loadSettings = deps.loadGlobalSettings ?? loadGlobalSettings;
+  const hasManagedCredential = deps.hasAnyManagedCredential ?? hasAnyManagedCredential;
+  let globalSettings = loadSettings(homeDir);
+  if (hasConfiguredProviders(globalSettings, hasManagedCredential)) return globalSettings;
+
+  console.log("No providers configured. Starting setup wizard...\n");
+  try {
+    const runInitWizard = deps.runInitWizard ?? (await import("./init-wizard.js")).runInitWizard;
+    await runInitWizard();
+  } catch {
+    console.error(
+      "Error: no providers configured.\n" +
+      "  Run 'fermi init' to set up providers.",
+    );
+    process.exit(1);
+  }
+
+  globalSettings = loadSettings(homeDir);
+  if (!hasConfiguredProviders(globalSettings, hasManagedCredential)) {
+    console.error(
+      "Error: no providers configured.\n" +
+      "  Run 'fermi init' to set up providers.",
+    );
+    process.exit(1);
+  }
+  return globalSettings;
+}
+
+async function warnIfCopilotCredentialsMissing(
+  settings: ReturnType<typeof loadGlobalSettings>,
+  hasGitHubTokensOverride?: () => boolean,
+): Promise<void> {
+  const { providerEnvVars } = settingsToConfigInputs(settings);
+  if (!Object.prototype.hasOwnProperty.call(providerEnvVars, "copilot")) return;
+
+  const hasGitHubTokens = hasGitHubTokensOverride
+    ?? (await import("./auth/github-copilot-oauth.js")).hasGitHubTokens;
+  if (!hasGitHubTokens()) {
+    console.warn("Warning: GitHub Copilot credentials missing.");
+    console.warn("Run 'fermi oauth' to log in.\n");
+  }
+}
+
+async function launchTuiFromDefaultEntry(): Promise<void> {
+  // Dynamic path to keep opentui-src out of src/'s rootDir typecheck scope.
+  // At runtime, tsx/bun/node resolves this relative to the current file.
+  const opentuiEntry = "../opentui-src/main.js";
+  const mod = (await import(opentuiEntry)) as { launchTui: () => Promise<void> };
+  await mod.launchTui();
+}
+
 // ------------------------------------------------------------------
 // Main
 // ------------------------------------------------------------------
 
-export async function main(argv: string[] = process.argv): Promise<void> {
+export async function main(argv: string[] = process.argv, deps: MainDeps = {}): Promise<void> {
+  normalizeLegacyVersionAlias(argv);
+
+  const homeDir = deps.homeDir ?? getFermiHomeDir();
+
   // ── --resume <id> short-circuit ──
   // Locate the session globally; if it lives under a different project, ask
   // before chdir'ing. Has to run before Commander parses the rest of argv,
   // so the session-resolved cwd is in effect for everything below.
-  await maybeHandleResumeFlag(argv);
+  await maybeHandleResumeFlag(argv, deps.findSessionById);
 
   // Server mode short-circuit — bypass commander/TUI entirely.
   // The GUI (Electron main process) spawns this with `--server --work-dir <path>`.
@@ -168,7 +240,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     // Validate now so a bad override fails with a clean message instead of
     // surfacing as a fatal stack trace from inside the server bootstrap.
     parseConfigOverridesOrExit(configOverrides);
-    const { runServerMode } = await import("./server/server-mode.js");
+    const runServerMode = deps.runServerMode ?? (await import("./server/server-mode.js")).runServerMode;
     try {
       await runServerMode({ workDir, sessionId, selectedModel, selectedAgent, templates, configOverrides });
     } catch (err) {
@@ -199,7 +271,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description("Initialize Fermi configuration")
     .action(async () => {
       ranSubcommand = true;
-      const { runInitWizard } = await import("./init-wizard.js");
+      const runInitWizard = deps.runInitWizard ?? (await import("./init-wizard.js")).runInitWizard;
       await runInitWizard();
     });
 
@@ -251,7 +323,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
   // Load ~/.fermi/.env before dispatching any subcommand so `init`
   // can detect previously saved keys and offer the expected reuse flow.
-  loadDotenv(getFermiHomeDir());
+  (deps.loadDotenv ?? loadDotenv)(homeDir);
 
   await program.parseAsync(argv);
 
@@ -264,16 +336,19 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     verbose?: boolean;
   }>();
 
+  parseConfigOverridesOrExit(opts.config ?? []);
+
   // Apply staged update from a previous background download
-  const appliedVersion = applyStaged();
+  const appliedVersion = (deps.applyStaged ?? applyStaged)(homeDir);
   if (appliedVersion) {
     console.log(`  Updated to ${appliedVersion}.\n`);
   }
 
   // Start update check in background (non-blocking) if enabled
-  const autoUpdateEnabled = loadGlobalSettings().auto_update !== false;
+  const loadSettings = deps.loadGlobalSettings ?? loadGlobalSettings;
+  const autoUpdateEnabled = loadSettings(homeDir).auto_update !== false;
   const getUpdateNotice = autoUpdateEnabled
-    ? checkForUpdates(VERSION)
+    ? (deps.checkForUpdates ?? checkForUpdates)(VERSION, homeDir)
     : () => null;
 
   // Logging
@@ -282,218 +357,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     console.debug = (...args: unknown[]) => origDebug("[DEBUG]", ...args);
   }
 
-  // Session store (also used for loading preferences)
-  let store: SessionStore;
-  try {
-    store = new SessionStore({ projectPath: process.cwd() });
-  } catch (e) {
-    console.error(
-      `Error: Failed to initialize session storage.\n` +
-      `Reason: ${e}\n` +
-      `Possible causes:\n` +
-      `  - File permission issues`,
-    );
-    process.exit(1);
-  }
-
-  // ── Load settings (global + local merge) ──
-  const homeDir = getFermiHomeDir();
-  let globalSettings = loadGlobalSettings(homeDir);
-  const localSettings = loadLocalSettings(process.cwd(), store.projectDir);
-  let settings = mergeSettings(globalSettings, localSettings);
-  settings = mergeSettings(settings, parseConfigOverridesOrExit(opts.config ?? []));
-
-  // If no providers configured, run initialization wizard
-  const { providerEnvVars, localProviders, mcpServers } = settingsToConfigInputs(settings);
-  let hasProviders =
-    Object.keys(providerEnvVars).length > 0
-    || Object.keys(localProviders).length > 0
-    || hasAnyManagedCredential();
-
-  if (!hasProviders) {
-    console.log("No providers configured. Starting setup wizard...\n");
-    try {
-      const { runInitWizard } = await import("./init-wizard.js");
-      await runInitWizard();
-      // Re-load settings after wizard completes
-      globalSettings = loadGlobalSettings(homeDir);
-      settings = mergeSettings(globalSettings, localSettings);
-      settings = mergeSettings(settings, parseConfigOverridesOrExit(opts.config ?? []));
-    } catch {
-      console.error(
-        "Error: no providers configured.\n" +
-        "  Run 'fermi init' to set up providers.",
-      );
-      process.exit(1);
-    }
-  }
-
-  // Resolve asset paths: templates, prompts, skills
-  const paths = resolveAssetPaths({
-    templatesFlag: opts.templates,
-    projectPath: process.cwd(),
-  });
-
-  // ── Build Config from settings ──
-  const configInputs = settingsToConfigInputs(settings);
-  const config = new Config({
-    providerEnvVars: configInputs.providerEnvVars,
-    localProviders: configInputs.localProviders,
-    mcpServers: configInputs.mcpServers,
-    modelTiers: settings.model_tiers,
-    agentModels: settings.agent_models,
-    subAgentInheritMcp: settings.sub_agent_inherit_mcp,
-    subAgentInheritHooks: settings.sub_agent_inherit_hooks,
-  });
-
-  // Refresh OAuth tokens if any model uses them (before building providers)
-  const oauthEntries = config.listModelEntries().filter(
-    (e) => e.apiKeyRaw === "oauth:openai-codex",
-  );
-  if (oauthEntries.length > 0) {
-    try {
-      const { ensureFreshToken } = await import("./auth/openai-oauth.js");
-      await ensureFreshToken();
-    } catch (err) {
-      console.warn(
-        `Warning: OAuth token refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      console.warn("Run 'fermi oauth' to re-authenticate.\n");
-    }
-  }
-
-  // Startup credentials check for any model using GitHub Copilot OAuth.
-  const copilotEntries = config.listModelEntries().filter(
-    (e) => e.apiKeyRaw === "oauth:copilot",
-  );
-  if (copilotEntries.length > 0) {
-    const { hasGitHubTokens } = await import(
-      "./auth/github-copilot-oauth.js"
-    );
-    if (!hasGitHubTokens()) {
-      console.warn("Warning: GitHub Copilot credentials missing.");
-      console.warn("Run 'fermi oauth' to log in.\n");
-    }
-  }
-
-  // Initialise MCP client manager
-  let mcpManager: unknown = null;
-  if (config.mcpServerConfigs.length > 0) {
-    try {
-      const { MCPClientManager } = await import("./mcp-client.js");
-      mcpManager = new MCPClientManager(config.mcpServerConfigs);
-    } catch {
-      console.warn(
-        "Warning: MCP servers configured but MCP client module not available. " +
-          "Install with: npm install @modelcontextprotocol/sdk",
-      );
-    }
-  }
-
-  // Bundled assets (always available from the installed package)
-  const bundledDir = getBundledAssetsDir();
-  const bundledTemplates = join(bundledDir, "agent_templates");
-  const bundledPrompts = join(bundledDir, "prompts");
-
-  // Build ordered prompts dirs: user override first, bundled second
-  const promptsDirs: string[] = [];
-  if (paths.promptsPath) promptsDirs.push(paths.promptsPath);
-  promptsDirs.push(bundledPrompts);
-
-  // Load agent templates (bundled + user-global + project-local, with layered prompt assembly)
-  const agents = loadTemplates(
-    bundledTemplates,
-    config,
-    mcpManager as any,
-    promptsDirs,
-    paths.templatesPath ?? undefined,
-    paths.projectTemplatesPath ?? undefined,
-  );
-  const primary = identifyPrimaryAgent(agents);
-
-  // Load skills (four-layer: bundled > global > project > workspace)
-  const bundledSkills = join(bundledDir, "skills");
-  const skillRoots: string[] = [];
-  if (existsSync(bundledSkills) && statSync(bundledSkills).isDirectory()) {
-    skillRoots.push(bundledSkills);
-  }
-  skillRoots.push(...paths.skillRoots);
-  const skills = loadSkillsMulti(skillRoots);
-
-  // ── Load hooks (four-layer: global > project > workspace) ──
-  let hooksLoaded: import("./hooks/index.js").HookManifest[] = [];
-  try {
-    const { loadHooksMulti } = await import("./hooks/index.js");
-    hooksLoaded = loadHooksMulti(paths.hookRoots);
-  } catch { /* hooks module optional */ }
-
-  // ── Build Session ──
-  const contextBudgetPercent = settings.context_budget_percent ?? 100;
-  const session = new Session({
-    primaryAgent: primary as never,
-    config,
-    agentTemplates: agents as never,
-    skills: skills as never,
-    skillRoots,
-    progress: undefined,
-    mcpManager: mcpManager as never,
-    promptsDirs,
-    store: store as never,
-    contextBudgetPercent,
-  });
-
-  // ── Register hooks with session ──
-  if (hooksLoaded.length > 0) {
-    session.hookRuntime.setHooks(hooksLoaded);
-  }
-
-  // ── Restore model selection ──
-  const modelState = loadModelSelectionState(homeDir);
-  const effectiveModelConfigName = settings.default_model ?? modelState.config_name;
-  try {
-    if (effectiveModelConfigName) {
-      applyPersistedModelSelectionToSession(
-        session,
-        {
-          modelConfigName: effectiveModelConfigName,
-          modelProvider: modelState.provider,
-          modelSelectionKey: modelState.selection_key,
-          modelId: modelState.model_id,
-        } satisfies PersistedModelSelection,
-      );
-    }
-  } catch (err) {
-    console.warn(
-      `Warning: failed to restore saved model preference: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  // ── Apply settings to session ──
-  session.applySettings(settings, modelState);
-  if (settings.accent_color) {
-    setAccent(settings.accent_color);
-  }
-
-  // Commands
-  const commandRegistry = buildDefaultRegistry();
-  registerSkillCommands(commandRegistry, session.skills);
+  const globalSettings = await ensureProvidersConfigured(homeDir, deps);
+  await warnIfCopilotCredentialsMissing(globalSettings, deps.hasGitHubTokens);
 
   // Show update notice (if background check found a newer version)
   const updateNotice = getUpdateNotice();
   if (updateNotice) console.log(`  ${updateNotice}\n`);
 
-  // Launch TUI (OpenTUI-based). The OpenTUI entry point performs its own
-  // runtime bootstrap via `bootstrapOpenTuiRuntime()`; the session/registry
-  // prepared above is kept to honor CLI-level side effects such as the init
-  // wizard, OAuth token refresh, and accent restoration.
-  void session;
-  void commandRegistry;
-  void store;
-  // Dynamic path to keep opentui-src out of src/'s rootDir typecheck scope.
-  // At runtime, tsx/bun/node resolves this relative to the current file.
-  const opentuiEntry = "../opentui-src/main.js";
-  const mod = (await import(opentuiEntry)) as { launchTui: () => Promise<void> };
-  await mod.launchTui();
+  await (deps.launchTui ?? launchTuiFromDefaultEntry)();
 }
 
 function normalizeEntryPath(pathValue: string | undefined): string | null {

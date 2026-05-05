@@ -366,43 +366,22 @@ function isDirectEntry(): boolean {
   }
 }
 
-// Subcommands handled by the Commander-based CLI in src/cli.ts.
-// The compiled binary uses main.tsx as its entry, so we route these
-// argv prefixes through cli.ts which knows the full command surface
-// (init, oauth, fix, update, --help, etc.). Bare `fermi` (no args, or
-// only options like --verbose / -c) goes straight to launchTui below.
-const CLI_SUBCOMMANDS = new Set([
-  "init",
-  "oauth",
-  "fix",
-  "update",
-  "--help",
-  "-h",
-  "help",
-]);
+export async function runDirectEntry(
+  argv: string[] = process.argv,
+  launcher: () => Promise<void> = launchTui,
+): Promise<void> {
+  const { main } = await import("../src/cli.js");
+  await main(argv, { launchTui: launcher });
+}
 
 if (isDirectEntry()) {
-  const firstArg = process.argv[2];
-  if (firstArg === "--version" || firstArg === "-v") {
-    void import("../src/version.js").then(({ VERSION }) => {
-      process.stdout.write(`${VERSION}\n`);
-      process.exit(0);
-    });
-  } else if (firstArg && CLI_SUBCOMMANDS.has(firstArg)) {
-    void import("../src/cli.js")
-      .then(({ main }) => main())
-      .then(() => process.exit(0))
-      .catch((err) => {
-        console.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
-      });
-  } else {
-    launchTui().catch((err) => {
+  runDirectEntry()
+    .then(() => process.exit(0))
+    .catch((err) => {
       writeFermiOpenTuiDiag("main.catch", {
         error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
       });
       console.error("Fatal OpenTUI error:", err);
       process.exit(1);
     });
-  }
 }

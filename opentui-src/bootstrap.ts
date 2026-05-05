@@ -145,6 +145,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     mcpManager as never,
     promptsDirs,
     paths.templatesPath ?? undefined,
+    paths.projectTemplatesPath ?? undefined,
   );
   const primary = identifyPrimaryAgent(agents);
 
@@ -172,6 +173,15 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     contextBudgetPercent,
     projectRoot: projectPath,
   });
+
+  // ── Hooks (global > project > workspace) ──
+  try {
+    const { loadHooksMulti } = await import("../src/hooks/index.js");
+    const hooksLoaded = loadHooksMulti(paths.hookRoots);
+    if (hooksLoaded.length > 0) {
+      session.hookRuntime.setHooks(hooksLoaded);
+    }
+  } catch { /* hooks module optional */ }
 
   // ── Restore model selection ──
   // Priority: settings.default_model > state/model-selection.json
