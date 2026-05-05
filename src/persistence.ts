@@ -1453,6 +1453,7 @@ export function saveSettings(settings: FermiSettings, filePath: string): void {
   if (settings.providers !== undefined) clean.providers = settings.providers;
   if (settings.accent_color !== undefined) clean.accent_color = settings.accent_color;
   if (settings.theme_mode !== undefined) clean.theme_mode = settings.theme_mode;
+  if (settings.permission_mode !== undefined) clean.permission_mode = settings.permission_mode;
   if (settings.disabled_skills !== undefined) clean.disabled_skills = settings.disabled_skills;
   if (settings.mcp_servers !== undefined) clean.mcp_servers = settings.mcp_servers;
   if (settings.agent_models !== undefined) clean.agent_models = settings.agent_models;
@@ -1461,6 +1462,12 @@ export function saveSettings(settings: FermiSettings, filePath: string): void {
   if (settings.auto_update !== undefined) clean.auto_update = settings.auto_update;
   writeFileSync(tmp, JSON.stringify(clean, null, 2));
   renameSync(tmp, filePath);
+}
+
+/** Merge a partial update into the global settings.json file. */
+export function saveGlobalSettingsPatch(patch: Partial<FermiSettings>, homeDir?: string): void {
+  const existing = loadGlobalSettings(homeDir);
+  saveSettings({ ...existing, ...patch }, globalSettingsPath(homeDir));
 }
 
 /** Get the global settings.json path. */

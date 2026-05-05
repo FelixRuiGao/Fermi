@@ -13,7 +13,7 @@
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, ModelTierEntry } from "./persistence.js";
-import { randomSessionId, saveModelSelectionState, saveSettings, globalSettingsPath, loadGlobalSettings } from "./persistence.js";
+import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch } from "./persistence.js";
 import { applySessionRestore, findSessionById } from "./session-resume.js";
 import { setDotenvKey } from "./dotenv.js";
 import { fetchModelsFromServer } from "./model-discovery.js";
@@ -553,8 +553,7 @@ function persistModelSelection(ctx: CommandContext): void {
  */
 function persistSettingsPatch(patch: Partial<FermiSettings>, homeDir?: string): void {
   try {
-    const existing = loadGlobalSettings(homeDir);
-    saveSettings({ ...existing, ...patch }, globalSettingsPath(homeDir));
+    saveGlobalSettingsPatch(patch, homeDir);
   } catch {
     // Ignore persistence failures during command execution.
   }
@@ -2105,13 +2104,9 @@ async function cmdPermission(ctx: CommandContext, args: string): Promise<void> {
 
 function persistPermissionMode(ctx: CommandContext): void {
   try {
-    if (!ctx.store) return;
     const session = ctx.session;
-    const prefs = typeof session.getGlobalPreferences === "function"
-      ? session.getGlobalPreferences()
-      : undefined;
-    if (!prefs) return;
-    ctx.store.saveGlobalPreferences(prefs);
+    if (typeof session.permissionMode !== "string") return;
+    persistSettingsPatch({ permission_mode: session.permissionMode }, ctx.fermiHomeDir);
   } catch {
     // Ignore persistence failures.
   }

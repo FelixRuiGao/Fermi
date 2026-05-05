@@ -11,7 +11,7 @@ import type {
 } from "../src/ui/contracts.js";
 import type { SessionStore } from "../src/persistence.js";
 import type { ChildSessionSnapshot } from "../src/session-tree-types.js";
-import { saveLog } from "../src/persistence.js";
+import { saveGlobalSettingsPatch, saveLog } from "../src/persistence.js";
 import { projectQueuedInputs } from "../src/log-projection.js";
 import { isCommandExitSignal } from "../src/commands.js";
 import { ProgressReporter, type ProgressEvent } from "../src/progress.js";
@@ -628,13 +628,11 @@ export function OpenTuiApp({
     const next = modes[(idx + 1) % modes.length];
     session.permissionMode = next;
     setPermissionModeState(next);
-    if (store && typeof session.getGlobalPreferences === "function") {
-      try {
-        store.saveGlobalPreferences(session.getGlobalPreferences());
-      } catch { /* ignore */ }
-    }
+    try {
+      saveGlobalSettingsPatch({ permission_mode: next });
+    } catch { /* ignore */ }
     autoSave();
-  }, [autoSave, session, store]);
+  }, [autoSave, session]);
 
   const getAskQuestions = useCallback((): AgentQuestionItem[] => {
     if (!pendingAsk || pendingAsk.kind !== "agent_question") return [];
