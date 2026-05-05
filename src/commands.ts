@@ -13,7 +13,7 @@
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, ModelTierEntry } from "./persistence.js";
-import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch } from "./persistence.js";
+import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch, loadGlobalSettings } from "./persistence.js";
 import { applySessionRestore, findSessionById } from "./session-resume.js";
 import { setDotenvKey } from "./dotenv.js";
 import { fetchModelsFromServer } from "./model-discovery.js";
@@ -88,6 +88,9 @@ export interface CommandContext {
 
   /** Reset TUI state (cancel workers, clear spinners, etc.). */
   resetUiState: () => void;
+
+  /** Replace the active UI runtime with a freshly bootstrapped session. */
+  restartRuntimeForNewSession?: () => Promise<void>;
 
   /** The command registry itself, so /help can enumerate commands. */
   commandRegistry: CommandRegistry;
@@ -269,6 +272,11 @@ async function cmdHelp(ctx: CommandContext, _args: string): Promise<void> {
 }
 
 async function cmdNew(ctx: CommandContext, _args: string): Promise<void> {
+  if (ctx.restartRuntimeForNewSession) {
+    await ctx.restartRuntimeForNewSession();
+    return;
+  }
+
   ctx.autoSave();
 
   // Clear session dir — a new directory will be created lazily on first save.

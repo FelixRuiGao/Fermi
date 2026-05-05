@@ -31,19 +31,33 @@ describe("slash command chain", () => {
     expect(rendered).not.toContain("Alt+Enter");
   });
 
-  it("/summarize delegates to the manual summarize callback with raw args", async () => {
+  it("/summarize delegates selected context to the manual summarize callback", async () => {
     const registry = buildDefaultRegistry();
     const cmd = registry.lookup("/summarize");
     expect(cmd).toBeTruthy();
 
     const onManualSummarizeRequested = mock();
+    const promptSelect = mock(async () => "0");
+    const promptSecret = mock(async () => "focus on old tool output");
     const ctx: CommandContext = {
       ...baseContext(registry),
+      session: {
+        getSummarizeTargets: () => [
+          { kind: "summary", turnIndex: 1, preview: "old output", timestamp: 1, contextId: "ctx-1" },
+        ],
+      },
       onManualSummarizeRequested,
+      promptSelect,
+      promptSecret,
     };
 
-    await cmd!.handler(ctx, "focus on old tool output");
-    expect(onManualSummarizeRequested).toHaveBeenCalledWith("focus on old tool output");
+    await cmd!.handler(ctx, "");
+
+    expect(promptSelect).toHaveBeenCalledTimes(2);
+    expect(onManualSummarizeRequested).toHaveBeenCalledWith({
+      targetContextIds: ["ctx-1"],
+      focusPrompt: "focus on old tool output",
+    });
   });
 
   it("/compact delegates to the manual compact callback with raw args", async () => {
@@ -61,7 +75,36 @@ describe("slash command chain", () => {
     expect(onManualCompactRequested).toHaveBeenCalledWith("preserve deployment notes");
   });
 
-  it("/new resets state and rebinds store", async () => {
+  it("/new delegates to runtime restart when available", async () => {
+    const registry = buildDefaultRegistry();
+    const cmd = registry.lookup("/new");
+    expect(cmd).toBeTruthy();
+
+    const restartRuntimeForNewSession = mock(async () => {});
+    const session = {
+      resetForNewSession: mock(),
+    };
+    const store = {
+      clearSession: mock(),
+    };
+
+    const ctx: CommandContext = {
+      ...baseContext(registry),
+      session,
+      store: store as unknown as CommandContext["store"],
+      restartRuntimeForNewSession,
+    };
+
+    await cmd!.handler(ctx, "");
+
+    expect(restartRuntimeForNewSession).toHaveBeenCalledTimes(1);
+    expect(ctx.autoSave as ReturnType<typeof mock>).not.toHaveBeenCalled();
+    expect(store.clearSession).not.toHaveBeenCalled();
+    expect(session.resetForNewSession).not.toHaveBeenCalled();
+    expect(ctx.resetUiState as ReturnType<typeof mock>).not.toHaveBeenCalled();
+  });
+
+  it("/new falls back to in-place reset when runtime restart is unavailable", async () => {
     const registry = buildDefaultRegistry();
     const cmd = registry.lookup("/new");
     expect(cmd).toBeTruthy();

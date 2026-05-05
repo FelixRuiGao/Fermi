@@ -10,6 +10,7 @@ import {
   resetFermiOpenTuiDiagLog,
   writeFermiOpenTuiDiag,
 } from "./forked/core/lib/diagnostic.js";
+import type { OpenTuiRuntime } from "./bootstrap.js";
 
 interface ParsedArgs {
   templates?: string;
@@ -17,7 +18,7 @@ interface ParsedArgs {
   verbose: boolean;
 }
 
-const SESSION_CLOSE_TIMEOUT_MS = 150;
+const SESSION_CLOSE_TIMEOUT_MS = 4000;
 
 async function prewarmCompiledOpenTuiCore(): Promise<void> {
   if (!fileURLToPath(import.meta.url).includes("$bunfs")) return;
@@ -91,7 +92,7 @@ export async function launchTui(): Promise<void> {
   const { createRoot } = await import("@opentui/react");
   const { bootstrapOpenTuiRuntime } = await import("./bootstrap.js");
   const { OpenTuiApp } = await import("./app.js");
-  const { parseSettingsOverrides } = await import("../src/persistence.js");
+  const { parseSettingsOverrides, saveLog } = await import("../src/persistence.js");
 
   process.env.OPENTUI_FORCE_EXPLICIT_WIDTH = "false";
   const args = parseArgs(process.argv.slice(2));
@@ -112,7 +113,7 @@ export async function launchTui(): Promise<void> {
       markdownPatchDisabled: isFermiMarkdownPatchDisabled(),
     });
   }
-  const runtime = await bootstrapOpenTuiRuntime(args);
+  let runtime = await bootstrapOpenTuiRuntime(args);
 
   // If `fermi --resume <id>` set this in cli.ts, restore the session log
   // into the freshly bootstrapped runtime before the TUI renders.
@@ -150,6 +151,8 @@ export async function launchTui(): Promise<void> {
   // never paint contents in an unresolved state.
   const { resolveThemeMode } = await import("./resolve-theme-mode.js");
   const resolved = await resolveThemeMode(renderer, runtime.themeModePref);
+  let currentThemeMode = resolved.mode;
+  let currentThemeModePref = resolved.pref;
   writeFermiOpenTuiDiag("main.theme", {
     pref: resolved.pref,
     mode: resolved.mode,
@@ -188,6 +191,98 @@ export async function launchTui(): Promise<void> {
 
   process.on("uncaughtException", handleFatal);
   process.on("unhandledRejection", handleFatal);
+
+  let runtimeEpoch = 0;
+  let restartingRuntime = false;
+
+  const formatError = (err: unknown): string => {
+    return err instanceof Error ? err.message : String(err);
+  };
+
+  const saveRuntimeIfNeeded = (target: OpenTuiRuntime): void => {
+    const sessionDir = target.store.sessionDir;
+    if (!sessionDir || typeof target.session.getLogForPersistence !== "function") return;
+    try {
+      const { meta, entries } = target.session.getLogForPersistence();
+      if (meta.turnCount === 0) return;
+      saveLog(sessionDir, meta, [...entries]);
+    } catch (err) {
+      writeFermiOpenTuiDiag("main.new.save_failed", { error: formatError(err) });
+    }
+  };
+
+  const closeRuntimeForRestart = async (target: OpenTuiRuntime): Promise<void> => {
+    const closePromise = target.session.close();
+    const timed = await Promise.race([
+      closePromise.then(() => "closed" as const),
+      new Promise<"timeout">((resolve) => {
+        setTimeout(() => resolve("timeout"), SESSION_CLOSE_TIMEOUT_MS);
+      }),
+    ]).catch((err) => {
+      writeFermiOpenTuiDiag("main.new.close_failed", { error: formatError(err) });
+      return "failed" as const;
+    });
+
+    if (timed === "timeout") {
+      writeFermiOpenTuiDiag("main.new.close_timeout", {
+        timeoutMs: SESSION_CLOSE_TIMEOUT_MS,
+      });
+      closePromise.catch((err) => {
+        writeFermiOpenTuiDiag("main.new.close_late_failed", { error: formatError(err) });
+      });
+    }
+  };
+
+  const renderRuntime = () => {
+    root.render(
+      React.createElement(OpenTuiApp, {
+        key: `runtime-${runtimeEpoch}`,
+        session: runtime.session,
+        commandRegistry: runtime.commandRegistry,
+        store: runtime.store,
+        verbose: runtime.verbose,
+        onExit: exit,
+        onNewSession: restartRuntime,
+        themeMode: currentThemeMode,
+        themeModePref: currentThemeModePref,
+      }),
+    );
+  };
+
+  const restartRuntime = async () => {
+    if (restartingRuntime) return;
+    restartingRuntime = true;
+    const previousRuntime = runtime;
+    writeFermiOpenTuiDiag("main.new.start", { epoch: runtimeEpoch });
+
+    try {
+      saveRuntimeIfNeeded(previousRuntime);
+      await closeRuntimeForRestart(previousRuntime);
+      saveRuntimeIfNeeded(previousRuntime);
+
+      const nextRuntime = await bootstrapOpenTuiRuntime(args);
+      const nextTheme = await resolveThemeMode(renderer, nextRuntime.themeModePref);
+      runtime = nextRuntime;
+      currentThemeMode = nextTheme.mode;
+      currentThemeModePref = nextTheme.pref;
+      runtimeEpoch += 1;
+      writeFermiOpenTuiDiag("main.new.done", {
+        epoch: runtimeEpoch,
+        themePref: nextTheme.pref,
+        themeMode: nextTheme.mode,
+      });
+      renderRuntime();
+    } catch (err) {
+      const message = formatError(err);
+      writeFermiOpenTuiDiag("main.new.failed", { error: message });
+      previousRuntime.session.appendErrorMessage?.(
+        `Failed to start a new session: ${message}`,
+        "command",
+      );
+    } finally {
+      restartingRuntime = false;
+    }
+  };
 
   const exit = async (farewell?: string) => {
     if (exiting) return;
@@ -234,17 +329,7 @@ export async function launchTui(): Promise<void> {
     process.exit(0);
   };
 
-  root.render(
-    React.createElement(OpenTuiApp, {
-      session: runtime.session,
-      commandRegistry: runtime.commandRegistry,
-      store: runtime.store,
-      verbose: runtime.verbose,
-      onExit: exit,
-      themeMode: resolved.mode,
-      themeModePref: resolved.pref,
-    }),
-  );
+  renderRuntime();
 
   await new Promise<void>((resolve) => {
     renderer.once("destroy", () => resolve());

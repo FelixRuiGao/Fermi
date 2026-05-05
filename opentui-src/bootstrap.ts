@@ -57,13 +57,16 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   templates?: string;
   configOverrides?: readonly string[];
   verbose?: boolean;
+  homeDir?: string;
+  projectPath?: string;
+  initHighlighter?: boolean;
 }): Promise<OpenTuiRuntime> {
-  const homeDir = getFermiHomeDir();
+  const homeDir = opts?.homeDir ?? getFermiHomeDir();
   loadDotenv(homeDir);
 
   const verbose = opts?.verbose ?? false;
-  const projectPath = process.cwd();
-  const store = new SessionStore({ projectPath });
+  const projectPath = opts?.projectPath ?? process.cwd();
+  const store = new SessionStore({ projectPath, baseDir: homeDir });
 
   // ── Load settings (global + local merge) ──
   const globalSettings = loadGlobalSettings(homeDir);
@@ -87,6 +90,8 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   // ── Build Config ──
   const paths = resolveAssetPaths({
     templatesFlag: opts?.templates,
+    projectPath,
+    homeDir,
   });
   const config = new Config({
     providerEnvVars,
@@ -165,6 +170,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     promptsDirs,
     store: store as never,
     contextBudgetPercent,
+    projectRoot: projectPath,
   });
 
   // ── Restore model selection ──
@@ -196,19 +202,21 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   }
 
   // ── Shiki syntax highlighter (disable with FERMI_SHIKI=0) ──
-  if (process.env.FERMI_SHIKI !== "0") {
-    import("./forked/shiki-highlighter.js").then(async ({ initShikiHighlighter }) => {
-      await initShikiHighlighter();
-    }).catch(() => {
-      // Shiki unavailable — silently fall back to hljs.
+  if (opts?.initHighlighter !== false) {
+    if (process.env.FERMI_SHIKI !== "0") {
+      import("./forked/shiki-highlighter.js").then(async ({ initShikiHighlighter }) => {
+        await initShikiHighlighter();
+      }).catch(() => {
+        // Shiki unavailable — silently fall back to hljs.
+        import("./forked/patch-opentui-markdown.js").then(({ setUseShikiHighlighter }) => {
+          setUseShikiHighlighter(false);
+        });
+      });
+    } else {
       import("./forked/patch-opentui-markdown.js").then(({ setUseShikiHighlighter }) => {
         setUseShikiHighlighter(false);
       });
-    });
-  } else {
-    import("./forked/patch-opentui-markdown.js").then(({ setUseShikiHighlighter }) => {
-      setUseShikiHighlighter(false);
-    });
+    }
   }
 
   const commandRegistry = buildDefaultRegistry();

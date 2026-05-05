@@ -528,8 +528,9 @@ export interface ResolvedPaths {
 export function resolveAssetPaths(opts?: {
   templatesFlag?: string;
   projectPath?: string;
+  homeDir?: string;
 }): ResolvedPaths {
-  const home = getFermiHomeDir();
+  const home = opts?.homeDir ?? getFermiHomeDir();
   const projectPath = opts?.projectPath ?? process.cwd();
 
   // Compute project hash dir: ~/.fermi/projects/<name>_<hash>/

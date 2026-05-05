@@ -129,6 +129,7 @@ export interface OpenTuiAppProps {
   store: SessionStore | null;
   verbose?: boolean;
   onExit: (farewell?: string) => Promise<void> | void;
+  onNewSession?: () => Promise<void>;
   /** Resolved theme mode. Required: there is no canonical default theme. */
   themeMode: ThemeMode;
   /** User's theme preference. "auto" means follow live terminal theme_mode events. */
@@ -238,6 +239,7 @@ export function OpenTuiApp({
   store,
   verbose = false,
   onExit,
+  onNewSession,
   themeMode: initialThemeMode,
   themeModePref: initialThemeModePref,
 }: OpenTuiAppProps): React.ReactNode {
@@ -1409,6 +1411,7 @@ export function OpenTuiApp({
         setPendingAsk(null);
         setAskError(null);
       },
+      restartRuntimeForNewSession: onNewSession,
       exit: performExit,
       onTurnRequested: (content: string) => {
         void handleSubmit(content);
@@ -1469,7 +1472,7 @@ export function OpenTuiApp({
       },
       requestOAuthLogin,
     };
-  }, [session, store, commandRegistry, autoSave, performExit, resolvePromptSecret, resolvePromptSelect, requestOAuthLogin, pickerMaxVisible, updateContextTokenState]);
+  }, [session, store, commandRegistry, autoSave, performExit, onNewSession, resolvePromptSecret, resolvePromptSelect, requestOAuthLogin, pickerMaxVisible, updateContextTokenState]);
 
   const runTurn = useCallback(async (input: string, inlineImages?: InlineImageInput[]) => {
     const controller = new AbortController();
@@ -1557,7 +1560,7 @@ export function OpenTuiApp({
   // Commands that run regardless of streaming state. /copy is here so its
   // "wait until the agent finishes" hint actually fires (otherwise the
   // default path would queue "/copy" as a user message to the LLM).
-  const UI_ONLY_COMMANDS = new Set(["/agents", "/raw", "/sidebar", "/copy"]);
+  const UI_ONLY_COMMANDS = new Set(["/agents", "/raw", "/sidebar", "/copy", "/new"]);
 
   const handleSubmit = useCallback(async (submittedValue: string) => {
     const input = submittedValue.trim();
@@ -1573,7 +1576,12 @@ export function OpenTuiApp({
       const command = commandRegistry.lookup(cmdToken);
       if (command) {
         const args = input.slice(cmdToken.length).trim();
-        try { await command.handler(buildCommandContext(), args); } catch { /* ignore */ }
+        try {
+          await command.handler(buildCommandContext(), args);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          session.appendErrorMessage?.(`Command failed (${cmdToken}): ${message}`, "command");
+        }
       }
       return;
     }
