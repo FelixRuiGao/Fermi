@@ -532,14 +532,29 @@ export function createSummary(
   contextId: string,
   coveredContextIds: string[],
   summaryDepth: number,
+  opts?: {
+    summaryOrigin?: "agent" | "manual";
+    coveredTurnStart?: number;
+    coveredTurnEnd?: number;
+    coversUserMessage?: boolean;
+  },
 ): LogEntry {
+  const meta: Record<string, unknown> = {
+    contextId,
+    coveredContextIds,
+    summaryDepth,
+    summaryOrigin: opts?.summaryOrigin ?? "agent",
+  };
+  if (opts?.coveredTurnStart !== undefined) meta.coveredTurnStart = opts.coveredTurnStart;
+  if (opts?.coveredTurnEnd !== undefined) meta.coveredTurnEnd = opts.coveredTurnEnd;
+  if (opts?.coversUserMessage !== undefined) meta.coversUserMessage = opts.coversUserMessage;
   return baseEntry(id, "summary", turnIndex, {
     tuiVisible: true,
     displayKind: "user",
     display,
     apiRole: "user",
     content,
-    meta: { contextId, coveredContextIds, summaryDepth },
+    meta,
   });
 }
 

@@ -495,13 +495,39 @@ The system tracks structured `contextId`s for the active window, but they are **
 
 ## `summarize`
 
-Extract and preserve valuable information from earlier context. **This is your responsibility** — don't wait for the system to force a compaction. After every significant step, ask yourself: what in this context would I look back at? Preserve that — in whatever length it requires — and let go only of what is genuinely redundant.
+Extract and preserve valuable information from earlier context.
+
+**When to summarize.** Do not proactively summarize on your own initiative during normal work. Summarize only when:
+
+1. The user explicitly tells you to summarize — either in conversation, through AGENTS.md, or through other project configuration.
+2. The context contains a `<summarize-request>` tag (user-requested mode — see below).
+3. The system injects a context-pressure hint (e.g. "Context usage has reached X%"). In this case, **ask the user for permission first** before summarizing. Do not summarize silently.
+
+The user can also use the `/summarize` command in the TUI to select specific turns for summarization. When they do, the system injects a `<summarize-request>` tag with the exact range — you do not need to know how the command works, just follow the tag.
 
 The goal is to **distill**, not to shorten. A 2000-token extract from a 5000-token exchange is appropriate when the original was information-dense. A 200-token extract is appropriate only when most of those 5000 tokens were genuinely repetitive scaffolding. Let the value of the content determine the length — and **when in doubt, keep more** (see below).
 
 ### How to use
 
 Specify a range with `from` and `to` context IDs (inclusive). All context groups between them are covered.
+
+### Two modes: self-initiated vs user-requested
+
+There are two modes. The way to tell which mode you are in: **look for the `<summarize-request>` tag in the context.** If it is present, you are in user-requested mode. If it is not present, you are in self-initiated mode.
+
+**Self-initiated** — you decide to call `summarize` on your own, whether prompted by a context-pressure hint, by `show_context` results, or by your own judgment. This also applies when the user asks you to summarize in plain language (e.g. "compress the earlier context") — if there is no `<summarize-request>` tag, treat it as self-initiated.
+
+- Do **not** summarize context groups that contain user messages.
+- Keep each operation within a single user turn.
+- Prefer completed tool rounds, consumed tool results, finished exploration, and sub-agent reports.
+- If a range would include a user message, choose a narrower range or skip it.
+
+**User-requested** — the context contains a `<summarize-request>` tag with a specific `from` and `to` range. This tag is injected by the system when the user selects a range through the interface. This is the only mode where summarizing user messages is allowed.
+
+- Follow the `<summarize-request>` exactly.
+- Call `summarize` exactly once with the `from` and `to` specified in the tag.
+- Do not split, shrink, or expand the selected range.
+- If the selected range includes user messages, copy them into your summary **word-for-word**. Do not paraphrase or omit any part of a user message.
 
 ```
 summarize(operations=[
@@ -548,6 +574,8 @@ summarize(operations=[
 - Each operation covers a contiguous range — use separate operations for non-adjacent groups.
 - Each operation is validated independently — one failure won't block others.
 - Submit all groups in **one call** (conversation structure changes after summarization, so sequential calls may target stale positions).
+- Do not summarize context groups that contain user messages, and keep each operation within a single user turn.
+- Exception: when a `<summarize-request>` tag is present, follow it exactly — it overrides the above two rules for the specified range.
 
 ### Before you write: self-check
 
@@ -561,13 +589,15 @@ Before writing the `content` for each operation, ask yourself:
 
 When in doubt, **keep more**. Context window pressure is a real cost, but losing information you later need is a much larger cost — you'll have to re-fetch, re-read, or re-derive it, often at many times the original effort. A slightly bloated distillation is cheap; a distillation that lost the one detail you needed is expensive.
 
+**User instructions take priority.** If the user provides specific guidance — through a focus prompt in `<summarize-request>`, or in plain language earlier in the conversation (e.g. "only keep the conclusions", "drop the code details") — follow their instructions over the defaults above. The one exception: even when the user asks you to be aggressive, still preserve user messages word-for-word in user-requested mode.
+
 Three categories demand especially thorough preservation:
 
 **1. Tool results and information-dense context.** If you're distilling the output of `read_file`, `grep`, `web_fetch`, or a sub-agent's report, preserve every concrete fact you might reference: file paths, line numbers, function signatures, configuration values, error messages, version numbers, URLs, package names. Drop only narrative scaffolding and genuine repetition. **Do not worry about keeping "too much"** — keeping the useful facts is the whole point of distilling rather than discarding.
 
 **2. Work the session has completed.** If you're distilling a phase of your own work, preserve **both what you did and how you did it**. Not just "fixed the bug" but "fixed the bug by changing X in file Y at line Z, chose this approach because W, verified with test command V." Future-you (after this distillation) will need the "how" to answer follow-up questions, to undo if asked, or to apply the same pattern elsewhere. A summary that loses the mechanism has lost most of its value.
 
-**3. User messages — preserve verbatim, with zero omission.** If the context being distilled contains messages from the user, their words must appear in the distilled content **word-for-word**. Do not paraphrase the user. Do not "summarize" the user. Do not drop any part of a user message, even if it seems tangential — you are not the judge of what the user considered important. Copy their message into the distilled content and annotate around it if you must, but never rewrite it. User requirements, constraints, preferences, and clarifications are the anchor points of the entire session; losing them through paraphrase is how tasks end up completed wrong.
+**3. User messages in user-requested mode — preserve verbatim, with zero omission.** During self-initiated summarization, do not choose ranges that cover user messages at all. If, and only if, a `<summarize-request>` tag is present and the selected range includes user messages, their words must appear in the distilled content **word-for-word**. Do not paraphrase the user. Do not drop any part of a user message, even if it seems tangential — you are not the judge of what the user considered important. Copy their message into the distilled content and annotate around it if you must, but never rewrite it. User requirements, constraints, preferences, and clarifications are the anchor points of the entire session; losing them through paraphrase is how tasks end up completed wrong.
 
 The shortest acceptable distillation is not the goal. The **most faithful** distillation is. If a distillation ends up almost as long as the original, that is not a failure — it means the original had very little redundancy, and the right action was to keep most of it.
 
@@ -635,17 +665,35 @@ You ran `grep -n "handleRequest" src/` and got 40 matches across 12 files, with 
 
 This is **bad** — you dropped every line number and every specific filename. Next time you need to touch these call sites, you'll have to re-run the grep. The entire point of having run the grep was to collect those specific locations; compressing them away undoes the work. The correct distillation keeps the full file:line list verbatim, dropping only the duplicated match text if that's truly redundant.
 
-**Anti-example 3 — User message paraphrased:**
+**Example D — User-requested summarize that includes user messages:**
 
-The user said:
+A `<summarize-request>` covers a range that includes the user's original request and your subsequent exploration. The user message was:
 
 > "I want you to refactor the auth module so that it supports OAuth2 PKCE, but don't touch the session store, and make sure the existing Google login still works. Also the Sentry integration needs to keep reporting the same event names."
 
-You distill to:
+Correct distillation:
+
+> **User request (verbatim):** "I want you to refactor the auth module so that it supports OAuth2 PKCE, but don't touch the session store, and make sure the existing Google login still works. Also the Sentry integration needs to keep reporting the same event names."
+>
+> Exploration results:
+> - `src/auth/provider.ts` — current OAuth2 flow, no PKCE. `authorize()` line 42, `callback()` line 78.
+> - Session store is in `src/session/redis-store.ts` — must not be modified (user constraint).
+> - Google login uses `src/auth/google.ts` — `handleGoogleCallback()` line 31, must keep working.
+> - Sentry events: `auth.login`, `auth.refresh`, `auth.error` — names must stay unchanged.
+>
+> Reason: User request and initial exploration complete, ready for implementation.
+
+The user message is copied word-for-word. The exploration results around it are preserved with file paths and line numbers.
+
+**Anti-example 3 — User message paraphrased in user-requested mode:**
+
+Same scenario as Example D. You distill to:
 
 > User asked to refactor auth for OAuth2 PKCE support.
 
 This is **catastrophically bad** — you dropped three constraints (don't touch session store, preserve Google login, preserve Sentry event names) that will absolutely determine whether your implementation is accepted. Every one of those constraints is a landmine. **User messages go in verbatim.** Always. If the user message is long, that is not a reason to paraphrase it — it is a reason to be even more careful about preserving it exactly.
+
+Without a `<summarize-request>` tag, this scenario would not arise — you should not select a range that covers user messages in self-initiated mode.
 
 ### What happens
 

@@ -1,12 +1,17 @@
 /**
  * Log-native summarize tool implementation (append-only).
  *
- * The session log is the single source of truth. Summary entries are
- * appended to the log with `coveredContextIds`; projections compute
- * visibility dynamically via backward scan. Original entries are never
- * mutated.
+ * Summaries are appended to the log, but active context is assembled by
+ * replacing the covered visible context groups with the new summary group.
  */
 
+import {
+  buildActiveContextView,
+  expandContextRange,
+  type ActiveContextGroup,
+  type ActiveContextView,
+  type SummaryOrigin,
+} from "./active-context.js";
 import { createSummary, type LogEntry } from "./log-entry.js";
 
 export interface SummarizeOperation {
@@ -24,13 +29,9 @@ export interface OperationResult {
   error?: string;
 }
 
-interface LogSpatialEntry {
-  indices: number[];
-}
-
 interface LogValidationResult {
   valid: boolean;
-  mergeRange?: [number, number];
+  groups?: ActiveContextGroup[];
   error?: string;
 }
 
@@ -41,93 +42,13 @@ export interface LogSummarizeExecutionResult {
   newEntries: LogEntry[];
 }
 
-// ------------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------------
-
-function getLogContextId(entry: LogEntry): string | null {
-  if (entry.discarded) return null;
-  const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-  if (ctxId === undefined || ctxId === null) return null;
-  return String(ctxId);
-}
-
-function isTransparentLogEntry(entry: LogEntry): boolean {
-  if (entry.discarded) return true;
-  if (entry.type === "compact_context") return true;
-  return getLogContextId(entry) === null;
-}
-
-function buildLogSpatialIndex(
-  entries: LogEntry[],
-  coveredSet: Set<string>,
-): Map<string, LogSpatialEntry> {
-  const index = new Map<string, LogSpatialEntry>();
-  for (let i = 0; i < entries.length; i++) {
-    if (entries[i].type === "compact_context") continue;
-    const ctxId = getLogContextId(entries[i]);
-    if (!ctxId) continue;
-    if (coveredSet.has(ctxId)) continue;
-
-    registerIndex(index, ctxId, i);
-  }
-  return index;
-}
-
-function registerIndex(index: Map<string, LogSpatialEntry>, key: string, idx: number): void {
-  const entry = index.get(key);
-  if (entry) {
-    if (!entry.indices.includes(idx)) entry.indices.push(idx);
-    return;
-  }
-  index.set(key, { indices: [idx] });
-}
-
-function findLastCompactMarkerEntryIdx(entries: LogEntry[]): number {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].type === "compact_marker" && !entries[i].discarded) return i;
-  }
-  return -1;
-}
-
-function collectNearbyLogContextIds(
-  entries: LogEntry[],
-  minIdx: number,
-  maxIdx: number,
-  coveredSet: Set<string>,
-): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  const start = Math.max(0, minIdx - 2);
-  const end = Math.min(entries.length - 1, maxIdx + 2);
-
-  for (let i = start; i <= end; i++) {
-    const ctxId = getLogContextId(entries[i]);
-    if (!ctxId || seen.has(ctxId) || coveredSet.has(ctxId)) continue;
-    seen.add(ctxId);
-    ids.push(ctxId);
-  }
-
-  return ids;
-}
-
-/**
- * Build the set of context IDs that are covered by existing summary entries.
- * Used to exclude already-summarized context IDs from the spatial index.
- */
-export function buildCoveredContextIds(entries: LogEntry[]): Set<string> {
-  const covered = new Set<string>();
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry.discarded) continue;
-    if (entry.type !== "summary") continue;
-    const meta = entry.meta as Record<string, unknown>;
-    const ids = meta.coveredContextIds as string[] | undefined;
-    if (ids) {
-      for (const id of ids) covered.add(id);
-    }
-  }
-  return covered;
+export interface SummarizeExecutionOptions {
+  origin?: SummaryOrigin;
+  exactRange?: {
+    from: string;
+    to: string;
+    contextIds: string[];
+  };
 }
 
 function parseOperations(args: Record<string, unknown>): SummarizeOperation[] {
@@ -144,57 +65,37 @@ function parseOperations(args: Record<string, unknown>): SummarizeOperation[] {
 }
 
 /**
- * Build the ordered list of unique context IDs as they appear in the log.
- * This is the spatial order the model sees via show_context.
+ * Build the set of context IDs directly covered by summary entries.
+ * Kept for callers that only need a quick coverage set; active context
+ * assembly should use buildActiveContextView instead.
  */
-function buildSpatialOrder(
-  entries: LogEntry[],
-  coveredSet: Set<string>,
-): string[] {
-  const order: string[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < entries.length; i++) {
-    if (entries[i].type === "compact_context") continue;
-    const ctxId = getLogContextId(entries[i]);
-    if (!ctxId) continue;
-    if (coveredSet.has(ctxId)) continue;
-    if (!seen.has(ctxId)) {
-      seen.add(ctxId);
-      order.push(ctxId);
+export function buildCoveredContextIds(entries: LogEntry[]): Set<string> {
+  const covered = new Set<string>();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.discarded || entry.type !== "summary") continue;
+    const ids = (entry.meta as Record<string, unknown>).coveredContextIds;
+    if (!Array.isArray(ids)) continue;
+    for (const id of ids) {
+      if (typeof id === "string") covered.add(id);
     }
   }
-  return order;
+  return covered;
 }
 
-/**
- * Expand a from/to range into the list of context IDs between them (inclusive)
- * using the spatial order derived from the log.
- */
-function expandRange(
-  from: string,
-  to: string,
-  spatialOrder: string[],
-): { context_ids: string[]; error?: string } {
-  const fromIdx = spatialOrder.indexOf(from);
-  if (fromIdx < 0) {
-    return { context_ids: [], error: `"from" context_id "${from}" not found in the active context.` };
+function sameStringArray(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
   }
-  const toIdx = spatialOrder.indexOf(to);
-  if (toIdx < 0) {
-    return { context_ids: [], error: `"to" context_id "${to}" not found in the active context.` };
-  }
-  if (fromIdx > toIdx) {
-    return { context_ids: [], error: `"from" ("${from}") appears after "to" ("${to}") in spatial order. Swap them or check show_context.` };
-  }
-  return { context_ids: spatialOrder.slice(fromIdx, toIdx + 1) };
+  return true;
 }
 
 function validateLogOperation(
   op: SummarizeOperation,
-  spatialIndex: Map<string, LogSpatialEntry>,
-  entries: LogEntry[],
-  lastCompactMarkerIdx: number,
-  coveredSet: Set<string>,
+  view: ActiveContextView,
+  options: SummarizeExecutionOptions,
+  operationCount: number,
 ): LogValidationResult {
   const { context_ids, summary } = op;
 
@@ -205,82 +106,105 @@ function validateLogOperation(
     return { valid: false, error: "Empty summary. Provide a non-empty summary string." };
   }
 
+  const groups: ActiveContextGroup[] = [];
   for (const id of context_ids) {
-    if (!spatialIndex.has(id)) {
-      return { valid: false, error: `context_id "${id}" not found in the active context.` };
-    }
+    const group = view.groupByContextId.get(id);
+    if (!group) return { valid: false, error: `context_id "${id}" not found in the active context.` };
+    groups.push(group);
   }
 
-  const allIndices = new Set<number>();
-  for (const id of context_ids) {
-    for (const idx of spatialIndex.get(id)!.indices) {
-      allIndices.add(idx);
+  if (options.origin === "manual") {
+    if (!options.exactRange) {
+      return { valid: false, error: "Manual /summarize is missing its selected range contract." };
     }
+    if (operationCount !== 1) {
+      return { valid: false, error: "Manual /summarize requires exactly one summarize operation." };
+    }
+    if (op.from !== options.exactRange.from || op.to !== options.exactRange.to) {
+      return {
+        valid: false,
+        error: `Manual /summarize must use exactly from="${options.exactRange.from}" and to="${options.exactRange.to}".`,
+      };
+    }
+    if (!sameStringArray(context_ids, options.exactRange.contextIds)) {
+      return {
+        valid: false,
+        error: "Manual /summarize expanded to a different context range than the user selected.",
+      };
+    }
+    return { valid: true, groups };
   }
 
-  const sorted = [...allIndices].sort((a, b) => a - b);
-  const minIdx = sorted[0];
-  const maxIdx = sorted[sorted.length - 1];
-
-  if (lastCompactMarkerIdx >= 0 && minIdx <= lastCompactMarkerIdx) {
+  if (groups.some((group) => group.hasUserMessage || group.coversUserMessage)) {
     return {
       valid: false,
-      error: "context_id(s) include entries before the last compact marker (not visible to the model).",
+      error: "Agent-initiated summarize cannot cover user messages. Use /summarize for user-selected turn compression.",
     };
   }
 
-  for (let i = minIdx; i <= maxIdx; i++) {
-    if (allIndices.has(i)) continue;
-    if (isTransparentLogEntry(entries[i])) continue;
-    const entryCtxId = getLogContextId(entries[i]);
-    if (entryCtxId && coveredSet.has(entryCtxId)) continue;
-
-    const nearbyIds = collectNearbyLogContextIds(entries, minIdx, maxIdx, coveredSet);
-    const rangeLabel = op.from === op.to ? op.from : `${op.from}..${op.to}`;
+  if (groups.some((group) => group.isSummary && group.summaryOrigin === "manual")) {
     return {
       valid: false,
-      error:
-        `Not spatially contiguous in range ${rangeLabel}. Current spatial order near that region: ` +
-        `${nearbyIds.join(", ")}. Split into separate operations if needed.`,
+      error: "Agent-initiated summarize cannot cover user-created summaries.",
     };
   }
 
-  return { valid: true, mergeRange: [minIdx, maxIdx] };
+  const turnStart = Math.min(...groups.map((group) => group.turnStart));
+  const turnEnd = Math.max(...groups.map((group) => group.turnEnd));
+  if (turnStart !== turnEnd) {
+    return {
+      valid: false,
+      error: "Agent-initiated summarize must stay within a single turn.",
+    };
+  }
+
+  return { valid: true, groups };
 }
 
 function buildSummaryEntry(
   op: SummarizeOperation,
-  entries: LogEntry[],
   allocateContextId: () => string,
   allocateLogId: () => string,
   turnIndex: number,
   validation: LogValidationResult,
+  origin: SummaryOrigin,
 ): { result: OperationResult; entry: LogEntry } {
-  const [startIdx, endIdx] = validation.mergeRange!;
   const newContextId = allocateContextId();
   const summaryEntryId = allocateLogId();
+  const groups = validation.groups ?? [];
 
   let summaryDepth = 1;
-  const coveredContextIds: string[] = [];
-  for (let i = startIdx; i <= endIdx; i++) {
-    const entry = entries[i];
-    if (entry.type === "summary") {
-      const depth = Number((entry.meta as Record<string, unknown>)["summaryDepth"] ?? 1);
-      summaryDepth = Math.max(summaryDepth, depth + 1);
-    }
-    const ctxId = getLogContextId(entry);
-    if (ctxId && !coveredContextIds.includes(ctxId)) {
-      coveredContextIds.push(ctxId);
+  for (const group of groups) {
+    if (group.isSummary) {
+      summaryDepth = Math.max(summaryDepth, Number(group.summaryDepth ?? 1) + 1);
     }
   }
 
-  const rangeLabel = op.from === op.to ? op.from : `${op.from}..${op.to}`;
-  let display = `[Summary of ${rangeLabel}]\n`;
+  const coveredTurnStart = groups.length > 0
+    ? Math.min(...groups.map((group) => group.turnStart))
+    : turnIndex;
+  const coveredTurnEnd = groups.length > 0
+    ? Math.max(...groups.map((group) => group.turnEnd))
+    : turnIndex;
+  const coversUserMessage = groups.some((group) => group.hasUserMessage || group.coversUserMessage);
+
+  let header: string;
+  if (origin === "manual") {
+    header =
+      "[User-compressed context — the user explicitly selected this range for summarization. " +
+      "This may contain verbatim user messages. " +
+      "Do not re-summarize this unless the user explicitly asks you to.]";
+  } else {
+    header =
+      "[Compressed context — this is an automated summary of earlier tool output and exploration " +
+      "within this turn. You may re-summarize this if you need to free more space.]";
+  }
+  let display = `${header}\n`;
   if (op.reason) {
     display += `Reason: ${op.reason}\n`;
   }
-  const content = `${display}Summary: ${op.summary}`;
-  display += `Summary: ${op.summary}`;
+  const content = `${display}\n${op.summary}`;
+  display += `\n${op.summary}`;
 
   const summaryEntry = createSummary(
     summaryEntryId,
@@ -288,8 +212,14 @@ function buildSummaryEntry(
     display,
     content,
     newContextId,
-    coveredContextIds,
+    op.context_ids.slice(),
     summaryDepth,
+    {
+      summaryOrigin: origin,
+      coveredTurnStart,
+      coveredTurnEnd,
+      coversUserMessage,
+    },
   );
 
   return {
@@ -343,8 +273,9 @@ export function truncateSummarizeContent(content: string, newContextId?: string 
 }
 
 /**
- * Execute summarize operations on the log. Append-only: original entries are
- * never mutated. Returns new summary entries for the caller to append.
+ * Execute summarize operations on the active context. Append-only: original
+ * entries are never mutated. Returns new summary entries for the caller to
+ * append after the summarize tool_result.
  */
 export function execSummarizeContextOnLog(
   args: Record<string, unknown>,
@@ -352,6 +283,7 @@ export function execSummarizeContextOnLog(
   contextIdAllocator: () => string,
   logIdAllocator: () => string,
   turnIndex: number,
+  options: SummarizeExecutionOptions = {},
 ): LogSummarizeExecutionResult {
   const ops = parseOperations(args);
   if (!ops.length) {
@@ -367,10 +299,8 @@ export function execSummarizeContextOnLog(
     };
   }
 
-  const coveredSet = buildCoveredContextIds(entries);
-  const spatialIndex = buildLogSpatialIndex(entries, coveredSet);
-  const spatialOrder = buildSpatialOrder(entries, coveredSet);
-  const lastCompactMarkerIdx = findLastCompactMarkerEntryIdx(entries);
+  const origin = options.origin ?? "agent";
+  const view = buildActiveContextView(entries, { includeCompactContext: false });
   const orderedResults: Array<OperationResult | undefined> = new Array(ops.length);
   const newEntries: LogEntry[] = [];
   const claimedIds = new Set<string>();
@@ -387,7 +317,7 @@ export function execSummarizeContextOnLog(
       continue;
     }
 
-    const expanded = expandRange(op.from, op.to, spatialOrder);
+    const expanded = expandContextRange(op.from, op.to, view);
     if (expanded.error) {
       orderedResults[opIndex] = {
         success: false,
@@ -396,7 +326,7 @@ export function execSummarizeContextOnLog(
       };
       continue;
     }
-    op.context_ids = expanded.context_ids;
+    op.context_ids = expanded.contextIds;
 
     const duplicates = op.context_ids.filter((id) => claimedIds.has(id));
     if (duplicates.length > 0) {
@@ -408,7 +338,7 @@ export function execSummarizeContextOnLog(
       continue;
     }
 
-    const validation = validateLogOperation(op, spatialIndex, entries, lastCompactMarkerIdx, coveredSet);
+    const validation = validateLogOperation(op, view, { ...options, origin }, ops.length);
     if (!validation.valid) {
       orderedResults[opIndex] = {
         success: false,
@@ -420,11 +350,11 @@ export function execSummarizeContextOnLog(
 
     const { result, entry } = buildSummaryEntry(
       op,
-      entries,
       contextIdAllocator,
       logIdAllocator,
       turnIndex,
       validation,
+      origin,
     );
     orderedResults[opIndex] = result;
     newEntries.push(entry);

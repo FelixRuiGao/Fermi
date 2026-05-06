@@ -64,7 +64,8 @@ import {
 import { applyPatch, parsePatch } from "diff";
 import type { FileMutation, BashMutation, BashMutationEntry } from "./tools/basic.js";
 import type { RewindPlan, RewindApplyResult, RewindPathMutation, BashRewindEntry } from "./ui/contracts.js";
-import { execSummarizeContextOnLog, buildCoveredContextIds } from "./summarize-context.js";
+import { buildActiveContextView } from "./active-context.js";
+import { execSummarizeContextOnLog } from "./summarize-context.js";
 import { resolveSkillContent, loadSkillsMulti, type SkillMeta } from "./skills/loader.js";
 import { toolBuiltinWebSearchPassthrough } from "./tools/web-search.js";
 import {
@@ -294,11 +295,11 @@ function appendManualInstruction(
 
 // -- Hint Prompt generators (two-tier) --
 function HINT_LEVEL1_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct}. Consider freeing space: call \`show_context\` first to see the distribution, then call \`summarize\` to compress groups you no longer need in full. Prioritize: completed subtasks, large tool results you've already extracted key info from, and exploratory steps that led to a conclusion. Always inspect with show_context before summarizing. After summarizing, continue your work normally.]`;
+  return `[SYSTEM: Context usage has reached ${pct}. Consider freeing space: call \`show_context\` first to see the distribution, then call \`summarize\` to compress groups you no longer need in full. Prioritize completed subtasks, large tool results you've already extracted key info from, and exploratory steps that led to a conclusion. Do not summarize context groups that contain user messages, and keep each summarize operation within a single user turn. Always inspect with show_context before summarizing. After summarizing, continue your work normally.]`;
 }
 
 function HINT_LEVEL2_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct} — auto-compact will trigger soon. You should act now: call \`show_context\` to see the distribution, then immediately call \`summarize\` to compress older groups. Prioritize: completed subtasks, large tool results, and exploratory steps. Do not skip the show_context step. After summarizing, continue your work.]`;
+  return `[SYSTEM: Context usage has reached ${pct} — auto-compact will trigger soon. You should act now: call \`show_context\` to see the distribution, then immediately call \`summarize\` to compress older groups. Prioritize completed subtasks, large tool results, and exploratory steps. Do not summarize context groups that contain user messages, and keep each summarize operation within a single user turn. Do not skip the show_context step. After summarizing, continue your work.]`;
 }
 
 function formatTokenCount(value: number): string {
@@ -534,6 +535,7 @@ export class Session {
 
   // /summarize tool whitelist mode
   private _summarizeToolWhitelist: Set<string> | null = null;
+  private _manualSummarizeExactRange: { from: string; to: string; contextIds: string[] } | null = null;
 
   // Pending summary entries to flush after tool_result is appended
   private _pendingSummaryEntries: LogEntry[] = [];
@@ -1208,6 +1210,7 @@ export class Session {
     for (let i = this._log.length - 1; i >= 0; i--) {
       const entry = this._log[i];
       if (entry.discarded) continue;
+      if (entry.type === "summary") continue;
       if (entry.apiRole === "user" || entry.apiRole === "tool_result") {
         const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
         if (typeof ctxId === "string" && ctxId.trim()) {
@@ -1780,6 +1783,7 @@ export class Session {
     this._showContextRoundsRemaining = 0;
     this._showContextAnnotations = null;
     this._pendingSummaryEntries = [];
+    this._manualSummarizeExactRange = null;
   }
 
   // ------------------------------------------------------------------
@@ -3690,19 +3694,10 @@ export class Session {
     timestamp: number;
     contextId?: string;
   }> {
-    // Find active window start
-    let windowStart = 0;
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      if (this._log[i].type === "compact_marker" && !this._log[i].discarded) {
-        windowStart = i + 1;
-        break;
-      }
-    }
+    const view = buildActiveContextView(this._log, { includeCompactContext: false });
+    const groupOrder = new Map<string, number>();
+    view.groups.forEach((group, index) => groupOrder.set(group.contextId, index));
 
-    // Collect covered set to exclude superseded summaries
-    const coveredSet = buildCoveredContextIds(this._log);
-
-    // 1. Real user turns in active window
     const items: Array<{
       kind: "turn" | "summary";
       turnIndex: number;
@@ -3712,32 +3707,44 @@ export class Session {
       sortKey: number;
     }> = [];
 
+    const visibleNonManualGroupsByTurn = new Map<number, number>();
+    for (const group of view.groups) {
+      if (group.isSummary && group.summaryOrigin === "manual") continue;
+      const order = groupOrder.get(group.contextId) ?? Number.MAX_SAFE_INTEGER;
+      for (let turn = group.turnStart; turn <= group.turnEnd; turn++) {
+        const current = visibleNonManualGroupsByTurn.get(turn);
+        if (current === undefined || order < current) {
+          visibleNonManualGroupsByTurn.set(turn, order);
+        }
+      }
+    }
+
     for (const t of this.listTurns()) {
       if (!t.inActiveWindow || t.turnKind !== "user") continue;
       if (t.turnIndex > this._turnCount) continue;
+      const sortKey = visibleNonManualGroupsByTurn.get(t.turnIndex);
+      if (sortKey === undefined) continue;
       items.push({
         kind: "turn",
         turnIndex: t.turnIndex,
         preview: t.preview,
         timestamp: t.timestamp,
-        sortKey: t.entryIndex,
+        sortKey,
       });
     }
 
-    // 2. Visible summary entries in active window (not superseded)
-    for (let i = windowStart; i < this._log.length; i++) {
-      const entry = this._log[i];
-      if (entry.type !== "summary" || entry.discarded) continue;
-      const ctxId = (entry.meta as Record<string, unknown>)["contextId"] as string | undefined;
-      if (ctxId && coveredSet.has(ctxId)) continue;
+    for (const group of view.groups) {
+      if (!group.isSummary || group.summaryOrigin !== "manual") continue;
+      const entry = group.entries.find((item) => item.entry.type === "summary")?.entry;
+      if (!entry) continue;
       const display = (entry.display || "").slice(0, 80).replace(/\n/g, " ");
       items.push({
         kind: "summary",
-        turnIndex: entry.turnIndex,
+        turnIndex: group.turnStart,
         preview: display || "(summary)",
         timestamp: entry.timestamp,
-        contextId: ctxId,
-        sortKey: i,
+        contextId: group.contextId,
+        sortKey: groupOrder.get(group.contextId) ?? Number.MAX_SAFE_INTEGER,
       });
     }
 
@@ -3751,32 +3758,10 @@ export class Session {
    * covered by a later summary.
    */
   getContextIdsForTurnRange(startTurn: number, endTurn: number): string[] {
-    const coveredSet = buildCoveredContextIds(this._log);
-    const contextIds: string[] = [];
-    const seen = new Set<string>();
-
-    // Find active window start
-    let windowStart = 0;
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      if (this._log[i].type === "compact_marker" && !this._log[i].discarded) {
-        windowStart = i + 1;
-        break;
-      }
-    }
-
-    for (let i = windowStart; i < this._log.length; i++) {
-      const entry = this._log[i];
-      if (entry.turnIndex < startTurn || entry.turnIndex > endTurn) continue;
-      if (entry.discarded) continue;
-      const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-      if (!ctxId || typeof ctxId !== "string") continue;
-      if (coveredSet.has(ctxId)) continue;
-      if (seen.has(ctxId)) continue;
-      seen.add(ctxId);
-      contextIds.push(ctxId);
-    }
-
-    return contextIds;
+    const view = buildActiveContextView(this._log, { includeCompactContext: false });
+    return view.groups
+      .filter((group) => group.turnEnd >= startTurn && group.turnStart <= endTurn)
+      .map((group) => group.contextId);
   }
 
   static readonly SUMMARIZE_TOOL_WHITELIST = new Set([
@@ -3804,32 +3789,47 @@ export class Session {
 
       const rangeFrom = targetIds[0];
       const rangeTo = targetIds[targetIds.length - 1];
+      const currentView = buildActiveContextView(this._log, { includeCompactContext: false });
+      const fromIdx = currentView.order.indexOf(rangeFrom);
+      const toIdx = currentView.order.indexOf(rangeTo);
+      if (fromIdx < 0 || toIdx < 0 || fromIdx > toIdx) {
+        throw new Error("/summarize selected range is no longer available in the active context.");
+      }
+      const exactContextIds = currentView.order.slice(fromIdx, toIdx + 1);
       const rangeLabel = rangeFrom === rangeTo ? rangeFrom : `${rangeFrom}..${rangeTo}`;
+      const focusPart = options?.focusPrompt?.trim()
+        ? `\nUser focus: ${options.focusPrompt.trim()}\n` +
+          `Use this to guide which non-user-message content to emphasize or de-emphasize. ` +
+          `This does NOT override the rule to preserve user messages verbatim.`
+        : "";
       let prompt = [
-        `[Targeted summarize request]`,
-        ``,
-        `The user has selected context groups to be summarized: from="${rangeFrom}" to="${rangeTo}" (${targetIds.length} groups).`,
+        `<summarize-request>`,
+        `The user has selected context groups to be summarized: from="${rangeFrom}" to="${rangeTo}" (${exactContextIds.length} groups).`,
         ``,
         `Instructions:`,
-        `1. First call \`show_context\` to inspect the content and size of the range.`,
+        `1. Call \`show_context\` to inspect the content and size of the range.`,
         `2. You may call \`read_file\`, \`grep\`, \`glob\`, or \`list_dir\` to verify details before writing the summary.`,
-        `3. Call \`summarize\` with from="${rangeFrom}", to="${rangeTo}" to compress the selected range.`,
-        `4. Your summary content should match the information density of the original — do not over-compress.`,
-        `   Preserve: user message intent and original wording, file paths with line numbers, key decisions and why,`,
-        `   unresolved issues, code references you'd look back at, and any constraints or rules the user stated.`,
-        `5. After summarizing, reply briefly with what you compressed and stop.`,
+        `3. Call \`summarize\` exactly once, with from="${rangeFrom}" and to="${rangeTo}". Do not split, shrink, or expand this range.`,
+        `4. If the selected range includes user messages, copy them into your summary word-for-word — do not paraphrase or omit any part.`,
+        `5. For non-user-message content, match the information density of the original — preserve file paths with line numbers,`,
+        `   key decisions and why, unresolved issues, code references you'd look back at, and any constraints the user stated.`,
+        `6. After summarizing, reply with a one-line description of what was compressed (e.g. "Compressed turns 3-5: auth exploration and test results"). Do not repeat the summary content.`,
         ``,
         `Do NOT continue the main task. Do NOT call show_context(dismiss=true).`,
+        focusPart,
+        `</summarize-request>`,
       ].join("\n");
-      if (options?.focusPrompt?.trim()) {
-        prompt += `\n\nUser focus: ${options.focusPrompt.trim()}`;
-      }
       const displayText = options?.focusPrompt?.trim()
         ? `/summarize ${options.focusPrompt.trim()}`
         : `/summarize ${rangeLabel}`;
 
       // Enable tool whitelist for this turn
       this._summarizeToolWhitelist = (this.constructor as typeof Session).SUMMARIZE_TOOL_WHITELIST;
+      this._manualSummarizeExactRange = {
+        from: rangeFrom,
+        to: rangeTo,
+        contextIds: exactContextIds,
+      };
       try {
         return await this._runInjectedTurn(
           displayText,
@@ -3838,6 +3838,7 @@ export class Session {
         );
       } finally {
         this._summarizeToolWhitelist = null;
+        this._manualSummarizeExactRange = null;
       }
     });
   }
@@ -5882,6 +5883,9 @@ export class Session {
       () => this._allocateContextId(),
       () => this._nextLogId("summary"),
       this._turnCount,
+      this._manualSummarizeExactRange
+        ? { origin: "manual", exactRange: this._manualSummarizeExactRange }
+        : { origin: "agent" },
     );
 
     // Defer summary entries — they must appear AFTER the tool_result to avoid

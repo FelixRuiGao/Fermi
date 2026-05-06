@@ -10,7 +10,7 @@
 
 import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
 import type { LogEntry } from "./log-entry.js";
-import { buildCoveredContextIds } from "./summarize-context.js";
+import { buildActiveContextView } from "./active-context.js";
 
 // ------------------------------------------------------------------
 // Types
@@ -217,57 +217,21 @@ function formatToolResultBrief(
 // Context group builder
 // ------------------------------------------------------------------
 
-function getLogContextId(entry: LogEntry): string | null {
-  if (entry.discarded) return null;
-  if (entry.type === "compact_context") {
-    const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-    return ctxId ? String(ctxId) : null;
-  }
-  const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-  if (ctxId === undefined || ctxId === null) return null;
-  return String(ctxId);
-}
-
 /**
  * Build context groups from log entries in the active window.
  * Returns groups in spatial (appearance) order.
  */
 export function buildContextGroups(entries: LogEntry[]): ContextGroup[] {
-  // Find active window start (after last compact_marker)
-  let windowStartIdx = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].type === "compact_marker" && !entries[i].discarded) {
-      windowStartIdx = i + 1;
-      break;
-    }
-  }
-
-  // Build summary coverage set — entries with covered contextIds are hidden
-  const coveredSet = buildCoveredContextIds(entries);
-
-  // Build ordered groups
-  const groupMap = new Map<string, ContextGroup>();
-  const groupOrder: string[] = [];
-
-  for (let i = windowStartIdx; i < entries.length; i++) {
-    const entry = entries[i];
-    const ctxId = getLogContextId(entry);
-    if (!ctxId) continue;
-    if (coveredSet.has(ctxId)) continue;
-
-    let group = groupMap.get(ctxId);
-    if (!group) {
-      group = { contextId: ctxId, entries: [], totalTokens: 0, entryTokens: [] };
-      groupMap.set(ctxId, group);
-      groupOrder.push(ctxId);
-    }
-    const tokens = estimateEntryTokens(entry);
-    group.entries.push({ entry, index: i });
-    group.entryTokens.push(tokens);
-    group.totalTokens += tokens;
-  }
-
-  return groupOrder.map((id) => groupMap.get(id)!);
+  const view = buildActiveContextView(entries, { includeCompactContext: true });
+  return view.groups.map((group) => {
+    const entryTokens = group.entries.map(({ entry }) => estimateEntryTokens(entry));
+    return {
+      contextId: group.contextId,
+      entries: group.entries,
+      totalTokens: entryTokens.reduce((sum, value) => sum + value, 0),
+      entryTokens,
+    };
+  });
 }
 
 // ------------------------------------------------------------------

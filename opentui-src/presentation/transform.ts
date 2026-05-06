@@ -612,8 +612,7 @@ export function presentationTransform(
             const summaryTexts: string[] = [];
             for (const s of summaries) {
               const text = s.entry.text;
-              const stripped = text.replace(/^\[Summary of [^\]]*\]\n?/, "");
-              if (stripped.trim()) summaryTexts.push(stripped.trim());
+              if (text.trim()) summaryTexts.push(text.trim());
             }
             if (summaryTexts.length > 0) {
               const merged = summaryTexts.join("\n---\n");

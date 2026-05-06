@@ -346,6 +346,7 @@ async function cmdSummarize(ctx: CommandContext, _args: string): Promise<void> {
       message: "Focus prompt (optional, Enter to skip):",
       allowEmpty: true,
     });
+    if (input === undefined) return;
     if (input?.trim()) {
       focusPrompt = input.trim();
     }

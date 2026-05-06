@@ -9,6 +9,7 @@ import type { LogEntry, TuiDisplayKind } from "./log-entry.js";
 import type { ConversationEntry, ConversationEntryKind } from "./ui/contracts.js";
 import { mergeConsecutiveSameRole } from "./context-rendering.js";
 import { truncateSummarizeContent } from "./summarize-context.js";
+import { buildActiveContextView, flattenActiveContextEntries } from "./active-context.js";
 
 // ------------------------------------------------------------------
 // Summary visibility (append-only backward scan)
@@ -622,50 +623,6 @@ export function projectToApiMessages(
     }
   }
 
-  // Step 2: Find last compact_marker → window start
-  let windowStartIdx = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].type === "compact_marker" && !entries[i].discarded) {
-      windowStartIdx = i + 1;
-      break;
-    }
-  }
-
-  // Build summary coverage set for the active window
-  const coveredSet = buildSummaryCoveredSet(entries, windowStartIdx);
-
-  // Step 3: Find compact_context for the current window
-  // compact_context is always injected regardless of coveredSet — it is the
-  // continuation prompt after compaction and must never be hidden by a summary.
-  let compactContextContent: unknown = null;
-  let compactContextId: string | undefined;
-  for (let i = windowStartIdx; i < entries.length; i++) {
-    const e = entries[i];
-    if (e.type === "compact_context" && !e.discarded) {
-      compactContextContent = e.content;
-      const ctxId = (e.meta as Record<string, unknown>)["contextId"];
-      compactContextId = ctxId !== undefined && ctxId !== null ? String(ctxId) : undefined;
-      break;
-    }
-  }
-  // Also check just before the window start (compact_context may be right after compact_marker)
-  if (!compactContextContent && windowStartIdx > 0) {
-    for (let i = windowStartIdx; i < entries.length && i < windowStartIdx + 5; i++) {
-      const e = entries[i];
-      if (e.type === "compact_context" && !e.discarded) {
-        compactContextContent = e.content;
-        const ctxId = (e.meta as Record<string, unknown>)["contextId"];
-        compactContextId = ctxId !== undefined && ctxId !== null ? String(ctxId) : undefined;
-        break;
-      }
-    }
-  }
-
-  // Defense: ensure compact_context's contextId is never in coveredSet
-  if (compactContextId && coveredSet.has(compactContextId)) {
-    coveredSet.delete(compactContextId);
-  }
-
   // Copy annotations map so we can delete entries after first injection per group
   const annotations = options?.showContextAnnotations
     ? new Map(options.showContextAnnotations)
@@ -679,28 +636,15 @@ export function projectToApiMessages(
     messages.push({ role: "system", content: systemPromptContent });
   }
 
-  // Compact context (as user message)
-  if (compactContextContent) {
-    let content = compactContextContent as string | Array<Record<string, unknown>>;
-    if (compactContextId !== undefined && annotations?.has(compactContextId)) {
-      content = prependAnnotation(
-        content,
-        annotations.get(compactContextId)!,
-      ) as string | Array<Record<string, unknown>>;
-      annotations.delete(compactContextId);
-    }
-    const compactMsg: InternalMessage = { role: "user", content };
-    if (compactContextId !== undefined) compactMsg["_context_id"] = compactContextId;
-    messages.push(compactMsg);
-  }
-
-  // Step 4-5: Collect window entries and group by round
-  const windowEntries = entries.slice(windowStartIdx).filter((e) => {
+  // Step 2-5: assemble active context, then collect API-visible entries.
+  const activeView = buildActiveContextView(entries, {
+    includeCompactContext: true,
+    includeEntriesWithoutContext: true,
+  });
+  const windowEntries = flattenActiveContextEntries(activeView).filter((e) => {
     if (e.discarded) return false;
     if (e.archived && e.content === null) return false;
     if (e.type === "system_prompt") return false; // already handled
-    if (e.type === "compact_context") return false; // already handled
-    if (isCoveredBySummary(e, coveredSet)) return false;
     // reasoning has apiRole=null but is grouped with assistant entries
     if (e.type === "reasoning") return true;
     if (e.apiRole === null) return false;

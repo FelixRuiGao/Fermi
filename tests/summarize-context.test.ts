@@ -42,7 +42,51 @@ describe("truncateSummarizeContent", () => {
 });
 
 describe("execSummarizeContextOnLog", () => {
-  it("summarizes a visible context range", () => {
+  it("manual summarize can cover a user-selected range", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("user-001", 1, "hello", "hello", "c1"),
+    ];
+
+    const result = execSummarizeContextOnLog(
+      { operations: [{ from: "c1", to: "c1", content: "compressed" }] },
+      entries,
+      allocIds("ctx-"),
+      allocIds("sum-"),
+      1,
+      { origin: "manual", exactRange: { from: "c1", to: "c1", contextIds: ["c1"] } },
+    );
+
+    expect(result.output).toContain("1 succeeded");
+    expect(result.newEntries.length).toBe(1);
+    expect(result.newEntries[0].type).toBe("summary");
+    const meta = result.newEntries[0].meta as Record<string, unknown>;
+    expect(meta["summaryDepth"]).toBe(1);
+    expect(meta["summaryOrigin"]).toBe("manual");
+    expect(meta["coversUserMessage"]).toBe(true);
+  });
+
+  it("rejects manual summarize calls that shrink the selected range", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("user-001", 1, "first", "first", "c1"),
+      createUserMessage("user-002", 2, "second", "second", "c2"),
+    ];
+
+    const result = execSummarizeContextOnLog(
+      { operations: [{ from: "c1", to: "c1", content: "too small" }] },
+      entries,
+      allocIds("ctx-"),
+      allocIds("sum-"),
+      2,
+      { origin: "manual", exactRange: { from: "c1", to: "c2", contextIds: ["c1", "c2"] } },
+    );
+
+    expect(result.output).toContain("0 succeeded");
+    expect(result.output).toContain("must use exactly");
+  });
+
+  it("rejects autonomous summaries that cover user messages", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
       createUserMessage("user-001", 1, "hello", "hello", "c1"),
@@ -56,10 +100,8 @@ describe("execSummarizeContextOnLog", () => {
       1,
     );
 
-    expect(result.output).toContain("1 succeeded");
-    expect(result.newEntries.length).toBe(1);
-    expect(result.newEntries[0].type).toBe("summary");
-    expect((result.newEntries[0].meta as Record<string, unknown>)["summaryDepth"]).toBe(1);
+    expect(result.output).toContain("0 succeeded");
+    expect(result.output).toContain("cannot cover user messages");
   });
 
   it("skips compact_context entries (not indexable by context ID)", () => {
@@ -115,14 +157,31 @@ describe("execSummarizeContextOnLog", () => {
     expect(result.output).toContain("1 succeeded");
   });
 
+  it("rejects autonomous summaries that cross user turns", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createAssistantText("asst-001", 1, 0, "turn one", "turn one", "c1"),
+      createAssistantText("asst-002", 2, 0, "turn two", "turn two", "c2"),
+    ];
+
+    const result = execSummarizeContextOnLog(
+      { operations: [{ from: "c1", to: "c2", content: "cross turn" }] },
+      entries,
+      allocIds("ctx-"),
+      allocIds("sum-"),
+      2,
+    );
+
+    expect(result.output).toContain("0 succeeded");
+    expect(result.output).toContain("within a single turn");
+  });
+
   it("expands from/to range to include all context IDs between them", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
-      createUserMessage("user-001", 1, "first msg", "first msg", "c1"),
-      createAssistantText("asst-001", 1, 0, "response 1", "response 1", "c1"),
-      createUserMessage("user-002", 1, "second msg", "second msg", "c2"),
-      createAssistantText("asst-002", 1, 0, "response 2", "response 2", "c2"),
-      createUserMessage("user-003", 1, "third msg", "third msg", "c3"),
+      createAssistantText("asst-001", 1, 0, "first", "first", "c1"),
+      createAssistantText("asst-002", 1, 0, "second", "second", "c2"),
+      createAssistantText("asst-003", 1, 0, "third", "third", "c3"),
     ];
 
     const result = execSummarizeContextOnLog(
@@ -147,9 +206,9 @@ describe("execSummarizeContextOnLog", () => {
     // This test verifies from/to expands correctly, not that it rejects.
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
-      createUserMessage("user-001", 1, "a", "a", "c1"),
+      createAssistantText("asst-001", 1, 0, "a", "a", "c1"),
       createAssistantText("asst-001", 1, 0, "gap", "gap", "c2"),
-      createUserMessage("user-002", 1, "b", "b", "c3"),
+      createAssistantText("asst-002", 1, 0, "b", "b", "c3"),
     ];
 
     const result = execSummarizeContextOnLog(
@@ -188,7 +247,7 @@ describe("execSummarizeContextOnLog", () => {
   it("rejects duplicate references within the same call", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
-      createUserMessage("user-001", 1, "hello", "hello", "c1"),
+      createAssistantText("asst-001", 1, 0, "hello", "hello", "c1"),
     ];
 
     const result = execSummarizeContextOnLog(
@@ -211,7 +270,7 @@ describe("execSummarizeContextOnLog", () => {
   it("supports re-summarization with depth tracking", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
-      createUserMessage("user-001", 1, "hello", "hello", "c1"),
+      createAssistantText("asst-001", 1, 0, "hello", "hello", "c1"),
     ];
     const ctxAlloc = allocIds("ctx-");
     const logAlloc = allocIds("sum-");
@@ -255,11 +314,9 @@ describe("execSummarizeContextOnLog", () => {
   it("handles multiple independent operations in one call", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
-      createUserMessage("user-001", 1, "first msg", "first msg", "c1"),
-      createAssistantText("asst-001", 1, 0, "response 1", "response 1", "c1"),
-      createUserMessage("user-002", 1, "second msg", "second msg", "c2"),
-      createAssistantText("asst-002", 1, 0, "response 2", "response 2", "c2"),
-      createUserMessage("user-003", 1, "third msg", "third msg", "c3"),
+      createAssistantText("asst-001", 1, 0, "first msg", "first msg", "c1"),
+      createAssistantText("asst-002", 1, 0, "second msg", "second msg", "c2"),
+      createAssistantText("asst-003", 1, 0, "third msg", "third msg", "c3"),
     ];
 
     const result = execSummarizeContextOnLog(

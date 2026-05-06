@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,6 +22,18 @@ function makeConfig(): Config {
 }
 
 describe("template type validation", () => {
+  it("documents autonomous summarize user-message restrictions in the main tool prompt", () => {
+    const toolsPrompt = readFileSync(
+      join(process.cwd(), "agent_templates", "main", "tools.md"),
+      "utf-8",
+    );
+
+    expect(toolsPrompt).toContain("Self-initiated");
+    expect(toolsPrompt).toContain("Do **not** summarize context groups that contain user messages.");
+    expect(toolsPrompt).toContain("<summarize-request>");
+    expect(toolsPrompt).toContain("This is the only mode where summarizing user messages is allowed.");
+  });
+
   it("rejects templates without type: agent", () => {
     const dir = makeTempDir("fermi-template-type-missing-");
     try {

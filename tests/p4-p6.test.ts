@@ -110,7 +110,7 @@ describe("P6 summarize behavior", () => {
       (session as any)._hintState = "level1_sent";
       // Add a LogEntry so the projection has the right conversation
       (session as any)._log.push(
-        createUserMessage("user-001", 1, "hello", "hello", "seed1"),
+        createAssistantText("asst-001", 1, 0, "hello", "hello", "seed1"),
       );
 
       const success = (session as any)._execSummarizeTool({

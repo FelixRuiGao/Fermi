@@ -6,7 +6,13 @@ import { describe, expect, it, mock, spyOn } from "bun:test";
 
 import { SessionStore } from "../src/persistence.js";
 import { Session } from "../src/session.js";
-import { createUserMessage } from "../src/log-entry.js";
+import {
+  createAssistantText,
+  createInputReceived,
+  createSummary,
+  createToolResult,
+  createUserMessage,
+} from "../src/log-entry.js";
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -55,7 +61,57 @@ function makeSession(projectRoot: string): Session {
 }
 
 describe("manual summarize / compact commands", () => {
-  it("runManualSummarize creates a shell user message, arms show_context, and appends user instruction", async () => {
+  it("picker shows manual summaries, hides agent summaries, and maps turns to active context", () => {
+    const projectRoot = makeTempDir("fermi-summarize-targets-");
+    try {
+      const session = makeSession(projectRoot) as any;
+      session._turnCount = 2;
+      session._log.push(
+        createInputReceived("in-001", 1, "in-001", "user", "First request", "First request", "c1"),
+        createUserMessage("user-001", 1, "First request", "First request", "c1"),
+        createInputReceived("in-002", 2, "in-002", "user", "Second request", "Second request", "c2-user"),
+        createUserMessage("user-002", 2, "Second request", "Second request", "c2-user"),
+        createAssistantText("asst-001", 2, 0, "Checking files", "Checking files", "c2-tool"),
+        createToolResult(
+          "tr-001",
+          2,
+          0,
+          { toolCallId: "call-1", toolName: "read_file", content: "file content", toolSummary: "read" },
+          { isError: false, contextId: "c2-tool" },
+        ),
+        createSummary(
+          "sum-manual",
+          3,
+          "Manual summary",
+          "Manual summary",
+          "sum-manual-ctx",
+          ["c1"],
+          1,
+          { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1, coversUserMessage: true },
+        ),
+        createSummary(
+          "sum-agent",
+          2,
+          "Agent summary",
+          "Agent summary",
+          "sum-agent-ctx",
+          ["c2-tool"],
+          1,
+          { summaryOrigin: "agent", coveredTurnStart: 2, coveredTurnEnd: 2, coversUserMessage: false },
+        ),
+      );
+
+      const targets = session.getSummarizeTargets();
+      expect(targets).toHaveLength(2);
+      expect(targets[0]).toMatchObject({ kind: "summary", contextId: "sum-manual-ctx" });
+      expect(targets[1]).toMatchObject({ kind: "turn", turnIndex: 2 });
+      expect(session.getContextIdsForTurnRange(2, 2)).toEqual(["c2-user", "sum-agent-ctx"]);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("runManualSummarize injects an exact selected range request", async () => {
     const projectRoot = makeTempDir("fermi-manual-summarize-");
     try {
       const session = makeSession(projectRoot) as any;
@@ -63,15 +119,18 @@ describe("manual summarize / compact commands", () => {
       session._runTurnActivationLoop = mock(async () => "ok");
       session._log.push(createUserMessage("user-seed", 0, "seed", "seed", "seed1"));
 
-      const out = await session.runManualSummarize("keep deployment notes");
+      const out = await session.runManualSummarize({
+        targetContextIds: ["seed1"],
+        focusPrompt: "keep deployment notes",
+      });
 
       expect(out).toBe("ok");
-      expect(session._showContextRoundsRemaining).toBe(1);
-      expect(session._showContextAnnotations).toBeInstanceOf(Map);
       const injected = session._log.findLast((e: any) => e.type === "user_message");
-      expect(injected.display).toBe("[Manual summarize request]");
-      expect(String(injected.content)).toContain("Do not continue the main task beyond this distill request.");
-      expect(String(injected.content)).toContain("Additional user instruction for this manual summarize request:");
+      expect(injected.display).toBe("/summarize keep deployment notes");
+      expect(String(injected.content)).toContain("<summarize-request>");
+      expect(String(injected.content)).toContain("</summarize-request>");
+      expect(String(injected.content)).toContain("from=\"seed1\" to=\"seed1\"");
+      expect(String(injected.content)).toContain("Call `summarize` exactly once");
       expect(String(injected.content)).toContain("keep deployment notes");
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });

@@ -637,7 +637,7 @@ describe("projectToApiMessages", () => {
     });
   });
 
-  it("skips summarized entries", () => {
+  it("replaces summarized entries at their original API position", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
       createUserMessage("user-001", 1, "old", "old", "c1"),
@@ -646,9 +646,8 @@ describe("projectToApiMessages", () => {
     ];
 
     // Summary covers contextId "c1" (both user + assistant share it).
-    // Place summary before user-002 so API order is: system, summary, user-002.
     const summary = createSummary("sum-001", 1, "Summary", "Summary text", "c3", ["c1"], 1);
-    entries.splice(1, 0, summary);
+    entries.push(summary);
 
     const msgs = projectToApiMessages(entries);
     // system + summary(user) + user-002 (covered entries c1 hidden)
@@ -682,7 +681,7 @@ describe("projectToApiMessages", () => {
     ]);
   });
 
-  it("rejects API projections that put user messages before pending tool results", () => {
+  it("keeps API tool results before later user messages from the same log round", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
       createUserMessage("user-001", 1, "await", "await", "c1"),
@@ -704,8 +703,19 @@ describe("projectToApiMessages", () => {
       ),
     ];
 
-    expect(() => projectToApiMessages(entries, { enforceToolCallProtocol: true }))
-      .toThrow(/assistant tool_calls must be followed/);
+    const msgs = projectToApiMessages(entries, { enforceToolCallProtocol: true });
+    expect(msgs.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "tool_result",
+      "user",
+    ]);
+    expect(msgs[3]).toMatchObject({
+      role: "tool_result",
+      tool_call_id: "await_event:1",
+    });
+    expect(msgs[4]).toMatchObject({ role: "user", content: "side channel" });
   });
 
   it("handles interruption_marker as user message", () => {
