@@ -91,8 +91,9 @@ export class KimiProvider extends OpenAIChatProvider {
             type: "builtin_function",
             function: { name: "$web_search" },
           });
+          continue;
         }
-        continue;
+        // No native support — fall through to register as a regular function tool
       }
       result.push({
         type: "function",

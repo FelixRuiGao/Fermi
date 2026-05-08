@@ -162,6 +162,10 @@ export const KNOWN_THINKING_MODELS: Set<string> = new Set([
 ]);
 
 export const KNOWN_NO_WEB_SEARCH_MODELS: Set<string> = new Set([
+  // MiniMax — no native web search tool
+  "MiniMax-M2.5", "MiniMax-M2.5-highspeed",
+  "MiniMax-M2.7", "MiniMax-M2.7-highspeed",
+  "minimax-m2.5", "minimax-m2.7",
   // DeepSeek — no native web search tool
   "deepseek-v4-flash", "deepseek-v4-pro",
   // Xiaomi (MiMo) — no native web search tool

@@ -230,6 +230,7 @@ export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecu
     grep: scopedBuiltin("grep"),
     edit_file: withPlanHook(scopedBuiltin("edit_file")),
     write_file: withPlanHook(writeFileWithReload),
+    web_search: (args, rtCtx) => executeTool("web_search", args, { signal: rtCtx?.signal }),
     web_fetch: (args, rtCtx) => executeTool("web_fetch", args, { signal: rtCtx?.signal }),
     bash: (args, rtCtx) => executeTool("bash", args, {
       projectRoot,

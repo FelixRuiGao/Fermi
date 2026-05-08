@@ -170,8 +170,9 @@ export class OpenAIResponsesProvider extends BaseProvider {
       if (t.name === "web_search") {
         if (this._config.supportsWebSearch) {
           hasWebSearch = true;
+          continue;
         }
-        continue;
+        // No native support — fall through to register as a regular function tool
       }
       result.push({
         type: "function",

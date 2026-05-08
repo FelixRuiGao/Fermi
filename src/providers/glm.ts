@@ -53,8 +53,9 @@ export class GLMProvider extends OpenAIChatProvider {
               search_result: true,
             },
           });
+          continue;
         }
-        continue;
+        // No native support — fall through to register as a regular function tool
       }
       result.push({
         type: "function",

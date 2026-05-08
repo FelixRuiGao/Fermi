@@ -25,6 +25,7 @@ import { getSensitiveFileReadReason } from "../security/sensitive-files.js";
 import {
   WEB_SEARCH,
   toolBuiltinWebSearchPassthrough,
+  toolWebSearch,
 } from "./web-search.js";
 import { WEB_FETCH, toolWebFetch } from "./web-fetch.js";
 import {
@@ -2676,6 +2677,16 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         });
       } catch (e) {
         return formatToolError("grep", e);
+      }
+    },
+    web_search: async (args, rtCtx) => {
+      try {
+        const a = expectArgsObject("web_search", args);
+        const query = requiredStringArg("web_search", a, "query", { nonEmpty: true });
+        const numResults = typeof a["num_results"] === "number" ? a["num_results"] : undefined;
+        return toolWebSearch(query, numResults, { signal: rtCtx?.signal });
+      } catch (e) {
+        return formatToolError("web_search", e);
       }
     },
     web_fetch: async (args, rtCtx) => {

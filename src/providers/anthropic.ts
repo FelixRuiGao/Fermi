@@ -52,8 +52,9 @@ export class AnthropicProvider extends BaseProvider {
             name: "web_search",
             max_uses: 20,
           });
+          continue;
         }
-        continue;
+        // No native support — fall through to register as a regular tool
       }
       result.push({
         name: t.name,

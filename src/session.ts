@@ -4172,21 +4172,33 @@ export class Session {
         return this._turnInner(pending.userInput ?? "", options);
       }
 
-      // Drain any pending tool_calls (including the just-approved one and any
-      // siblings that were emitted in parallel but never reached). This is the
-      // single, canonical execution path post-approval. Stops on suspension.
-      const suspended = await this._drainPendingToolCalls();
-      if (suspended) {
-        // A new approval ask was raised; the TUI handles it, then resume()
-        // is called again.
-        return "";
-      }
+      // Install the turn signal early so that _drainPendingToolCalls can
+      // pass it to tool executors (e.g. client-side web_search).
+      const turnSignalState = this._installCurrentTurnSignal(options?.signal);
 
-      // Post-resume activation boundary drain: tool_results from the
-      // just-resolved approval are in the log; drain any queued inbox
-      // messages before the model sees them in the next activation.
-      if (this._hasInboxMessages()) {
-        this._drainInboxAsEntries();
+      try {
+        // Drain any pending tool_calls (including the just-approved one and any
+        // siblings that were emitted in parallel but never reached). This is the
+        // single, canonical execution path post-approval. Stops on suspension.
+        const suspended = await this._drainPendingToolCalls();
+        if (suspended) {
+          return "";
+        }
+
+        // If the drain was interrupted (e.g. user pressed Ctrl+C during a
+        // client-side web_search), stop before activation.
+        if (turnSignalState.signal.aborted) {
+          return "";
+        }
+
+        // Post-resume activation boundary drain: tool_results from the
+        // just-resolved approval are in the log; drain any queued inbox
+        // messages before the model sees them in the next activation.
+        if (this._hasInboxMessages()) {
+          this._drainInboxAsEntries();
+        }
+      } finally {
+        this._restoreCurrentTurnSignal(turnSignalState);
       }
 
       const textAccumulator = { text: "" };
