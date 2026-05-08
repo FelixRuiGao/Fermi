@@ -97,6 +97,17 @@ const nativeTargetDir = join(buildDir, "native", `${process.platform}-${process.
 mkdirSync(nativeTargetDir, { recursive: true });
 cpSync(nativeSource, join(nativeTargetDir, basename(nativeSource)), { dereference: true });
 
+// Copy bash parser WASM files (used by the permission system's tree-sitter classifier)
+const bashParserDir = join(buildDir, "bash-parser");
+mkdirSync(bashParserDir, { recursive: true });
+const { createRequire } = await import("node:module");
+const { dirname: pathDirname } = await import("node:path");
+const req = createRequire(import.meta.url);
+const webTsWasm = req.resolve("web-tree-sitter/tree-sitter.wasm");
+const bashWasm = join(pathDirname(req.resolve("tree-sitter-bash/package.json")), "tree-sitter-bash.wasm");
+cpSync(webTsWasm, join(bashParserDir, "tree-sitter.wasm"), { dereference: true });
+cpSync(bashWasm, join(bashParserDir, "tree-sitter-bash.wasm"), { dereference: true });
+
 await run([
   "tar",
   "-czf",
@@ -106,6 +117,7 @@ await run([
   binaryName,
   "native",
   "tree-sitter",
+  "bash-parser",
   ...assetDirs,
 ]);
 

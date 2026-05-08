@@ -324,6 +324,11 @@ const COMM_TOOL_NAMES = new Set([
   "bash_background", "bash_output", "kill_shell", "send",
 ]);
 
+type DrainPendingToolCallsResult =
+  | { kind: "drained" }
+  | { kind: "suspended"; ask: AskRequest; toolCallId: string }
+  | { kind: "interrupted" };
+
 const SAFE_INTERRUPT_TOOLS = new Set([
   "ask",
   "check_status",
@@ -4176,18 +4181,18 @@ export class Session {
       // pass it to tool executors (e.g. client-side web_search).
       const turnSignalState = this._installCurrentTurnSignal(options?.signal);
 
+      const interruptionStartIdx = this._findEarliestPendingToolCallLogIndex();
+
       try {
         // Drain any pending tool_calls (including the just-approved one and any
         // siblings that were emitted in parallel but never reached). This is the
         // single, canonical execution path post-approval. Stops on suspension.
-        const suspended = await this._drainPendingToolCalls();
-        if (suspended) {
+        const drainResult = await this._drainPendingToolCalls(turnSignalState.signal);
+        if (drainResult.kind === "suspended") {
           return "";
         }
-
-        // If the drain was interrupted (e.g. user pressed Ctrl+C during a
-        // client-side web_search), stop before activation.
-        if (turnSignalState.signal.aborted) {
+        if (drainResult.kind === "interrupted") {
+          this._finalizeDrainInterruptedWork(interruptionStartIdx);
           return "";
         }
 
@@ -4215,18 +4220,71 @@ export class Session {
   }
 
   /**
+   * Resume-drain interruption starts from the earliest unresolved tool_call in
+   * the current turn, not from the current log tail: orphan tool_calls were
+   * emitted before the approval ask and must be visible to interruption cleanup.
+   */
+  private _findEarliestPendingToolCallLogIndex(): number {
+    const resultIds = new Set<string>();
+    for (const entry of this._log) {
+      if (entry.type !== "tool_result") continue;
+      if (entry.discarded) continue;
+      if (entry.turnIndex !== this._turnCount) continue;
+      const id = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
+      if (id) resultIds.add(id);
+    }
+
+    for (let index = 0; index < this._log.length; index += 1) {
+      const entry = this._log[index]!;
+      if (entry.type !== "tool_call") continue;
+      if (entry.discarded) continue;
+      if (entry.turnIndex !== this._turnCount) continue;
+      const toolCallId = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
+      if (!toolCallId || resultIds.has(toolCallId)) continue;
+      return index;
+    }
+
+    return this._log.length;
+  }
+
+  private _finalizeDrainInterruptedWork(fromLogIndex: number): void {
+    this._handleInterruption(fromLogIndex, "", { activationCompleted: false });
+
+    for (let index = fromLogIndex; index < this._log.length; index += 1) {
+      const entry = this._log[index]!;
+      if (entry.type !== "tool_call") continue;
+      if (entry.turnIndex !== this._turnCount) continue;
+      const meta = entry.meta as Record<string, unknown>;
+      const execState = meta["toolExecState"];
+      if (execState === "running" || execState === "not_started") {
+        meta["toolExecState"] = "failed";
+      }
+    }
+
+    this._agentState = "idle";
+    this._activeLogEntryId = null;
+    this._setSelfPhase("idle");
+    if (!this._activeAsk && this._turnCount > 0) {
+      this._finishCurrentWork("interrupted", this._collectInterruptHints());
+    }
+  }
+
+  /**
    * Drain pending tool_calls in the current turn (in emission order).
    * For each: gate → execute → append tool_result, updating tool_call meta.
-   * Returns true if a new approval ask was raised (suspends the loop).
+   * Returns a structured result so approval suspension and interruption are
+   * not collapsed into the same empty-string resume path.
    *
    * This is the single canonical path for executing tool_calls outside of
    * the streaming tool-loop — used after approval resume and to handle
    * orphan parallel tool_calls.
    */
-  private async _drainPendingToolCalls(): Promise<boolean> {
+  private async _drainPendingToolCalls(signal?: AbortSignal): Promise<DrainPendingToolCallsResult> {
     while (true) {
+      if (signal?.aborted) return { kind: "interrupted" };
+
       const next = this._findNextPendingToolCall();
-      if (!next) return false;
+      if (!next) return { kind: "drained" };
 
       // Mark as running in tool_call meta so the display shows shimmer.
       this._updateToolCallExecState(next.toolCallId, "running");
@@ -4246,6 +4304,10 @@ export class Session {
       allowOnce = this._permissionAdvisor["_allowOnceGrants"].has(next.toolCallId);
       if (!allowOnce) {
         const decision = await this._beforeToolExecute(ctx);
+        if (signal?.aborted) {
+          this._updateToolCallExecState(next.toolCallId, "not_started");
+          return { kind: "interrupted" };
+        }
         if (decision && decision.kind === "ask") {
           const ask = decision.ask;
           const askContextId = this._findToolCallContextId(next.toolCallId, next.roundIndex);
@@ -4264,7 +4326,7 @@ export class Session {
           ), false);
           this._pendingTurnState = { stage: "activation" };
           this.onSaveRequest?.();
-          return true;
+          return { kind: "suspended", ask, toolCallId: next.toolCallId };
         }
         if (decision && decision.kind === "deny") {
           denyMessage = decision.message;
@@ -4279,6 +4341,10 @@ export class Session {
             toolArgs: next.toolArgs,
             toolCallId: next.toolCallId,
           });
+          if (signal?.aborted) {
+            this._updateToolCallExecState(next.toolCallId, "not_started");
+            return { kind: "interrupted" };
+          }
           if (hookResult.decision === "deny") {
             denyMessage = hookResult.denyReason ?? "Denied by hook";
           } else if (hookResult.updatedInput) {
@@ -4301,11 +4367,18 @@ export class Session {
       } else {
         const executor = this._toolExecutors[next.toolName];
         try {
+          if (signal?.aborted) {
+            this._updateToolCallExecState(next.toolCallId, "not_started");
+            return { kind: "interrupted" };
+          }
           if (!executor) {
             resultContent = `ERROR: No executor for tool '${next.toolName}'`;
             isError = true;
           } else {
-            const result = await executor(next.toolArgs, { signal: this._currentTurnSignal ?? undefined });
+            const result = await executor(next.toolArgs, { signal });
+            // Keep toolExecState as "running" here — _completeMissingToolResultsFromLog
+            // uses it to distinguish "ran but interrupted" (partial effects) from "never ran".
+            if (signal?.aborted) return { kind: "interrupted" };
             if (typeof result === "string") {
               resultContent = result;
             } else if (result instanceof ToolResult) {
@@ -4320,6 +4393,9 @@ export class Session {
             isError = resultContent.startsWith("ERROR:");
           }
         } catch (e) {
+          if ((e as any)?.name === "AbortError" || signal?.aborted) {
+            return { kind: "interrupted" };
+          }
           resultContent = `ERROR: ${e instanceof Error ? e.message : String(e)}`;
           isError = true;
         }

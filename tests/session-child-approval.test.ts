@@ -380,9 +380,9 @@ describe("child approval routing", () => {
     root._toolExecutors = { write_file: executor };
     root._beforeToolExecute = mock(async () => undefined);
 
-    const suspended = await root._drainPendingToolCalls();
+    const result = await root._drainPendingToolCalls(abortController.signal);
 
-    expect(suspended).toBe(false);
+    expect(result).toEqual({ kind: "drained" });
     expect(executor).toHaveBeenCalledOnce();
   });
 });

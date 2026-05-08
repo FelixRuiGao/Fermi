@@ -7,6 +7,7 @@
  */
 
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { Language, Parser, type Node as TreeNode } from "web-tree-sitter";
@@ -28,11 +29,23 @@ const DEFAULT_TIMEOUT_MS = 50;
 // Singleton parser initialization
 let parserInit: Promise<Parser> | null = null;
 
+function isCompiledBinary(): boolean {
+  return import.meta.dirname.includes("$bunfs") || /^B:[\\/]~BUN/i.test(import.meta.dirname);
+}
+
 function resolveWebTreeSitterWasmPath(): string {
+  if (isCompiledBinary()) {
+    const p = join(dirname(process.execPath), "bash-parser", "tree-sitter.wasm");
+    if (existsSync(p)) return p;
+  }
   return require.resolve("web-tree-sitter/tree-sitter.wasm");
 }
 
 function resolveTreeSitterBashWasmPath(): string {
+  if (isCompiledBinary()) {
+    const p = join(dirname(process.execPath), "bash-parser", "tree-sitter-bash.wasm");
+    if (existsSync(p)) return p;
+  }
   return join(dirname(require.resolve("tree-sitter-bash/package.json")), "tree-sitter-bash.wasm");
 }
 

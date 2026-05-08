@@ -935,6 +935,118 @@ describe("session storage lifecycle", () => {
     }
   });
 
+  it("finalizes approval-resumed drain interruption as interrupted work", async () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._pendingTurnState = { stage: "activation" };
+      (session as any)._beginWorkIfNeeded();
+      (session as any)._log.push(createToolCall(
+        "tc-001",
+        1,
+        0,
+        "bash npm install",
+        { id: "call-1", name: "bash", arguments: { command: "npm install" } },
+        { toolCallId: "call-1", toolName: "bash", agentName: "Primary", contextId: "ctx-bash" },
+      ));
+
+      const controller = new AbortController();
+      const executor = mock(async (_args: Record<string, unknown>, ctx?: { signal?: AbortSignal }) => {
+        expect(ctx?.signal).toBeInstanceOf(AbortSignal);
+        controller.abort();
+        return "SHOULD_NOT_BE_WRITTEN";
+      });
+      (session as any)._toolExecutors = { bash: executor };
+      (session as any)._beforeToolExecute = mock(async () => undefined);
+      (session as any)._runTurnActivationLoop = mock(async () => {
+        throw new Error("activation loop should not run after interrupted drain");
+      });
+
+      const result = await session.resumePendingTurn({ signal: controller.signal });
+
+      expect(result).toBe("");
+      expect(session.lastTurnEndStatus).toBe("interrupted");
+      expect(session.currentTurnRunning).toBe(false);
+      expect((session as any)._runTurnActivationLoop).not.toHaveBeenCalled();
+
+      const log = session.log as any[];
+      const workEnd = log.find((entry) => entry.type === "work_end");
+      expect(workEnd?.meta.status).toBe("interrupted");
+
+      const toolResults = log.filter((entry) =>
+        entry.type === "tool_result" && entry.meta?.toolCallId === "call-1"
+      );
+      expect(toolResults).toHaveLength(1);
+      expect(toolResults[0].content.content).toContain("Tool execution was interrupted");
+      expect(toolResults[0].content.content).toContain("partial effects");
+      expect(toolResults[0].content.content).not.toContain("SHOULD_NOT_BE_WRITTEN");
+
+      const toolCall = log.find((entry) => entry.type === "tool_call" && entry.meta?.toolCallId === "call-1");
+      expect(toolCall?.meta.toolExecState).toBe("failed");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps approval-resumed drain suspension open without ending work", async () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._pendingTurnState = { stage: "activation" };
+      (session as any)._beginWorkIfNeeded();
+      (session as any)._log.push(createToolCall(
+        "tc-001",
+        1,
+        0,
+        "edit_file src/a.ts",
+        { id: "call-1", name: "edit_file", arguments: { path: "src/a.ts" } },
+        { toolCallId: "call-1", toolName: "edit_file", agentName: "Primary", contextId: "ctx-edit" },
+      ));
+
+      const ask = {
+        id: "approval-test",
+        kind: "approval",
+        createdAt: new Date(0).toISOString(),
+        source: { agentId: "Primary" },
+        summary: "Allow edit_file?",
+        payload: {
+          toolCallId: "call-1",
+          toolName: "edit_file",
+          toolSummary: "Primary is calling edit_file",
+          permissionClass: "write_potent",
+          offers: [{ type: "tool_once", label: "Allow once" }],
+        },
+        options: ["Allow once", "Deny"],
+      };
+      (session as any)._beforeToolExecute = mock(async () => ({ kind: "ask", ask }));
+      (session as any)._toolExecutors = {
+        edit_file: mock(async () => "should not execute while asking"),
+      };
+      (session as any)._runTurnActivationLoop = mock(async () => {
+        throw new Error("activation loop should not run while suspended");
+      });
+
+      const result = await session.resumePendingTurn();
+
+      expect(result).toBe("");
+      expect(session.getPendingAsk()?.id).toBe("approval-test");
+      expect(session.hasPendingTurnToResume()).toBe(true);
+      expect(session.log.some((entry) => entry.type === "work_end")).toBe(false);
+      expect(session.lastTurnEndStatus).toBeNull();
+      expect((session as any)._runTurnActivationLoop).not.toHaveBeenCalled();
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("interruption cleanup drops incomplete reasoning, marks partial text, and closes pending tool calls", () => {
     const baseDir = makeTempDir("fermi-lifecycle-base-");
     const projectRoot = makeTempDir("fermi-lifecycle-project-");
