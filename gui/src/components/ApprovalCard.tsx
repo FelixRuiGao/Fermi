@@ -1,10 +1,10 @@
 /**
  * Inline approval card. Renders when the active session has a pending
- * `approval` ask. Keyboard navigable (↑↓ + ↵ + esc).
+ * `approval` ask.
  */
 
 import { useEffect, useState } from 'react'
-import { ShieldCheck, ShieldAlert, Check, X, ChevronUp, ChevronDown } from 'lucide-react'
+import { ShieldCheck, ShieldAlert, Check, X } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { api } from '@/lib/api.js'
 import type { SessionTab } from '@shared/rpc.js'
@@ -46,6 +46,10 @@ export function AskBar({ tab }: { tab: SessionTab }): JSX.Element | null {
   const [ask, setAsk] = useState<AnyAsk | null>(null)
 
   useEffect(() => {
+    if (tab.status === 'draft') {
+      setAsk(null)
+      return
+    }
     let cancelled = false
     const refresh = async (): Promise<void> => {
       try {
@@ -63,7 +67,7 @@ export function AskBar({ tab }: { tab: SessionTab }): JSX.Element | null {
       }
     })
     return () => { cancelled = true; off() }
-  }, [tab.tabId])
+  }, [tab.status, tab.tabId])
 
   if (!ask) return null
   if (ask.kind === 'approval') return <ApprovalCard tab={tab} ask={ask} />
@@ -78,6 +82,11 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
   const offers = ask.payload.offers
   const denyIndex = options.findIndex((o) => /^deny/i.test(o))
   const isDangerous = ask.payload.permissionClass.includes('danger')
+
+  useEffect(() => {
+    setSelected(0)
+    setSubmitting(false)
+  }, [ask.id])
 
   const resolve = async (idx: number): Promise<void> => {
     if (submitting) return
@@ -115,8 +124,8 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
   }, [selected, submitting, options.length, denyIndex])
 
   return (
-    <div className="px-8 pb-2 pt-1">
-      <div className="mx-auto max-w-[760px]">
+    <div className="px-6 pb-2 pt-1">
+      <div className="mx-auto max-w-[840px]">
         <div
           className={cn(
             'rounded-xl border bg-pane-2',
@@ -149,6 +158,7 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
               return (
                 <li key={i}>
                   <button
+                    type="button"
                     onClick={() => void resolve(i)}
                     onMouseEnter={() => setSelected(i)}
                     disabled={submitting}
@@ -172,20 +182,24 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
                         {offer.scope}
                       </span>
                     )}
-                    {active && <span className="mono text-[12px] text-ink-4">↵</span>}
                   </button>
                 </li>
               )
             })}
           </ul>
 
-          <div className="flex items-center justify-between border-t border-line-soft px-4 py-2 text-[14.5px] text-ink-4">
-            <span className="mono inline-flex items-center gap-2">
-              <ChevronUp className="h-3 w-3" />
-              <ChevronDown className="h-3 w-3" />
-              move · ↵ confirm · esc deny
+          <div className="flex items-center justify-between border-t border-line-soft px-4 py-2">
+            <span className="mono truncate text-[12px] uppercase tracking-wider text-ink-4">
+              {ask.payload.toolName}
             </span>
-            <span className="mono text-ink-3">{ask.payload.toolName}</span>
+            <span
+              className={cn(
+                'rounded-md px-1.5 py-0.5 text-[12px] font-medium',
+                isDangerous ? 'bg-error/10 text-error' : 'bg-success/10 text-success',
+              )}
+            >
+              {isDangerous ? 'review' : 'ready'}
+            </span>
           </div>
         </div>
       </div>
@@ -196,6 +210,11 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
 function QuestionCard({ tab, ask }: { tab: SessionTab; ask: AgentQuestionAsk }): JSX.Element {
   const [answers, setAnswers] = useState<number[]>(() => ask.payload.questions.map(() => 0))
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    setAnswers(ask.payload.questions.map(() => 0))
+    setSubmitting(false)
+  }, [ask.id, ask.payload.questions])
 
   const submit = async (): Promise<void> => {
     if (submitting) return
@@ -216,8 +235,8 @@ function QuestionCard({ tab, ask }: { tab: SessionTab; ask: AgentQuestionAsk }):
   }
 
   return (
-    <div className="px-8 pb-2 pt-1">
-      <div className="mx-auto max-w-[760px]">
+    <div className="px-6 pb-2 pt-1">
+      <div className="mx-auto max-w-[840px]">
         <div className="rounded-xl border border-line bg-pane-2 p-4">
           <div className="text-[14.5px] font-medium text-ink">{ask.summary}</div>
           <div className="mt-3 space-y-3">
@@ -227,10 +246,11 @@ function QuestionCard({ tab, ask }: { tab: SessionTab; ask: AgentQuestionAsk }):
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {q.options.map((opt, oi) => (
                     <button
+                      type="button"
                       key={oi}
                       onClick={() => setAnswers((a) => a.map((v, idx) => (idx === qi ? oi : v)))}
                       className={cn(
-                        'rounded-[10px] px-2.5 py-1 text-[15.5px] transition',
+                        'rounded-[10px] px-2.5 py-1 text-[14px] transition',
                         answers[qi] === oi
                           ? 'bg-ink text-pane'
                           : 'bg-line-soft text-ink-2 hover:bg-line',
@@ -245,9 +265,10 @@ function QuestionCard({ tab, ask }: { tab: SessionTab; ask: AgentQuestionAsk }):
           </div>
           <div className="mt-3 flex justify-end">
             <button
+              type="button"
               onClick={() => void submit()}
               disabled={submitting}
-              className="rounded-[10px] bg-ink px-3 py-1.5 text-[15.5px] font-medium text-pane hover:bg-ink-2 disabled:opacity-50"
+              className="rounded-[10px] bg-ink px-3 py-1.5 text-[14px] font-medium text-pane hover:bg-ink-2 disabled:opacity-50"
             >
               Submit
             </button>

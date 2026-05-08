@@ -3,7 +3,22 @@
  * The preload script exposes `window.fermi`; we re-export it here with types
  * so the rest of the codebase can import a single api object.
  */
-import type { CreateTabInput, RpcEvent, SessionTab } from '@shared/rpc.js'
+import type {
+  CreateTabInput,
+  ArchiveSessionInput,
+  GitBulkActionInput,
+  GitFileActionInput,
+  GitFileDiffInput,
+  GitStatus,
+  RpcEvent,
+  SetSessionPinnedInput,
+  SessionTab,
+  SettingsSnapshot,
+  WorkspaceFileEntry,
+  WorkspaceHistoryGroup,
+  WorkspaceTextSearchInput,
+  WorkspaceTextSearchResult,
+} from '@shared/rpc.js'
 
 interface FermiApi {
   tabs: {
@@ -15,8 +30,30 @@ interface FermiApi {
     request<T = unknown>(tabId: string, method: string, params?: unknown): Promise<T>
     onEvent(handler: (e: RpcEvent) => void): () => void
   }
+  history: {
+    listWorkspaces(): Promise<readonly WorkspaceHistoryGroup[]>
+    archiveSession(input: ArchiveSessionInput): Promise<void>
+    setSessionPinned(input: SetSessionPinnedInput): Promise<void>
+  }
   workspace: {
     pickDirectory(): Promise<string | null>
+    pickFiles(workDir: string): Promise<string[]>
+    listFiles(workDir: string): Promise<readonly WorkspaceFileEntry[]>
+    searchText(input: WorkspaceTextSearchInput): Promise<readonly WorkspaceTextSearchResult[]>
+    openPath(workDir: string): Promise<void>
+  }
+  git: {
+    status(workDir: string): Promise<GitStatus>
+    diff(input: GitFileDiffInput): Promise<string>
+    stage(input: GitFileActionInput): Promise<void>
+    unstage(input: GitFileActionInput): Promise<void>
+    stageAll(input: GitBulkActionInput): Promise<void>
+    unstageAll(input: GitBulkActionInput): Promise<void>
+  }
+  settings: {
+    get(): Promise<SettingsSnapshot>
+    setAutoUpdate(enabled: boolean): Promise<SettingsSnapshot>
+    openFile(): Promise<void>
   }
   theme: {
     getSystem(): Promise<'dark' | 'light'>

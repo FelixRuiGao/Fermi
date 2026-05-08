@@ -14,6 +14,9 @@ import {
   ChevronRight,
   AlertTriangle,
   File,
+  Copy,
+  Check,
+  Undo2,
 } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { Markdown } from '@/components/Markdown.js'
@@ -23,6 +26,7 @@ import { DiffView } from '@/components/DiffView.js'
 interface LogEntry {
   id: string
   type: string
+  turnIndex?: number
   display?: string
   tuiVisible?: boolean
   discarded?: boolean
@@ -33,14 +37,27 @@ interface LogEntry {
 interface ToolCallEntry extends LogEntry { type: 'tool_call' }
 interface ToolResultEntry extends LogEntry { type: 'tool_result' }
 
+export interface TranscriptRewindTarget {
+  readonly turnIndex: number
+  readonly preview: string
+}
+
 export function Transcript({
   entries,
   activeId,
   workDir,
+  markdownMode,
+  emptyLabel = 'Ready',
+  canRewind = false,
+  onRequestRewind,
 }: {
   entries: unknown[]
   activeId: string | null
   workDir?: string
+  markdownMode: 'rendered' | 'raw'
+  emptyLabel?: string | null
+  canRewind?: boolean
+  onRequestRewind?: (target: TranscriptRewindTarget) => void
 }): JSX.Element {
   const items = useMemo(() => {
     const arr = entries as LogEntry[]
@@ -64,7 +81,7 @@ export function Transcript({
       if (e.type === 'tool_call') {
         const callId = (e.meta as Record<string, unknown> | undefined)?.['toolCallId']
         const result = typeof callId === 'string' ? resultByCallId.get(callId) ?? null : null
-        const toolName = (e.meta as Record<string, unknown> | undefined)?.['toolName'] as string ?? ''
+        const toolName = getToolName(e)
         const pair: ToolPair = { call: e as ToolCallEntry, result }
 
         if (isExploreTool(toolName)) {
@@ -95,53 +112,60 @@ export function Transcript({
 
   if (items.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
-          <p className="text-[15px] text-ink-3">Send a message to begin.</p>
-          <p className="mt-1 text-[16px] text-ink-4">The agent will work in this directory and may modify files.</p>
-        </div>
+      <div data-transcript-root className="flex h-full items-center justify-center">
+        {emptyLabel && <div className="text-[15px] text-ink-3">{emptyLabel}</div>}
       </div>
     )
   }
 
   return (
-    <div className="mx-auto max-w-[760px] px-8 py-6">
-      {items.map((item) => {
-        if (item.kind === 'reasoning') {
-          const lastEntry = item.entries[item.entries.length - 1]!
-          const active = lastEntry.id === activeId
-          const combined = item.entries.map((e) => e.display ?? '').filter(Boolean).join('\n')
-          return <ThoughtBlock key={item.entries[0]!.id} text={combined} active={active} />
-        }
-        if (item.kind === 'explore') {
-          // Single explore tool → render as plain dim text line (same as grouped items)
-          if (item.pairs.length === 1) {
-            const p = item.pairs[0]!
+    <div data-transcript-root className="px-6 py-6">
+      <div data-transcript-shell className="mx-auto max-w-[840px]">
+        {items.map((item) => {
+          if (item.kind === 'reasoning') {
+            const lastEntry = item.entries[item.entries.length - 1]!
+            const active = lastEntry.id === activeId
+            const combined = item.entries.map((e) => e.display ?? '').filter(Boolean).join('\n')
+            return <ThoughtBlock key={item.entries[0]!.id} text={combined} active={active} />
+          }
+          if (item.kind === 'explore') {
+            // Single explore tool → render as plain dim text line (same as grouped items)
+            if (item.pairs.length === 1) {
+              const p = item.pairs[0]!
+              return (
+                <ExploreItem
+                  key={p.call.id}
+                  call={p.call}
+                  result={p.result}
+                  workDir={workDir}
+                />
+              )
+            }
             return (
-              <ExploreItem
-                key={p.call.id}
-                call={p.call}
-                result={p.result}
+              <ExploreGroup
+                key={item.pairs[0]!.call.id}
+                pairs={item.pairs}
                 workDir={workDir}
               />
             )
           }
-          return (
-            <ExploreGroup
-              key={item.pairs[0]!.call.id}
-              pairs={item.pairs}
-              workDir={workDir}
-            />
-          )
-        }
-        if (item.kind === 'tool') {
-          const active = item.call.id === activeId
-          const meta = item.call.meta as Record<string, unknown> | undefined
-          const toolName = (meta?.['toolName'] as string) ?? 'tool'
-          const isFileModify = toolName === 'write_file' || toolName === 'edit_file'
-          if (isFileModify) {
+          if (item.kind === 'tool') {
+            const active = item.call.id === activeId
+            const toolName = getToolName(item.call)
+            const isFileModify = toolName === 'write_file' || toolName === 'edit_file'
+            if (isFileModify) {
+              return (
+                <FileEditPill
+                  key={item.call.id}
+                  call={item.call}
+                  result={item.result}
+                  active={active}
+                  workDir={workDir}
+                />
+              )
+            }
             return (
-              <FileEditPill
+              <ToolRow
                 key={item.call.id}
                 call={item.call}
                 result={item.result}
@@ -151,34 +175,53 @@ export function Transcript({
             )
           }
           return (
-            <ToolRow
-              key={item.call.id}
-              call={item.call}
-              result={item.result}
-              active={active}
-              workDir={workDir}
+            <EntryRow
+              key={item.entry.id}
+              entry={item.entry}
+              active={item.entry.id === activeId}
+              markdownMode={markdownMode}
+              canRewind={canRewind}
+              onRequestRewind={onRequestRewind}
             />
           )
-        }
-        return <EntryRow key={item.entry.id} entry={item.entry} active={item.entry.id === activeId} />
-      })}
+        })}
+      </div>
     </div>
   )
 }
 
-function EntryRow({ entry, active }: { entry: LogEntry; active: boolean }): JSX.Element {
-  const display = entry.display ?? ''
+function EntryRow({
+  entry,
+  active,
+  markdownMode,
+  canRewind,
+  onRequestRewind,
+}: {
+  entry: LogEntry
+  active: boolean
+  markdownMode: 'rendered' | 'raw'
+  canRewind: boolean
+  onRequestRewind?: (target: TranscriptRewindTarget) => void
+}): JSX.Element {
+  const display = getEntryText(entry)
   switch (entry.type) {
     case 'user_message':
-      return <UserBubble text={display} />
+      return (
+        <UserBubble
+          text={display}
+          turnIndex={entry.turnIndex}
+          canRewind={canRewind}
+          onRequestRewind={onRequestRewind}
+        />
+      )
     case 'assistant_text':
-      return <AssistantText text={display} active={active} />
+      return <AssistantText text={display} active={active} markdownMode={markdownMode} />
     case 'reasoning':
       // Handled by the reasoning-merge logic above; should not reach here.
       return <></>
 
     case 'agent_result':
-      return <AssistantText text={display} active={false} />
+      return <AssistantText text={display} active={false} markdownMode={markdownMode} />
     case 'sub_agent_start':
     case 'sub_agent_end':
     case 'sub_agent_tool_call':
@@ -193,6 +236,8 @@ function EntryRow({ entry, active }: { entry: LogEntry; active: boolean }): JSX.
       return <InterruptedRow text={display} />
     case 'turn_start':
     case 'turn_end':
+    case 'input_received':
+    case 'work_end':
     case 'no_reply':
     case 'token_update':
     case 'system_prompt':
@@ -206,9 +251,28 @@ function EntryRow({ entry, active }: { entry: LogEntry; active: boolean }): JSX.
 
 /* ── User message bubble (neutral, right-aligned) ── */
 
-function UserBubble({ text }: { text: string }): JSX.Element {
+function UserBubble({
+  text,
+  turnIndex,
+  canRewind,
+  onRequestRewind,
+}: {
+  text: string
+  turnIndex?: number
+  canRewind: boolean
+  onRequestRewind?: (target: TranscriptRewindTarget) => void
+}): JSX.Element {
+  const rewindable = canRewind && typeof turnIndex === 'number' && onRequestRewind
   return (
-    <div className="my-3.5 flex justify-end">
+    <div className="group/message my-3.5 flex items-start justify-end gap-2">
+      {rewindable && (
+        <MessageRewindButton
+          turnIndex={turnIndex}
+          preview={text}
+          onRequestRewind={onRequestRewind}
+        />
+      )}
+      <MessageCopyButton text={text} label="Copy message" align="left" />
       <div
         className="max-w-[72%] whitespace-pre-wrap rounded-2xl px-4 py-[11px] text-[15.5px] leading-[1.55]"
         style={{ background: 'var(--color-bubble)', color: 'var(--color-bubble-ink)' }}
@@ -216,6 +280,32 @@ function UserBubble({ text }: { text: string }): JSX.Element {
         {text}
       </div>
     </div>
+  )
+}
+
+function MessageRewindButton({
+  turnIndex,
+  preview,
+  onRequestRewind,
+}: {
+  turnIndex: number
+  preview: string
+  onRequestRewind: (target: TranscriptRewindTarget) => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={() => onRequestRewind({ turnIndex, preview })}
+      aria-label="Rewind before this message"
+      title="Rewind before this message"
+      className={cn(
+        'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-4 opacity-0 transition',
+        'hover:bg-line-soft hover:text-ink focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        'group-hover/message:opacity-100',
+      )}
+    >
+      <Undo2 className="h-3.5 w-3.5" strokeWidth={1.7} />
+    </button>
   )
 }
 
@@ -241,8 +331,10 @@ function ThoughtBlock({ text, active }: { text: string; active: boolean }): JSX.
   return (
     <div className="my-2">
       <button
+        type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[15px]"
+        className="flex min-h-7 items-center gap-1.5 text-[15px]"
       >
         <span className="font-medium text-ink-3">Thinking</span>
         <ChevronRight
@@ -276,12 +368,79 @@ function renderThoughtText(text: string): (string | JSX.Element)[] {
 
 /* ── Assistant text (document prose with markdown) ── */
 
-function AssistantText({ text, active }: { text: string; active: boolean }): JSX.Element {
+function AssistantText({
+  text,
+  active,
+  markdownMode,
+}: {
+  text: string
+  active: boolean
+  markdownMode: 'rendered' | 'raw'
+}): JSX.Element {
   if (!text.trim()) return <></>
+  if (markdownMode === 'raw') {
+    return (
+      <div className="group/message relative my-2">
+        <MessageCopyButton text={text} label="Copy response" align="right" />
+        <div
+          className={cn(
+            'mono whitespace-pre-wrap pr-9 text-[14.5px] leading-[1.65] text-ink-2',
+            active && 'shimmer-text',
+          )}
+        >
+          {text}
+        </div>
+      </div>
+    )
+  }
   return (
-    <div className="my-2">
+    <div className="group/message relative my-2">
+      <MessageCopyButton text={text} label="Copy response" align="right" />
       <Markdown text={text} className={cn(active && 'shimmer-text')} />
     </div>
+  )
+}
+
+function MessageCopyButton({
+  text,
+  label,
+  align,
+}: {
+  text: string
+  label: string
+  align: 'left' | 'right'
+}): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const disabled = !text.trim()
+
+  const copy = async (): Promise<void> => {
+    if (disabled) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1100)
+    } catch (err) {
+      console.error('copy message failed', err)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      disabled={disabled}
+      aria-label={copied ? 'Copied' : label}
+      title={copied ? 'Copied' : label}
+      className={cn(
+        'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-4 opacity-0 transition',
+        'hover:bg-line-soft hover:text-ink focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        'group-hover/message:opacity-100',
+        align === 'right' && 'absolute right-0 top-0',
+        disabled && 'pointer-events-none',
+      )}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
   )
 }
 
@@ -299,8 +458,7 @@ function ToolRow({
   workDir?: string
 }): JSX.Element {
   const [open, setOpen] = useState(false)
-  const meta = call.meta as Record<string, unknown> | undefined
-  const toolName = (meta?.['toolName'] as string) ?? 'tool'
+  const toolName = getToolName(call)
   const display = call.display ?? toolName
   const space = display.indexOf(' ')
   const cmd = space > 0 ? display.slice(space + 1) : display
@@ -315,6 +473,8 @@ function ToolRow({
   return (
     <div className="my-1.5">
       <button
+        type="button"
+        aria-expanded={open}
         onClick={() => canExpand && setOpen(!open)}
         disabled={!canExpand && !running}
         className={cn(
@@ -323,12 +483,12 @@ function ToolRow({
           canExpand && 'cursor-pointer hover:border-line',
         )}
       >
-        <span className="mono w-3.5 shrink-0 text-center text-[15px] text-ink-3">
-          {running ? <span className="pulse-ring" /> : prefix}
+        <span className="mono w-3.5 shrink-0 text-center text-[14px] text-ink-3">
+          {running ? <span className="status-dot" /> : prefix}
         </span>
         <span
           className={cn(
-            'mono flex-1 truncate text-[16px] leading-[1.4]',
+            'mono flex-1 truncate text-[15px] leading-[1.4]',
             running ? 'shimmer-text' : 'text-code-ink',
           )}
         >
@@ -347,7 +507,7 @@ function ToolRow({
       {open && result && (
         <div
           className={cn(
-            'mono my-1 rounded-[10px] border border-line-soft bg-code-bg px-3.5 py-3 text-[15.5px] leading-[1.6] text-ink-2',
+            'mono my-1 rounded-[10px] border border-line-soft bg-code-bg px-3.5 py-3 text-[13.5px] leading-[1.6] text-ink-2',
             'max-h-[400px] overflow-auto whitespace-pre',
             isError && 'border-error/30 text-error',
           )}
@@ -390,11 +550,13 @@ function FileEditPill({
   return (
     <div className="my-1 inline-block">
       <button
+        type="button"
+        aria-expanded={showDiff}
         onClick={() => setShowDiff(!showDiff)}
         className={cn(
           'inline-flex items-center gap-2 rounded-[10px] border border-line-soft bg-code-bg px-3 py-1.5',
           'transition hover:border-line',
-          active && 'animate-pulse',
+          active && 'border-accent/50',
         )}
       >
         <File className="h-3 w-3 text-ink-3" strokeWidth={1.6} />
@@ -506,7 +668,18 @@ function ExploreGroup({
   pairs: Array<{ call: ToolCallEntry; result: ToolResultEntry | null }>
   workDir?: string
 }): JSX.Element {
-  const [open, setOpen] = useState(true)
+  const running = pairs.some((p) => !p.result)
+  const [open, setOpen] = useState(running)
+  const prevRunning = useRef(running)
+
+  useEffect(() => {
+    if (running) {
+      setOpen(true)
+    } else if (prevRunning.current) {
+      setOpen(false)
+    }
+    prevRunning.current = running
+  }, [running])
 
   // Count by display name (matching TUI: Read/List/Glob/Search)
   const counts = new Map<string, number>()
@@ -522,8 +695,10 @@ function ExploreGroup({
   return (
     <div className="my-2">
       <button
+        type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[15px]"
+        className="flex min-h-7 items-center gap-1.5 text-[15px]"
       >
         <span className="font-medium text-ink-3">Explore</span>
         <span className="text-ink-4">({summary})</span>
@@ -535,7 +710,7 @@ function ExploreGroup({
       {open && (
         <div className="mt-1.5 flex flex-col gap-0.5 pl-0.5">
           {pairs.map((p) => (
-            <ExploreItem key={p.call.id} call={p.call} result={p.result} workDir={workDir} />
+            <ExploreItem key={p.call.id} call={p.call} result={p.result} workDir={workDir} dense />
           ))}
         </div>
       )}
@@ -547,13 +722,14 @@ function ExploreItem({
   call,
   result,
   workDir,
+  dense = false,
 }: {
   call: ToolCallEntry
   result: ToolResultEntry | null
   workDir?: string
+  dense?: boolean
 }): JSX.Element {
-  const meta = call.meta as Record<string, unknown> | undefined
-  const toolName = (meta?.['toolName'] as string) ?? 'tool'
+  const toolName = getToolName(call)
   const display = call.display ?? toolName
   const isError = (result?.meta as Record<string, unknown> | undefined)?.['isError'] === true
 
@@ -561,11 +737,29 @@ function ExploreItem({
   const desc = formatExploreDesc(toolName, display, workDir)
 
   return (
-    <div className="text-[15px] leading-[1.6] text-ink-4">
+    <div className={cn(dense ? 'my-0.5' : 'my-2', 'text-[14.5px] leading-[1.55] text-ink-3')}>
       {desc}
       {isError && ' failed'}
     </div>
   )
+}
+
+function getToolName(entry: LogEntry): string {
+  const meta = entry.meta as Record<string, unknown> | undefined
+  const metaName = meta?.['toolName']
+  if (typeof metaName === 'string' && metaName.length > 0) return metaName
+
+  const content = entry.content as { name?: unknown; toolName?: unknown } | undefined
+  if (typeof content?.name === 'string' && content.name.length > 0) return content.name
+  if (typeof content?.toolName === 'string' && content.toolName.length > 0) return content.toolName
+
+  return 'tool'
+}
+
+function getEntryText(entry: LogEntry): string {
+  if (typeof entry.display === 'string') return entry.display
+  if (typeof entry.content === 'string') return entry.content
+  return ''
 }
 
 function formatExploreDesc(toolName: string, display: string, workDir?: string): string {

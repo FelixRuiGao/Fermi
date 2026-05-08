@@ -22,6 +22,7 @@ interface TabRecord {
   status: 'starting' | 'ready' | 'error' | 'closed'
   errorMessage?: string
   readonly createdAt: number
+  lastActiveAt: number
 }
 
 function snapshot(r: TabRecord): SessionTab {
@@ -34,6 +35,7 @@ function snapshot(r: TabRecord): SessionTab {
     selectedModel: r.selectedModel,
     modelProvider: r.modelProvider,
     createdAt: r.createdAt,
+    lastActiveAt: r.lastActiveAt,
     status: r.status,
     errorMessage: r.errorMessage,
   }
@@ -65,10 +67,14 @@ export class SessionManager {
       modelProvider: null,
       status: 'starting',
       createdAt: Date.now(),
+      lastActiveAt: Date.now(),
     }
     this.#tabs.set(tabId, record)
 
     proc.on('event', (method, params) => {
+      if (method === 'ready' || method === 'turn.started' || method === 'log.changed') {
+        record.lastActiveAt = Date.now()
+      }
       if (method === 'ready') {
         const meta = params as ReadyMeta | null
         if (meta) {

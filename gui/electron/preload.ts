@@ -1,5 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTabInput, RpcEvent, SessionTab } from '../shared/rpc.js'
+import type {
+  CreateTabInput,
+  ArchiveSessionInput,
+  GitBulkActionInput,
+  GitFileActionInput,
+  GitFileDiffInput,
+  GitStatus,
+  RpcEvent,
+  SetSessionPinnedInput,
+  SessionTab,
+  SettingsSnapshot,
+  WorkspaceFileEntry,
+  WorkspaceHistoryGroup,
+  WorkspaceTextSearchInput,
+  WorkspaceTextSearchResult,
+} from '../shared/rpc.js'
 
 const api = {
   tabs: {
@@ -16,8 +31,34 @@ const api = {
       return () => ipcRenderer.removeListener('rpc:event', listener)
     },
   },
+  history: {
+    listWorkspaces: (): Promise<readonly WorkspaceHistoryGroup[]> => ipcRenderer.invoke('history:listWorkspaces'),
+    archiveSession: (input: ArchiveSessionInput): Promise<void> => ipcRenderer.invoke('history:archiveSession', input),
+    setSessionPinned: (input: SetSessionPinnedInput): Promise<void> =>
+      ipcRenderer.invoke('history:setSessionPinned', input),
+  },
   workspace: {
     pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('workspace:pickDirectory'),
+    pickFiles: (workDir: string): Promise<string[]> => ipcRenderer.invoke('workspace:pickFiles', workDir),
+    listFiles: (workDir: string): Promise<readonly WorkspaceFileEntry[]> =>
+      ipcRenderer.invoke('workspace:listFiles', workDir),
+    searchText: (input: WorkspaceTextSearchInput): Promise<readonly WorkspaceTextSearchResult[]> =>
+      ipcRenderer.invoke('workspace:searchText', input),
+    openPath: (workDir: string): Promise<void> => ipcRenderer.invoke('workspace:openPath', workDir),
+  },
+  git: {
+    status: (workDir: string): Promise<GitStatus> => ipcRenderer.invoke('git:status', workDir),
+    diff: (input: GitFileDiffInput): Promise<string> => ipcRenderer.invoke('git:diff', input),
+    stage: (input: GitFileActionInput): Promise<void> => ipcRenderer.invoke('git:stage', input),
+    unstage: (input: GitFileActionInput): Promise<void> => ipcRenderer.invoke('git:unstage', input),
+    stageAll: (input: GitBulkActionInput): Promise<void> => ipcRenderer.invoke('git:stageAll', input),
+    unstageAll: (input: GitBulkActionInput): Promise<void> => ipcRenderer.invoke('git:unstageAll', input),
+  },
+  settings: {
+    get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
+    setAutoUpdate: (enabled: boolean): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:setAutoUpdate', enabled),
+    openFile: (): Promise<void> => ipcRenderer.invoke('settings:openFile'),
   },
   theme: {
     getSystem: (): Promise<'dark' | 'light'> => ipcRenderer.invoke('theme:getSystem'),
