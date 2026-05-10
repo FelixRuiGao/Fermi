@@ -1,5 +1,5 @@
 /**
- * Coverage for the May 2026 basic-tool overhaul:
+ * Coverage for the basic-tool overhaul:
  *  - read_file:  offset/limit aliases, per-line truncation
  *  - list_dir:   max_depth, max_entries, skipped-default dirs, file size suffix
  *  - glob:       Bun.Glob path, auto `**\/` prefix, limit cap
@@ -9,7 +9,7 @@
  *  - web_fetch:  middle-cut truncation (covered indirectly via shared util)
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -312,6 +312,238 @@ describe("bash spill", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(artifacts, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// Reviewer-driven regression fixes
+// ---------------------------------------------------------------------
+
+describe("EXCLUDE_DIRS regression: regular files should not be hidden", () => {
+  it("glob finds a regular file named like an excluded directory", async () => {
+    const root = makeTempDir("fermi-fix-excldir-glob-");
+    try {
+      // Extensionless executable script literally named "build" — should be reachable.
+      writeFileSync(join(root, "build"), "#!/bin/sh\necho hi\n", "utf-8");
+      // Also a real "build" directory with something inside (must remain skipped).
+      mkdirSync(join(root, "build_dir"));
+      writeFileSync(join(root, "build_dir", "main.ts"), "// hi", "utf-8");
+      // And a real excluded dir to make sure directory-skip still works.
+      mkdirSync(join(root, "node_modules"));
+      writeFileSync(join(root, "node_modules", "should-not-appear.ts"), "//", "utf-8");
+
+      const r = await executeTool(
+        "glob",
+        { pattern: "*" },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain("/build");
+      expect(r.content).toContain("main.ts");
+      expect(r.content).not.toContain("should-not-appear.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("list_dir surfaces a regular file named 'dist'", async () => {
+    const root = makeTempDir("fermi-fix-excldir-list-");
+    try {
+      writeFileSync(join(root, "dist"), "binary stub", "utf-8");
+      mkdirSync(join(root, "node_modules"));
+
+      const r = await executeTool("list_dir", { path: "." }, { projectRoot: root });
+      expect(r.content).toContain("dist");
+      // node_modules should still be excluded
+      expect(r.content).toContain("Skipped 1 excluded");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("grep finds matches in a regular file named 'vendor'", async () => {
+    const root = makeTempDir("fermi-fix-excldir-grep-");
+    try {
+      writeFileSync(join(root, "vendor"), "needle\n", "utf-8");
+
+      const r = await executeTool(
+        "grep",
+        { pattern: "needle", path: ".", output_mode: "files_with_matches" },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain("/vendor");
+      expect(r.content).not.toContain("No matches found");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("glob depth guard against circular symlinks", () => {
+  // Skip on Windows where symlink creation needs admin privileges.
+  if (process.platform === "win32") return;
+
+  it("does not recurse forever through a self-referential symlink", async () => {
+    const root = makeTempDir("fermi-fix-glob-symloop-");
+    try {
+      mkdirSync(join(root, "a"));
+      // a/loop -> a (creates an infinite directory loop)
+      symlinkSync(join(root, "a"), join(root, "a", "loop"));
+      writeFileSync(join(root, "a", "real.ts"), "// hi", "utf-8");
+
+      const start = Date.now();
+      const r = await executeTool(
+        "glob",
+        { pattern: "*.ts" },
+        { projectRoot: root },
+      );
+      // Must return promptly (depth guard kicks in) and find the real file.
+      expect(Date.now() - start).toBeLessThan(5000);
+      expect(r.content).toContain("real.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("bash timeout spill threshold", () => {
+  it("spills full output even when only one stream overflows", async () => {
+    const root = makeTempDir("fermi-fix-spill-thresh-proj-");
+    const artifacts = makeTempDir("fermi-fix-spill-thresh-art-");
+    try {
+      // Generate ~120K of stdout (well above half = 100K) then sleep past
+      // the 1s timeout. stderr stays empty so total < BASH_MAX_OUTPUT_CHARS,
+      // which previously suppressed the spill. With the fix, the spill is
+      // written whenever a single stream exceeds the per-stream cap.
+      const cmd = "yes 'X' | head -n 60000 && sleep 3";
+      const r = await executeTool(
+        "bash",
+        { command: cmd, timeout: 1 },
+        { projectRoot: root, sessionArtifactsDir: artifacts },
+      );
+      expect(r.content).toContain("timed out");
+      expect(r.content).toMatch(/Full untruncated output saved to: .+\.log/);
+
+      const spillMatch = r.content.match(/saved to: (.+\.log)/);
+      expect(spillMatch).not.toBeNull();
+      const spilled = readFileSync(spillMatch![1], "utf-8");
+      expect(spilled.length).toBeGreaterThan(100_000);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(artifacts, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("read_file: offset/limit semantics", () => {
+  it("limit means line count, not last-line index", async () => {
+    const root = makeTempDir("fermi-fix-read-limit-");
+    try {
+      const lines = Array.from({ length: 30 }, (_, i) => `L${i + 1}`).join("\n");
+      writeFileSync(join(root, "a.txt"), lines, "utf-8");
+
+      // offset=10, limit=3 => lines 10, 11, 12 (NOT 10..3)
+      const r = await executeTool(
+        "read_file",
+        { path: "a.txt", offset: 10, limit: 3 },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain("L10");
+      expect(r.content).toContain("L11");
+      expect(r.content).toContain("L12");
+      expect(r.content).not.toContain("L13");
+      // Verify the header reports lines 10-12, not 10-3
+      expect(r.content).toMatch(/Lines 10-12 of 30/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("dispatcher rejects non-positive limit/count args", () => {
+  it("glob limit=0 returns a clear error instead of silently clamping", async () => {
+    const root = makeTempDir("fermi-fix-glob-zero-");
+    try {
+      writeFileSync(join(root, "a.ts"), "//", "utf-8");
+      const r = await executeTool(
+        "glob",
+        { pattern: "*.ts", limit: 0 },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain("Invalid arguments for glob");
+      expect(r.content).toContain("'limit' must be >= 1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("list_dir max_entries=-5 rejected", async () => {
+    const root = makeTempDir("fermi-fix-list-neg-");
+    try {
+      const r = await executeTool(
+        "list_dir",
+        { path: ".", max_entries: -5 },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain("Invalid arguments for list_dir");
+      expect(r.content).toContain("'max_entries' must be >= 1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("grep head_limit=0 rejected", async () => {
+    const root = makeTempDir("fermi-fix-grep-zero-");
+    try {
+      writeFileSync(join(root, "a.ts"), "needle\n", "utf-8");
+      const r = await executeTool(
+        "grep",
+        { pattern: "needle", path: ".", head_limit: 0 },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain("Invalid arguments for grep");
+      expect(r.content).toContain("'head_limit' must be >= 1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("read_file long-line escape hatch", () => {
+  it("points at head/tail/cut when lines are truncated", async () => {
+    const root = makeTempDir("fermi-fix-read-longline-hint-");
+    try {
+      writeFileSync(join(root, "big.txt"), "before\n" + "x".repeat(3500) + "\nafter\n", "utf-8");
+      const r = await executeTool("read_file", { path: "big.txt" }, { projectRoot: root });
+      expect(r.content).toContain("head -n LINE_NUM");
+      expect(r.content).toContain("cut -c FROM-TO");
+      expect(r.content).toContain("pre-approved");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the full file path (not basename) so the command works from any cwd", async () => {
+    const root = makeTempDir("fermi-fix-longline-fullpath-");
+    try {
+      // Put the long-line file in a subdirectory so basename ≠ full path.
+      mkdirSync(join(root, "deep", "nested"), { recursive: true });
+      const filePath = join(root, "deep", "nested", "big.txt");
+      writeFileSync(filePath, "before\n" + "x".repeat(3500) + "\nafter\n", "utf-8");
+
+      const r = await executeTool(
+        "read_file",
+        { path: "deep/nested/big.txt" },
+        { projectRoot: root },
+      );
+      // Must reference the absolute file path, not just `big.txt`, otherwise
+      // the model running the hint from the project root would miss the file.
+      expect(r.content).toContain(filePath);
+      // And the hint should single-quote the path so spaces in the path
+      // wouldn't break the command.
+      expect(r.content).toContain(`'${filePath}'`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

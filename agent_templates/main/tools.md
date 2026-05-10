@@ -2,7 +2,7 @@
 
 `read_file(path, start_line?, end_line?)`
 
-Read text files (max 50 MB). Returns up to **2000 lines / 80,000 chars** per call; lines longer than 2000 chars are truncated. `offset`/`limit` are accepted as aliases for `start_line`/`end_line`.
+Read text files (max 50 MB). Returns up to **2000 lines / 80,000 chars** per call; lines longer than 2000 chars are truncated (use bash `head -n N file | tail -n 1 | cut -c FROM-TO` to read past the cap — all three are pre-approved). `offset` is an alias for `start_line`; `limit` is the **number of lines** to read starting at `start_line`/`offset` (not an alias for `end_line`).
 
 If you know there are several files to read, **issue multiple `read_file` calls in parallel** rather than serialising them. Avoid tiny repeated slices (e.g. 30-line chunks); pick a window that covers what you need in one call.
 
@@ -75,7 +75,7 @@ edit_file(path="{PROJECT_ROOT}/example.py", edits=[
 ], append_str="\n# Updated to v1.1")
 ```
 
-Supports `expected_mtime_ms` for concurrency safety. Prefer `edit_file` over `write_file` for targeted modifications — it's smaller and safer.
+Supports `expected_mtime_ms` for concurrency safety. Use `edit_file` for **targeted modifications**; use `write_file` when **replacing the whole file** (fewer tokens than echoing existing content into `old_str`).
 
 ## `list_dir`
 

@@ -36,8 +36,8 @@ import {
 import { classifyFile, IMAGE_MEDIA_TYPES } from "../file-attach.js";
 import { createPatch } from "diff";
 import {
-  EXCLUDE_DIRS,
-  shouldSkipDir,
+  isExcludedDirName,
+  isHiddenName,
   truncateMiddle,
   truncateLine,
 } from "./shared.js";
@@ -474,7 +474,7 @@ const READ: ToolDef = {
     "PDF, DOCX, XLSX, and similar formats are returned as auto-extracted Markdown. " +
     "Image files are returned as visual content blocks when the model supports multimodal input. " +
     "Returns file metadata (including mtime_ms) for optional optimistic concurrency checks. " +
-    "Use start_line / end_line (or offset / limit) to navigate large files across multiple calls. " +
+    "Use start_line+end_line (inclusive range) or offset+limit (offset = first line, limit = number of lines) to navigate large files across multiple calls. " +
     "If you know there are several files to read, prefer issuing multiple read_file calls in parallel.",
   parameters: {
     type: "object",
@@ -494,11 +494,13 @@ const READ: ToolDef = {
       },
       offset: {
         type: "integer",
-        description: "Alias for start_line (1-indexed first line).",
+        description: "Alias for start_line (1-indexed first line). Must be >= 1.",
       },
       limit: {
         type: "integer",
-        description: "Number of lines to read starting at start_line/offset. Alternative to end_line.",
+        description:
+          "Number of lines to read starting at start_line/offset (NOT an alias for end_line). " +
+          "For example, offset=50, limit=100 reads lines 50-149. Must be >= 1.",
       },
     },
     required: ["path"],
@@ -686,6 +688,9 @@ const TIME: ToolDef = {
 const GLOB_DEFAULT_LIMIT = 200;
 const GLOB_MAX_LIMIT = 1_000;
 const GLOB_MAX_FILES_SCANNED = 50_000;
+// Generous depth guard — real projects rarely nest >12 deep, but pathological
+// symlink loops can recurse forever before the file-count guard fires.
+const GLOB_MAX_DEPTH = 16;
 
 const GLOB: ToolDef = {
   name: "glob",
@@ -1061,9 +1066,19 @@ async function toolReadFile(
   }
 
   if (lineTrimCount > 0) {
+    // Single-line precision reads aren't supported by read_file itself
+    // (every line is capped at READ_MAX_LINE_CHARS), but `head`, `tail`,
+    // and `cut` are pre-approved bash commands — no permission prompt —
+    // so the model has a straightforward escape hatch. Use the full
+    // absolute path so the model can paste the command verbatim from any
+    // working directory.
+    const safePath = filePath.replace(/'/g, "'\\''");
     result +=
       `\n\n[Note: ${lineTrimCount} line${lineTrimCount === 1 ? "" : "s"} ` +
-      `exceeded ${READ_MAX_LINE_CHARS} chars and ${lineTrimCount === 1 ? "was" : "were"} truncated.]`;
+      `exceeded ${READ_MAX_LINE_CHARS} chars and ${lineTrimCount === 1 ? "was" : "were"} truncated. ` +
+      `To read the full content of a specific long line, use bash: ` +
+      `\`head -n LINE_NUM '${safePath}' | tail -n 1 | cut -c FROM-TO\` ` +
+      `(head/tail/cut are pre-approved, no permission prompt).]`;
   }
 
   return result;
@@ -1116,38 +1131,49 @@ async function toolListDir(dirPath = ".", opts?: Partial<ListDirOptions>): Promi
       return;
     }
 
-    const filtered: string[] = [];
+    // Stat entries first, then apply directory-only exclusion. A regular
+    // file named "build" or "dist" should still be shown — only same-named
+    // *directories* are skipped.
+    const candidates: string[] = [];
     for (const name of entries) {
-      if (!options.includeHidden && name.startsWith(".") && name !== ".") continue;
-      // Always skip names in EXCLUDE_DIRS during the walk. A user can still
-      // inspect e.g. node_modules by passing it as the root `path` — its
-      // own children (typically package names like "react") are unaffected.
-      if (EXCLUDE_DIRS.has(name)) {
-        skippedDirs += 1;
-        continue;
-      }
-      filtered.push(name);
+      if (!options.includeHidden && isHiddenName(name)) continue;
+      candidates.push(name);
     }
 
-    // Sort: directories first, then files, alphabetical
     const withStats = (await Promise.all(
-      filtered.map(async (name) => {
+      candidates.map(async (name) => {
         const full = path.join(dir, name);
         let isDir = false;
         let size = 0;
+        let statOk = false;
         try {
           const st = await fs.stat(full);
           isDir = st.isDirectory();
           size = st.size;
+          statOk = true;
         } catch {
-          // skip inaccessible
+          // inaccessible
         }
-        return { name, full, isDir, size };
+        return { name, full, isDir, size, statOk };
       }),
-    )).sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    ))
+      .filter((entry) => {
+        // Skip excluded directories only after we confirm it IS a directory.
+        // If stat failed but the name matches the exclude list, keep the
+        // conservative "skip" behaviour — almost certainly an inaccessible
+        // node_modules / target / etc. rather than a regular file.
+        const excludedByName = isExcludedDirName(entry.name);
+        if (excludedByName && (entry.isDir || !entry.statOk)) {
+          skippedDirs += 1;
+          return false;
+        }
+        return true;
+      })
+      // Sort: directories first, then files, alphabetical
+      .sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
 
     for (const entry of withStats) {
       if (lines.length >= options.maxEntries) { truncated = true; return; }
@@ -1171,7 +1197,13 @@ async function toolListDir(dirPath = ".", opts?: Partial<ListDirOptions>): Promi
   let output = lines.join("\n");
   const notices: string[] = [];
   if (truncated) {
-    notices.push(`Output truncated at ${options.maxEntries} entries — pass max_entries=${Math.min(options.maxEntries * 4, LIST_MAX_ENTRIES_CAP)} or narrow the path.`);
+    const suggestion = Math.min(options.maxEntries * 4, LIST_MAX_ENTRIES_CAP);
+    if (suggestion > options.maxEntries) {
+      notices.push(`Output truncated at ${options.maxEntries} entries — pass max_entries=${suggestion} or narrow the path.`);
+    } else {
+      // Already at the cap; raising max_entries won't help.
+      notices.push(`Output truncated at ${options.maxEntries} entries (cap reached) — narrow the path or use glob/grep instead.`);
+    }
   }
   if (skippedDirs > 0) {
     notices.push(`Skipped ${skippedDirs} excluded director${skippedDirs === 1 ? "y" : "ies"} (node_modules, .git, dist, etc.).`);
@@ -1354,13 +1386,31 @@ function findAllOffsets(haystack: string, needle: string): number[] {
   return out;
 }
 
-/** Convert a character offset to a 1-indexed line number. */
-function offsetToLine(content: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset && i < content.length; i++) {
-    if (content[i] === "\n") line++;
+/**
+ * Sorted list of every newline offset in `content`. Pair with
+ * `offsetToLineWithIndex` to convert character offsets to line numbers in
+ * O(log n) per query — used by edit_file's ambiguous-match error path to
+ * avoid scanning the file once per duplicate match.
+ */
+function buildNewlineIndex(content: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === "\n") out.push(i);
   }
-  return line;
+  return out;
+}
+
+/** Convert a character offset to a 1-indexed line number via a pre-built newline index. */
+function offsetToLineWithIndex(newlineIndex: readonly number[], offset: number): number {
+  // Count of newlines strictly before `offset` (binary search).
+  let lo = 0;
+  let hi = newlineIndex.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (newlineIndex[mid] < offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo + 1;
 }
 
 /** Truncate a snippet for inclusion in error messages. */
@@ -1397,6 +1447,14 @@ async function toolEditFileMulti(
     // Find all matches; validate uniqueness unless replace_all is opted in.
     // No-op edits (old_str === new_str) are rejected so the model doesn't
     // confuse itself with diffs that don't change anything.
+    // Lazily build a newline index — only when we actually need to format
+    // an ambiguous-match error. Avoids scanning the file on the happy path.
+    let newlineIndex: number[] | null = null;
+    const lineOf = (offset: number): number => {
+      if (!newlineIndex) newlineIndex = buildNewlineIndex(content);
+      return offsetToLineWithIndex(newlineIndex, offset);
+    };
+
     const matches: MatchInfo[] = [];
     for (let editIdx = 0; editIdx < edits.length; editIdx++) {
       const edit = edits[editIdx];
@@ -1411,7 +1469,7 @@ async function toolEditFileMulti(
         return `ERROR: edit #${editIdx + 1}: old_str not found in file: ${JSON.stringify(snippetFor(edit.old_str))}`;
       }
       if (offsets.length > 1 && !edit.replace_all) {
-        const lines = offsets.map((o) => offsetToLine(content, o));
+        const lines = offsets.map(lineOf);
         const lineList = lines.length > 6
           ? lines.slice(0, 6).join(", ") + `, … (${lines.length} total)`
           : lines.join(", ");
@@ -1625,11 +1683,6 @@ async function atomicWriteTextFile(
 // bash
 // ------------------------------------------------------------------
 
-// Re-export for legacy callers; truncateMiddle is the canonical impl.
-function truncateOutput(text: string, limit: number): string {
-  return truncateMiddle(text, limit);
-}
-
 export function buildBashEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -1649,7 +1702,13 @@ export function buildBashEnv(): NodeJS.ProcessEnv {
  * Spill a full text payload to a session-scoped temp file. Returns the
  * absolute path. Best-effort: returns null on failure (we don't want a
  * spill failure to mask the original tool result).
+ *
+ * Keeps a soft cap of `BASH_SPILL_KEEP_LAST` files in the spill directory:
+ * before writing, prune the oldest entries (by mtime) to that count − 1.
+ * Long sessions could otherwise accumulate dozens of multi-MB log files.
  */
+const BASH_SPILL_KEEP_LAST = 32;
+
 function spillOutputToFile(
   baseDir: string,
   prefix: string,
@@ -1658,6 +1717,26 @@ function spillOutputToFile(
   try {
     const dir = path.join(baseDir, "bash-output");
     mkdirSync(dir, { recursive: true });
+
+    // Prune oldest spill files to keep the directory bounded. Best-effort
+    // — any error here is ignored; spilling is more important than tidiness.
+    try {
+      const entries = readdirSync(dir)
+        .filter((name) => name.endsWith(".log"))
+        .map((name) => {
+          const p = path.join(dir, name);
+          try { return { p, mtime: statSync(p).mtimeMs }; }
+          catch { return null; }
+        })
+        .filter((e): e is { p: string; mtime: number } => e !== null)
+        .sort((a, b) => a.mtime - b.mtime);
+      while (entries.length >= BASH_SPILL_KEEP_LAST) {
+        const oldest = entries.shift();
+        if (!oldest) break;
+        try { unlinkSync(oldest.p); } catch { /* ignore */ }
+      }
+    } catch { /* ignore pruning failure */ }
+
     const file = path.join(dir, `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}.log`);
     fsWriteFileSync(file, full, { encoding: "utf-8" });
     return file;
@@ -1720,12 +1799,17 @@ async function toolBash(
     const collectPartial = (): string => {
       const out = Buffer.concat(stdoutChunks).toString("utf-8");
       const err = Buffer.concat(stderrChunks).toString("utf-8");
+      // On the timeout / abort path, each stream is truncated at `half`
+      // (not BASH_MAX_OUTPUT_CHARS), since we have two streams to fit
+      // inside the overall budget. So the spill check must use `half` too
+      // — otherwise a 150K-stdout command that times out loses 50K of
+      // output silently because total < BASH_MAX_OUTPUT_CHARS.
       const half = Math.floor(BASH_MAX_OUTPUT_CHARS / 2);
       const parts: string[] = [];
-      if (out) parts.push(`PARTIAL STDOUT:\n${truncateOutput(out, half)}`);
-      if (err) parts.push(`PARTIAL STDERR:\n${truncateOutput(err, half)}`);
-      const total = out.length + err.length;
-      if (opts.spillDir && total > BASH_MAX_OUTPUT_CHARS) {
+      if (out) parts.push(`PARTIAL STDOUT:\n${truncateMiddle(out, half)}`);
+      if (err) parts.push(`PARTIAL STDERR:\n${truncateMiddle(err, half)}`);
+      const willTruncate = out.length > half || err.length > half;
+      if (opts.spillDir && willTruncate) {
         const full =
           (out ? `==== STDOUT ====\n${out}\n` : "") +
           (err ? `==== STDERR ====\n${err}\n` : "");
@@ -1808,10 +1892,10 @@ async function toolBash(
         stderr.length > BASH_MAX_OUTPUT_CHARS;
 
       if (stdout) {
-        parts.push(`STDOUT:\n${truncateOutput(stdout, BASH_MAX_OUTPUT_CHARS)}`);
+        parts.push(`STDOUT:\n${truncateMiddle(stdout, BASH_MAX_OUTPUT_CHARS)}`);
       }
       if (stderr) {
-        parts.push(`STDERR:\n${truncateOutput(stderr, BASH_MAX_OUTPUT_CHARS)}`);
+        parts.push(`STDERR:\n${truncateMiddle(stderr, BASH_MAX_OUTPUT_CHARS)}`);
       }
       parts.push(`EXIT CODE: ${code ?? 1}`);
 
@@ -2194,6 +2278,29 @@ function optionalIntegerArg(
   return v;
 }
 
+/**
+ * Like `optionalIntegerArg`, but rejects values < 1 with a clear error
+ * instead of silently clamping. Use for any "limit / size / count" param
+ * where 0 or negative is meaningless — otherwise the model gets surprising
+ * default-fallback behavior (e.g. `limit: 0` returning the default 200).
+ */
+function optionalPositiveIntegerArg(
+  toolName: string,
+  args: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const v = optionalIntegerArg(toolName, args, key);
+  if (v === undefined) return undefined;
+  if (v < 1) {
+    throw new ToolArgValidationError(
+      toolName,
+      key,
+      `'${key}' must be >= 1 (got ${v}).`,
+    );
+  }
+  return v;
+}
+
 function requiredIntegerArg(
   toolName: string,
   args: Record<string, unknown>,
@@ -2363,6 +2470,10 @@ async function toolGlob(pattern: string, searchPath: string, limit: number): Pro
 
   async function walk(dir: string, depth: number, relPrefix: string): Promise<void> {
     if (filesScanned >= GLOB_MAX_FILES_SCANNED) return;
+    // Bounded recursion guard: protects against pathological / circular
+    // symlink trees that would otherwise keep recursing on directory loops
+    // without ever incrementing filesScanned.
+    if (depth > GLOB_MAX_DEPTH) return;
 
     let entries: string[];
     try {
@@ -2373,7 +2484,10 @@ async function toolGlob(pattern: string, searchPath: string, limit: number): Pro
 
     for (const name of entries) {
       if (filesScanned >= GLOB_MAX_FILES_SCANNED) return;
-      if (shouldSkipDir(name)) continue;
+      // Hidden names skip universally (files + dirs). Directory-only
+      // exclusions (node_modules, dist, target, …) are checked AFTER stat
+      // so a regular file with the same name is not silently hidden.
+      if (isHiddenName(name)) continue;
 
       const full = path.join(dir, name);
       const rel = relPrefix ? relPrefix + "/" + name : name;
@@ -2386,6 +2500,7 @@ async function toolGlob(pattern: string, searchPath: string, limit: number): Pro
       }
 
       if (stat.isDirectory()) {
+        if (isExcludedDirName(name)) continue;
         await walk(full, depth + 1, rel);
       } else if (stat.isFile()) {
         filesScanned++;
@@ -2476,8 +2591,9 @@ async function toolGrep(
     }
   }
 
-  // Smart case: when caseInsensitive is undefined (auto), apply -i if every
-  // pattern is all-lowercase. Otherwise honor the explicit flag.
+  // Smart case (ripgrep-style): no ASCII uppercase in any pattern ⇒ -i.
+  // Note this includes ranges like `[a-z]+` (currently get -i) and
+  // letter-free patterns like `\d+` (where -i is a no-op).
   let effectiveCaseInsensitive: boolean;
   if (options.caseInsensitive === undefined) {
     effectiveCaseInsensitive = patterns.every((p) => p === p.toLowerCase());
@@ -2595,7 +2711,10 @@ async function toolGrep(
 
     for (const name of entries) {
       if (shouldStop()) return;
-      if (shouldSkipDir(name)) continue;
+      // Hidden names skip universally. Excluded-dir names are filtered
+      // only after stat to avoid hiding regular files that happen to be
+      // named `build` / `dist` / `target` / etc.
+      if (isHiddenName(name)) continue;
       const full = path.join(dir, name);
       let stat;
       try {
@@ -2605,6 +2724,7 @@ async function toolGrep(
       }
 
       if (stat.isDirectory()) {
+        if (isExcludedDirName(name)) continue;
         await walkForGrep(full, depth + 1);
       } else if (stat.isFile()) {
         if (!shouldIncludeFile(name)) continue;
@@ -2771,10 +2891,10 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
       try {
         const a = expectArgsObject("read_file", args);
         const requestedPath = requiredStringArg("read_file", a, "path", { nonEmpty: true });
-        let startLine = optionalIntegerArg("read_file", a, "start_line");
+        let startLine = optionalPositiveIntegerArg("read_file", a, "start_line");
         let endLine = optionalIntegerArg("read_file", a, "end_line");
-        const offset = optionalIntegerArg("read_file", a, "offset");
-        const limit = optionalIntegerArg("read_file", a, "limit");
+        const offset = optionalPositiveIntegerArg("read_file", a, "offset");
+        const limit = optionalPositiveIntegerArg("read_file", a, "limit");
         // offset is an alias for start_line; limit converts to end_line.
         if (startLine == null && offset != null) startLine = offset;
         if (endLine == null && limit != null) {
@@ -2802,8 +2922,8 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
       try {
         const a = expectArgsObject("list_dir", args);
         const requestedPath = optionalStringArg("list_dir", a, "path", ".");
-        const maxDepth = optionalIntegerArg("list_dir", a, "max_depth");
-        const maxEntries = optionalIntegerArg("list_dir", a, "max_entries");
+        const maxDepth = optionalPositiveIntegerArg("list_dir", a, "max_depth");
+        const maxEntries = optionalPositiveIntegerArg("list_dir", a, "max_entries");
         const includeHidden = a["include_hidden"] === true;
         const dirPath = scopedPath(
           requestedPath,
@@ -2980,7 +3100,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         const a = expectArgsObject("glob", args);
         const pattern = requiredStringArg("glob", a, "pattern", { nonEmpty: true });
         const requestedPath = optionalStringArg("glob", a, "path", ".");
-        const limit = optionalIntegerArg("glob", a, "limit") ?? GLOB_DEFAULT_LIMIT;
+        const limit = optionalPositiveIntegerArg("glob", a, "limit") ?? GLOB_DEFAULT_LIMIT;
         const globPath = scopedPath(
           requestedPath,
           "search",
@@ -3047,9 +3167,9 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         else if (a["case_insensitive"] !== undefined) caseInsensitive = a["case_insensitive"] === true;
 
         const showLineNumbers = a["-n"] !== false && a["line_numbers"] !== false;
-        const headLimit = optionalIntegerArg("grep", a, "head_limit") ?? 0;
+        const headLimit = optionalPositiveIntegerArg("grep", a, "head_limit") ?? 0;
         const perFileLimit =
-          optionalIntegerArg("grep", a, "limit_per_file") ?? SEARCH_DEFAULT_PER_FILE_LIMIT;
+          optionalPositiveIntegerArg("grep", a, "limit_per_file") ?? SEARCH_DEFAULT_PER_FILE_LIMIT;
 
         return await toolGrep(patterns, searchPath, {
           glob: globFilter || undefined,

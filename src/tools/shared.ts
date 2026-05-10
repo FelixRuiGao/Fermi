@@ -41,9 +41,21 @@ export const EXCLUDE_DIRS: ReadonlySet<string> = new Set([
   "__snapshots__",
 ]);
 
-/** Whether to skip a directory by name during recursive walks. */
-export function shouldSkipDir(name: string): boolean {
-  if (name.startsWith(".") && name !== ".") return true;
+/**
+ * Hidden entries (dot-prefixed) are skipped universally during walks —
+ * applies to both files and directories. Most tools want this default.
+ */
+export function isHiddenName(name: string): boolean {
+  return name.startsWith(".") && name !== ".";
+}
+
+/**
+ * Directory-only skip set. Callers must check `stat.isDirectory()` first;
+ * `EXCLUDE_DIRS.has(name)` returning true for a regular file (e.g. an
+ * extensionless script named "build") would silently hide it from search,
+ * which is a footgun.
+ */
+export function isExcludedDirName(name: string): boolean {
   return EXCLUDE_DIRS.has(name);
 }
 
