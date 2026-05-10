@@ -1,16 +1,15 @@
 /**
  * show_context tool implementation.
  *
- * Generates two outputs:
- * 1. Context Map — compact index for the tool_result (all groups, total tokens, types)
- * 2. Injection annotations — detailed per-entry descriptions for each §{id}§ injection point
- *
- * Uses a shared GPT tokenizer estimator for relative size hints.
+ * Generates a self-contained Context Map for the tool_result.
+ * All information (context IDs, sizes, types, content previews) is
+ * returned in the tool result — nothing is injected into existing
+ * messages, preserving prompt cache.
  */
 
 import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
 import type { LogEntry } from "./log-entry.js";
-import { buildActiveContextView } from "./active-context.js";
+import { buildActiveContextView, type ActiveContextGroup } from "./active-context.js";
 
 // ------------------------------------------------------------------
 // Types
@@ -24,20 +23,13 @@ export interface ContextGroup {
   entryTokens: number[];
 }
 
-export interface ShowContextResult {
-  /** Compact context map for the tool_result. */
-  contextMap: string;
-  /** Map from contextId → annotation text to inject at §{id}§ locations. */
-  annotations: Map<string, string>;
-}
-
 // ------------------------------------------------------------------
 // Token display helpers
 // ------------------------------------------------------------------
 
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return "<1k";
-  return `${Math.round(tokens / 1000)}k`;
+  return `~${Math.round(tokens / 1000)}k`;
 }
 
 // ------------------------------------------------------------------
@@ -88,62 +80,117 @@ function serializeContent(content: unknown): string {
 }
 
 // ------------------------------------------------------------------
-// Entry description generation
+// Text truncation
 // ------------------------------------------------------------------
 
-function truncateText(text: string, maxLen = 50): string {
+function truncateText(text: string, maxLen = 60): string {
   const clean = text.replace(/\n/g, " ").trim();
   if (clean.length <= maxLen) return `"${clean}"`;
   return `"${clean.slice(0, maxLen)}..."`;
 }
 
-function describeEntry(entry: LogEntry): { label: string; description: string } {
-  switch (entry.type) {
-    case "user_message": {
-      const text = serializeContent(entry.content);
-      const hasImage = Array.isArray(entry.content) &&
-        (entry.content as Array<Record<string, unknown>>).some(
-          (b) => b?.type === "image" || b?.type === "image_ref",
+// ------------------------------------------------------------------
+// Group classification
+// ------------------------------------------------------------------
+
+type GroupKind = "user message" | "assistant" | "tool call" | "system" | "summary" | "compact" | "other";
+
+function classifyGroup(group: ActiveContextGroup): GroupKind {
+  for (const { entry } of group.entries) {
+    if (entry.type === "summary") return "summary";
+    if (entry.type === "compact_context") return "compact";
+  }
+  for (const { entry } of group.entries) {
+    if (entry.type === "user_message") {
+      const inputKind = (entry.meta as Record<string, unknown>)["inputKind"];
+      if (inputKind === "system" || inputKind === "peer") return "system";
+      return "user message";
+    }
+  }
+  for (const { entry } of group.entries) {
+    if (entry.type === "tool_call") return "tool call";
+  }
+  for (const { entry } of group.entries) {
+    if (entry.type === "assistant_text") return "assistant";
+  }
+  return "other";
+}
+
+// ------------------------------------------------------------------
+// Group detail line (second line under the header)
+// ------------------------------------------------------------------
+
+function formatGroupDetail(group: ActiveContextGroup): string[] {
+  const kind = classifyGroup(group);
+  switch (kind) {
+    case "user message": {
+      const userEntry = group.entries.find(e => e.entry.type === "user_message");
+      if (!userEntry) return [];
+      const text = serializeContent(userEntry.entry.content);
+      const hasImage = Array.isArray(userEntry.entry.content) &&
+        (userEntry.entry.content as Array<Record<string, unknown>>).some(
+          b => b?.type === "image" || b?.type === "image_ref",
         );
       const prefix = hasImage ? "[image] " : "";
-      return { label: "user", description: `${prefix}${truncateText(text)}` };
+      return [`  ${prefix}${truncateText(text)}`];
     }
-    case "assistant_text":
-      return { label: "assistant", description: truncateText(String(entry.content ?? "")) };
-    case "reasoning":
-      return { label: "thinking", description: "[internal reasoning]" };
-    case "tool_call": {
-      const tc = entry.content as { name?: string; arguments?: Record<string, unknown> } | null;
-      const name = tc?.name ?? (entry.meta as Record<string, unknown>)["toolName"] ?? "unknown";
-      const args = tc?.arguments ?? {};
-      const brief = formatToolCallArgs(String(name), args);
-      return { label: "call", description: `${name}(${brief})` };
+    case "assistant": {
+      const asstEntry = group.entries.find(e => e.entry.type === "assistant_text");
+      if (!asstEntry) return [];
+      return [`  ${truncateText(serializeContent(asstEntry.entry.content))}`];
     }
-    case "tool_result": {
-      const toolName = String((entry.meta as Record<string, unknown>)["toolName"] ?? "unknown");
-      const isError = (entry.meta as Record<string, unknown>)["isError"] === true;
-      const rc = entry.content as { content?: string } | null;
-      const resultStr = rc?.content ?? "";
-      const brief = isError
-        ? `ERROR: ${resultStr.slice(0, 60).replace(/\n/g, " ")}`
-        : formatToolResultBrief(toolName, resultStr, entry.meta as Record<string, unknown>);
-      return { label: "result", description: `${toolName} → ${brief}` };
+    case "system": {
+      const sysEntry = group.entries.find(e => e.entry.type === "user_message");
+      if (!sysEntry) return [];
+      return [`  ${truncateText(serializeContent(sysEntry.entry.content))}`];
     }
-    case "no_reply":
-      return { label: "no-reply", description: "" };
+    case "tool call": {
+      const lines: string[] = [];
+      const calls = group.entries.filter(e => e.entry.type === "tool_call");
+      const results = group.entries.filter(e => e.entry.type === "tool_result");
+      for (let i = 0; i < calls.length; i++) {
+        const tc = calls[i].entry.content as { name?: string; arguments?: Record<string, unknown> } | null;
+        const name = String(tc?.name ?? (calls[i].entry.meta as Record<string, unknown>)["toolName"] ?? "unknown");
+        const args = tc?.arguments ?? {};
+        const argsBrief = formatToolCallArgs(name, args);
+        const matchingResult = results.find(r =>
+          (r.entry.meta as Record<string, unknown>)["toolCallId"] ===
+          (calls[i].entry.meta as Record<string, unknown>)["toolCallId"],
+        );
+        let resultBrief = "";
+        if (matchingResult) {
+          const isError = (matchingResult.entry.meta as Record<string, unknown>)["isError"] === true;
+          const rc = matchingResult.entry.content as { content?: string } | null;
+          const resultStr = rc?.content ?? "";
+          resultBrief = isError
+            ? `ERROR: ${resultStr.slice(0, 60).replace(/\n/g, " ")}`
+            : formatToolResultBrief(name, resultStr);
+        }
+        const line = resultBrief
+          ? `  ${name}(${argsBrief}) → ${resultBrief}`
+          : `  ${name}(${argsBrief})`;
+        lines.push(line);
+      }
+      return lines;
+    }
     case "summary": {
-      const depth = (entry.meta as Record<string, unknown>)["summaryDepth"] ?? 1;
-      return { label: "summary", description: `(depth ${depth}) ${truncateText(String(entry.content ?? ""))}` };
+      const summaryEntry = group.entries.find(e => e.entry.type === "summary");
+      if (!summaryEntry) return [];
+      return [`  ${truncateText(serializeContent(summaryEntry.entry.content), 80)}`];
     }
-    case "compact_context":
-      return { label: "compact", description: "Auto-compact summary" };
+    case "compact": {
+      return [`  "Auto-compact summary"`];
+    }
     default:
-      return { label: entry.type, description: truncateText(serializeContent(entry.content)) };
+      return [];
   }
 }
 
+// ------------------------------------------------------------------
+// Tool call argument formatting (per-tool)
+// ------------------------------------------------------------------
+
 function formatToolCallArgs(toolName: string, args: Record<string, unknown>): string {
-  // Known tools: show the most important arg
   switch (toolName) {
     case "read_file": {
       const path = String(args["path"] ?? args["file"] ?? "");
@@ -153,16 +200,21 @@ function formatToolCallArgs(toolName: string, args: Record<string, unknown>): st
     }
     case "edit_file":
     case "write_file":
-      return `"${String(args["path"] ?? args["file"] ?? "")}", ...`;
+      return `"${String(args["path"] ?? args["file"] ?? "")}"`;
     case "bash":
     case "bash_background":
-      return truncateText(String(args["command"] ?? ""), 40).slice(1, -1); // remove quotes from truncateText
+    case "bash_output":
+      return truncateText(String(args["command"] ?? ""), 40).slice(1, -1);
     case "grep":
       return `"${String(args["pattern"] ?? "")}", path="${String(args["path"] ?? "")}"`;
     case "glob":
       return `"${String(args["pattern"] ?? "")}"`;
+    case "list_dir":
+      return `"${String(args["path"] ?? args["dir"] ?? "")}"`;
     case "spawn":
       return `${String(args["id"] ?? "")} [${String(args["template"] ?? args["template_path"] ?? "")}]`;
+    case "kill_agent":
+      return `${String(args["id"] ?? "")}`;
     case "ask": {
       const qs = args["questions"] as Array<Record<string, unknown>> | undefined;
       if (qs?.length) return truncateText(String(qs[0]?.question ?? ""), 30).slice(1, -1);
@@ -172,18 +224,36 @@ function formatToolCallArgs(toolName: string, args: Record<string, unknown>): st
       const ops = args["operations"] as unknown[] | undefined;
       return `${ops?.length ?? 0} operations`;
     }
-    default:
-      // Generic fallback
-      if (Object.keys(args).length === 0) return "";
-      return "...";
+    case "show_context":
+      return "";
+    case "web_search":
+    case "web_search_exa":
+      return truncateText(String(args["query"] ?? ""), 40).slice(1, -1);
+    case "web_fetch":
+      return truncateText(String(args["url"] ?? ""), 50).slice(1, -1);
+    case "send":
+      return `to=${String(args["to"] ?? "")}`;
+    case "check_status":
+      return `${String(args["id"] ?? "")}`;
+    case "kill_shell":
+      return `${String(args["id"] ?? "")}`;
+    default: {
+      const keys = Object.keys(args).slice(0, 3);
+      if (keys.length === 0) return "";
+      return keys.map(k => {
+        const v = String(args[k] ?? "");
+        if (v.length > 30) return `${k}="${v.slice(0, 30)}..."`;
+        return `${k}="${v}"`;
+      }).join(", ");
+    }
   }
 }
 
-function formatToolResultBrief(
-  toolName: string,
-  resultStr: string,
-  meta: Record<string, unknown>,
-): string {
+// ------------------------------------------------------------------
+// Tool result brief formatting (per-tool)
+// ------------------------------------------------------------------
+
+function formatToolResultBrief(toolName: string, resultStr: string): string {
   switch (toolName) {
     case "read_file":
       return `${resultStr.length} chars`;
@@ -192,8 +262,8 @@ function formatToolResultBrief(
     case "write_file":
       return "created";
     case "bash":
-    case "bash_background": {
-      // Try to extract exit code
+    case "bash_background":
+    case "bash_output": {
       const exitMatch = resultStr.match(/exit (?:code |status )?(\d+)/i);
       const exitCode = exitMatch ? exitMatch[1] : null;
       const size = formatTokens(gptEncode(resultStr).length);
@@ -203,12 +273,50 @@ function formatToolResultBrief(
       const lineCount = resultStr.split("\n").filter(Boolean).length;
       return `${lineCount} matches`;
     }
+    case "glob": {
+      const lineCount = resultStr.split("\n").filter(Boolean).length;
+      return `${lineCount} files`;
+    }
+    case "list_dir": {
+      const lineCount = resultStr.split("\n").filter(Boolean).length;
+      return `${lineCount} entries`;
+    }
     case "ask": {
       const brief = resultStr.replace(/\n/g, " ").trim();
       return brief.length > 40 ? `${brief.slice(0, 40)}...` : brief;
     }
+    case "web_search":
+    case "web_search_exa": {
+      const lineCount = resultStr.split("\n").filter(Boolean).length;
+      return `${lineCount} results`;
+    }
+    case "web_fetch":
+      return `${resultStr.length} chars`;
+    case "spawn":
+      return "agent started";
+    case "kill_agent":
+      return "agent killed";
+    case "check_status": {
+      const brief = resultStr.replace(/\n/g, " ").trim();
+      return brief.length > 40 ? `${brief.slice(0, 40)}...` : brief;
+    }
+    case "show_context": {
+      const match = resultStr.match(/(\d+) groups/);
+      return match ? `${match[1]} groups` : "ok";
+    }
+    case "summarize": {
+      const match = resultStr.match(/(\d+) operation/);
+      return match ? `${match[1]} operations` : "ok";
+    }
+    case "send":
+      return "sent";
+    case "kill_shell":
+      return "shell killed";
+    case "time": {
+      const brief = resultStr.replace(/\n/g, " ").trim();
+      return brief.length > 40 ? `${brief.slice(0, 40)}...` : brief;
+    }
     default:
-      // Generic fallback
       return `${formatTokens(gptEncode(resultStr).length)} output`;
   }
 }
@@ -235,94 +343,61 @@ export function buildContextGroups(entries: LogEntry[]): ContextGroup[] {
 }
 
 // ------------------------------------------------------------------
-// Context Map generation (compact, for tool_result)
+// Context Map generation (self-contained, for tool_result)
 // ------------------------------------------------------------------
 
-function entryTypeLabel(entry: LogEntry): string {
-  switch (entry.type) {
-    case "user_message": return "user";
-    case "assistant_text": return "assistant";
-    case "reasoning": return "thinking";
-    case "tool_call": return "call";
-    case "tool_result": return "result";
-    case "no_reply": return "no-reply";
-    case "summary": return "summary";
-    case "compact_context": return "compact";
-    default: return entry.type;
+function formatSummaryMeta(group: ActiveContextGroup): string {
+  const parts: string[] = ["summary"];
+  if (group.summaryDepth !== undefined) parts.push(`depth ${group.summaryDepth}`);
+  if (group.summaryOrigin) parts.push(group.summaryOrigin);
+  if (group.coveredContextIds && group.coveredContextIds.length > 0) {
+    const ids = group.coveredContextIds;
+    if (ids.length === 1) {
+      parts.push(`covers ${ids[0]}`);
+    } else {
+      parts.push(`covers ${ids[0]}..${ids[ids.length - 1]}`);
+    }
   }
-}
-
-function buildTypeList(group: ContextGroup): string {
-  const counts = new Map<string, number>();
-  for (const { entry } of group.entries) {
-    const label = entryTypeLabel(entry);
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  const parts: string[] = [];
-  for (const [label, count] of counts) {
-    parts.push(count > 1 ? `${count}× ${label}` : label);
-  }
-  return parts.join(", ");
-}
-
-function groupHeaderAnnotation(group: ContextGroup): string {
-  const isSummary = group.entries.some((e) => e.entry.type === "summary");
-  const isCompact = group.entries.some((e) => e.entry.type === "compact_context");
-  if (isSummary) {
-    const depth = group.entries
-      .filter((e) => e.entry.type === "summary")
-      .map((e) => (e.entry.meta as Record<string, unknown>)["summaryDepth"] ?? 1)[0];
-    return ` — summary, depth ${depth}`;
-  }
-  if (isCompact) return " — auto-compact";
-  return "";
+  return parts.join(" · ");
 }
 
 export function generateContextMap(
-  groups: ContextGroup[],
+  groups: ActiveContextGroup[],
+  tokensByGroup: Map<string, number>,
   lastInputTokens: number,
   budget: number,
 ): string {
   const lines: string[] = [];
-  lines.push(`Context Map (${groups.length} groups)`);
-  lines.push(`Total: ${formatTokens(lastInputTokens)} | Budget: ${formatTokens(budget)}`);
-  lines.push("");
+  const pct = budget > 0 ? Math.round((lastInputTokens / budget) * 100) : 0;
+  lines.push(`Context Map · ${groups.length} groups · ${formatTokens(lastInputTokens)} / ${formatTokens(budget)} tokens (${pct}%)`);
 
+  let lastTurnEnd = -1;
   for (const group of groups) {
-    const tokStr = formatTokens(group.totalTokens).padStart(4);
-    const types = buildTypeList(group);
-    const annotation = groupHeaderAnnotation(group);
-    lines.push(`[${group.contextId}] ${tokStr}  ${types}${annotation}`);
+    if (group.turnStart !== lastTurnEnd || lastTurnEnd === -1) {
+      lines.push("---");
+    }
+    lastTurnEnd = group.turnEnd;
+
+    const tokens = tokensByGroup.get(group.contextId) ?? 0;
+    const tokStr = formatTokens(tokens).padStart(5);
+    const kind = classifyGroup(group);
+
+    let label: string;
+    if (kind === "summary") {
+      label = formatSummaryMeta(group);
+    } else {
+      label = kind;
+    }
+
+    lines.push(`[${group.contextId}] ${tokStr} · ${label}`);
+
+    const detail = formatGroupDetail(group);
+    for (const line of detail) {
+      lines.push(line);
+    }
   }
 
   return lines.join("\n");
-}
-
-// ------------------------------------------------------------------
-// Injection annotation generation (detailed, for §{id}§ locations)
-// ------------------------------------------------------------------
-
-export function generateAnnotations(groups: ContextGroup[]): Map<string, string> {
-  const annotations = new Map<string, string>();
-
-  for (const group of groups) {
-    const lines: string[] = [];
-    const header = `§{${group.contextId}}§ ${formatTokens(group.totalTokens)}${groupHeaderAnnotation(group)}`;
-    lines.push(header);
-
-    for (let j = 0; j < group.entries.length; j++) {
-      const { entry } = group.entries[j];
-      const tokens = group.entryTokens[j];
-      const { label, description } = describeEntry(entry);
-      const tokStr = formatTokens(tokens).padStart(4);
-      const paddedLabel = label.padEnd(10);
-      lines.push(`  ${paddedLabel} ${description.padEnd(50)} ${tokStr}`);
-    }
-
-    annotations.set(group.contextId, lines.join("\n"));
-  }
-
-  return annotations;
 }
 
 // ------------------------------------------------------------------
@@ -333,10 +408,12 @@ export function generateShowContext(
   entries: LogEntry[],
   lastInputTokens: number,
   budget: number,
-): ShowContextResult {
-  const groups = buildContextGroups(entries);
-  return {
-    contextMap: generateContextMap(groups, lastInputTokens, budget),
-    annotations: generateAnnotations(groups),
-  };
+): string {
+  const view = buildActiveContextView(entries, { includeCompactContext: true });
+  const tokensByGroup = new Map<string, number>();
+  for (const group of view.groups) {
+    const total = group.entries.reduce((sum, { entry }) => sum + estimateEntryTokens(entry), 0);
+    tokensByGroup.set(group.contextId, total);
+  }
+  return generateContextMap(view.groups, tokensByGroup, lastInputTokens, budget);
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { buildActiveContextView } from "../src/active-context.js";
 import {
   createAssistantText,
+  createInputReceived,
   createSummary,
   createUserMessage,
   type LogEntry,
@@ -81,5 +82,21 @@ describe("buildActiveContextView", () => {
 
     const view = buildActiveContextView(entries);
     expect(view.order).toEqual(["s2"]);
+  });
+
+  it("orders queued input after current turn's assistant group", () => {
+    // Simulates: user A sends message (turn 1), AI is processing,
+    // user B sends message (turn 2, queued — input_received written immediately),
+    // then AI finishes text-only reply (turn 1, own context_id).
+    const entries: LogEntry[] = [
+      createInputReceived("ir-001", 1, "ir-001", "user", "Question?", "Question?", "cA"),
+      createUserMessage("user-001", 1, "Question?", "Question?", "cA"),
+      createInputReceived("ir-002", 2, "ir-002", "user", "Follow-up", "Follow-up", "cB"),
+      createAssistantText("asst-001", 1, 0, "Answer", "Answer", "cR"),
+      createUserMessage("user-002", 2, "Follow-up", "Follow-up", "cB"),
+    ];
+
+    const view = buildActiveContextView(entries);
+    expect(view.order).toEqual(["cA", "cR", "cB"]);
   });
 });

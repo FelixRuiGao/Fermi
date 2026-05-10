@@ -534,10 +534,6 @@ export class Session {
   // Hint compression (two-tier state machine)
   private _hintState: "none" | "level1_sent" | "level2_sent" = "none";
 
-  // show_context: number of remaining rounds where annotations are active
-  private _showContextRoundsRemaining = 0;
-  private _showContextAnnotations: Map<string, string> | null = null;
-
   // /summarize tool whitelist mode
   private _summarizeToolWhitelist: Set<string> | null = null;
   private _manualSummarizeExactRange: { from: string; to: string; contextIds: string[] } | null = null;
@@ -1206,44 +1202,11 @@ export class Session {
     return undefined;
   }
 
-  /**
-   * Find the most recent user-side contextId by scanning backward through the log.
-   * "User-side" means entries with apiRole "user" or "tool_result" that carry a contextId.
-   * Used for context ID inheritance: text-only final rounds inherit this ID.
-   */
-  private _findPrecedingUserSideContextId(): string | undefined {
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      const entry = this._log[i];
-      if (entry.discarded) continue;
-      if (entry.type === "summary") continue;
-      if (entry.apiRole === "user" || entry.apiRole === "tool_result") {
-        const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-        if (typeof ctxId === "string" && ctxId.trim()) {
-          return ctxId;
-        }
-      }
-    }
-    return undefined;
-  }
 
-  private _roundHasToolCalls(turnIndex: number, roundIndex: number): boolean {
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      const entry = this._log[i];
-      if (entry.turnIndex < turnIndex) break;
-      if (entry.discarded) continue;
-      if (entry.turnIndex !== turnIndex) continue;
-      if (entry.roundIndex !== roundIndex) continue;
-      if (entry.type === "tool_call" && entry.apiRole === "assistant") return true;
-    }
-    return false;
-  }
 
   private _resolveOutputRoundContextId(turnIndex: number, roundIndex: number): string {
     const roundContextId = this._findRoundContextId(turnIndex, roundIndex);
-    if (this._roundHasToolCalls(turnIndex, roundIndex)) {
-      return roundContextId ?? this._allocateContextId();
-    }
-    return this._findPrecedingUserSideContextId() ?? roundContextId ?? this._allocateContextId();
+    return roundContextId ?? this._allocateContextId();
   }
 
   private _retagRoundEntries(turnIndex: number, roundIndex: number, contextId: string): void {
@@ -1257,8 +1220,6 @@ export class Session {
       if (
         entry.type !== "assistant_text" &&
         entry.type !== "reasoning" &&
-        entry.type !== "tool_call" &&
-        entry.type !== "tool_result" &&
         entry.type !== "no_reply"
       ) {
         continue;
@@ -1785,8 +1746,6 @@ export class Session {
     }
     this._subAgentCounter = 0;
     this._shellManager.resetCounter();
-    this._showContextRoundsRemaining = 0;
-    this._showContextAnnotations = null;
     this._pendingSummaryEntries = [];
     this._manualSummarizeExactRange = null;
   }
@@ -2490,8 +2449,6 @@ export class Session {
     this._inbox = [];
     this._activeAsk = null;
     this._pendingTurnState = null;
-    this._showContextRoundsRemaining = 0;
-    this._showContextAnnotations = null;
     this._activeLogEntryId = null;
     this._lastTurnEndStatus = null;
     this._currentWorkId = null;
@@ -2644,10 +2601,6 @@ export class Session {
     this._recentSessionEvents = [...shadow._recentSessionEvents];
     this._lastTurnEndStatus = shadow._lastTurnEndStatus;
     this._selfPhase = shadow._selfPhase;
-    this._showContextRoundsRemaining = shadow._showContextRoundsRemaining;
-    this._showContextAnnotations = shadow._showContextAnnotations
-      ? new Map(shadow._showContextAnnotations)
-      : null;
     this._activeAsk = shadow._activeAsk ? structuredClone(shadow._activeAsk) as AskRequest : null;
     this._askHistory = structuredClone(shadow._askHistory) as AskAuditRecord[];
     this._agentState = shadow._agentState;
@@ -3820,7 +3773,7 @@ export class Session {
         `   key decisions and why, unresolved issues, code references you'd look back at, and any constraints the user stated.`,
         `6. After summarizing, reply with a one-line description of what was compressed (e.g. "Compressed turns 3-5: auth exploration and test results"). Do not repeat the summary content.`,
         ``,
-        `Do NOT continue the main task. Do NOT call show_context(dismiss=true).`,
+        `Do NOT continue the main task.`,
         focusPart,
         `</summarize-request>`,
       ].join("\n");
@@ -4069,16 +4022,6 @@ export class Session {
           kind: "deny",
           message: `Tool "${ctx.toolName}" is not available during /summarize. Allowed: ${[...this._summarizeToolWhitelist].join(", ")}.`,
         };
-      }
-      // Block show_context(dismiss=true) during /summarize
-      if (ctx.toolName === "show_context") {
-        const args = ctx.toolArgs as Record<string, unknown>;
-        if (args["dismiss"]) {
-          return {
-            kind: "deny",
-            message: "Cannot dismiss context annotations during /summarize.",
-          };
-        }
       }
     }
 
@@ -5018,7 +4961,7 @@ export class Session {
     if (!activationCompleted && !hasAssistantInActivation) {
       const partialText = stripContextTags(accumulatedText).trim();
       if (partialText) {
-        const partialContextId = this._findPrecedingUserSideContextId() ?? this._allocateContextId();
+        const partialContextId = this._allocateContextId();
         this._appendEntry(createAssistantText(
           this._nextLogId("assistant_text"),
           this._turnCount,
@@ -5477,14 +5420,10 @@ export class Session {
     // v2: callback-based message management
     // getMessages projects from _log via projectToApiMessages
     const getMessages = (): Array<Record<string, unknown>> => {
-      const showAnnotations = this._showContextRoundsRemaining > 0
-        ? this._showContextAnnotations ?? undefined
-        : undefined;
       return projectToApiMessages(this._log, {
         systemPrompt: this._getSystemPrompt(),
         resolveImageRef: (refPath) => this._resolveImageRef(refPath),
         requiresAlternatingRoles: (this.primaryAgent as any)._provider?.requiresAlternatingRoles,
-        showContextAnnotations: showAnnotations ?? undefined,
         enforceToolCallProtocol: true,
       });
     };
@@ -5592,6 +5531,7 @@ export class Session {
       onReasoningDone,
       signal,
       (roundIndex) => getRoundContextId(roundIndex),
+      () => this._allocateContextId(),
       this._buildCompactCheck(),
       onTokenUpdate,
       this._thinkingLevel === "none" ? undefined : this._thinkingLevel,
@@ -5944,24 +5884,15 @@ export class Session {
     return result;
   }
 
-  private _execShowContext(args: Record<string, unknown>): ToolResult {
-    // Handle dismiss mode: clear annotations without generating new ones
-    if (args["dismiss"]) {
-      this._showContextRoundsRemaining = 0;
-      this._showContextAnnotations = null;
-      return new ToolResult({ content: "Context annotations dismissed." });
-    }
-
+  private _execShowContext(_args: Record<string, unknown>): ToolResult {
     const mc = this.primaryAgent.modelConfig;
     const provider = (this.primaryAgent as any)._provider;
     const effectiveMax = mc.maxTokens;
     const budget = provider.budgetCalcMode === "full_context"
       ? this._effectiveContextLength(mc) : this._effectiveContextLength(mc) - effectiveMax;
 
-    const result = generateShowContext(this._log, this._lastInputTokens, budget);
-    this._showContextRoundsRemaining = 1;
-    this._showContextAnnotations = result.annotations;
-    return new ToolResult({ content: result.contextMap });
+    const contextMap = generateShowContext(this._log, this._lastInputTokens, budget);
+    return new ToolResult({ content: contextMap });
   }
 
   private _execSummarizeTool(args: Record<string, unknown>): ToolResult {
@@ -5983,12 +5914,6 @@ export class Session {
     this._annotateLatestSummarizeToolCall(result.results);
 
     this._touchLog();
-
-    // Auto-dismiss show_context annotations after a successful summarize
-    if (result.results.some((r) => r.success)) {
-      this._showContextRoundsRemaining = 0;
-      this._showContextAnnotations = null;
-    }
 
     return new ToolResult({ content: result.output });
   }

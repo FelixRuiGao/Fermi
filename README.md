@@ -43,7 +43,7 @@ The core feature. The agent has two tools for inspecting and compressing its own
 
 | Tool | What it does |
 |------|-------------|
-| `show_context` | Display a context map — all groups with token sizes, types, and inline annotations |
+| `show_context` | Display a context map — all groups with token sizes, types, and content previews |
 | `summarize` | Compress selected context groups — extract decisions and facts, discard the rest |
 
 The user can also intervene directly:

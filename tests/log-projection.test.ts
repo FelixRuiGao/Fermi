@@ -617,26 +617,6 @@ describe("projectToApiMessages", () => {
     expect(msgs[2]).toMatchObject({ role: "user", content: "new" });
   });
 
-  it("annotates compact_context when show_context is active", () => {
-    const entries: LogEntry[] = [
-      createSystemPrompt("sys-001", "prompt"),
-      createCompactMarker("cm-001", 1, 0, 100, 20),
-      createCompactContext("cc-001", 2, "continuation", "c2", 0),
-      createUserMessage("user-002", 2, "new", "new", "c3"),
-    ];
-    const msgs = projectToApiMessages(entries, {
-      showContextAnnotations: new Map([
-        ["c2", "§{c2}§ <1k — auto-compact"],
-      ]),
-    });
-
-    expect(msgs[1]).toEqual({
-      role: "user",
-      content: "§{c2}§ <1k — auto-compact\n\ncontinuation",
-      _context_id: "c2",
-    });
-  });
-
   it("replaces summarized entries at their original API position", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),

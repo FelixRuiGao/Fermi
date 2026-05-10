@@ -209,6 +209,15 @@ export function buildActiveContextView(
     insertGroup(group, insertAt);
   }
 
+  // Stable-sort items by turn so that queued inputs (written to the log
+  // mid-turn with a higher turnIndex) never appear before the current
+  // turn's groups.  Within the same turn, original log order is preserved.
+  items.sort((a, b) => {
+    const aTurn = a.kind === "group" ? a.group.turnStart : a.entry.turnIndex;
+    const bTurn = b.kind === "group" ? b.group.turnStart : b.entry.turnIndex;
+    return aTurn - bTurn;
+  });
+
   const groups = items
     .filter((item): item is ActiveContextGroupItem => item.kind === "group")
     .map((item) => item.group);

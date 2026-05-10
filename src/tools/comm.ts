@@ -107,18 +107,10 @@ export const SHOW_CONTEXT_TOOL: ToolDef = {
   name: "show_context",
   description:
     "Display the context distribution of the current active window. " +
-    "Returns a Context Map showing all context groups with their sizes and types. " +
-    "Also causes detailed annotations to appear inline until the next summarize call or show_context(dismiss=true), " +
-    "showing exactly what each context ID covers and the approximate size of each part.",
+    "Returns a detailed Context Map showing all context groups with their sizes, types, and content previews.",
   parameters: {
     type: "object",
-    properties: {
-      dismiss: {
-        type: "boolean",
-        description:
-          "If true, dismiss the currently active context annotations without showing new ones.",
-      },
-    },
+    properties: {},
     required: [],
   },
   summaryTemplate: "{agent} is inspecting context",

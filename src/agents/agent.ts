@@ -213,6 +213,7 @@ export class Agent {
     onReasoningDone?: (roundIndex: number) => void,
     signal?: AbortSignal,
     contextIdAllocator?: (roundIndex: number) => string,
+    toolContextIdAllocator?: () => string,
     compactCheck?: (
       inputTokens: number,
       outputTokens: number,
@@ -260,6 +261,7 @@ export class Agent {
       builtinExecutor: executeTool,
       signal,
       contextIdAllocator,
+      toolContextIdAllocator,
       onTokenUpdate,
       compactCheck,
       thinkingLevel,

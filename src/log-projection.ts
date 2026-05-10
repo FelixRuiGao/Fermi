@@ -590,12 +590,6 @@ export interface ApiProjectionOptions {
   truncateSummarizeToolArgs?: boolean;
   /** Enforce provider tool-call ordering invariants before submission. */
   enforceToolCallProtocol?: boolean;
-  /**
-   * show_context annotations: Map from contextId → annotation text.
-   * When provided, §{id}§ + annotation is prepended to user message and
-   * first tool_result content for each context group.
-   */
-  showContextAnnotations?: Map<string, string>;
 }
 
 const USER_MESSAGE_HEADER = "[User Message]";
@@ -622,11 +616,6 @@ export function projectToApiMessages(
       break;
     }
   }
-
-  // Copy annotations map so we can delete entries after first injection per group
-  const annotations = options?.showContextAnnotations
-    ? new Map(options.showContextAnnotations)
-    : null;
 
   // Build messages
   const messages: InternalMessage[] = [];
@@ -666,12 +655,8 @@ export function projectToApiMessages(
       content: string;
       toolSummary: string;
     };
-    let trContent = resultContent.content;
+    const trContent = resultContent.content;
     const trCtxId = (entry.meta as Record<string, unknown>)["contextId"];
-    if (trCtxId !== undefined && annotations?.has(String(trCtxId))) {
-      trContent = `${annotations.get(String(trCtxId))!}\n\n${trContent}`;
-      annotations.delete(String(trCtxId));
-    }
     const toolMeta = (entry.meta as Record<string, unknown>)["toolMetadata"] as Record<string, unknown> | undefined;
     const contentBlocks = toolMeta?.["_contentBlocks"] as Array<Record<string, unknown>> | undefined;
 
@@ -745,21 +730,15 @@ export function projectToApiMessages(
         emitToolResult(trEntry);
       }
       for (const userEntry of deferredUserEntries) {
-        let content = resolveImageRefs(userEntry.content, options?.resolveImageRef);
+        const content = resolveImageRefs(userEntry.content, options?.resolveImageRef);
         const ctxId = (userEntry.meta as Record<string, unknown>)["contextId"];
-        if (ctxId !== undefined && annotations?.has(String(ctxId))) {
-          content = prependAnnotation(content, annotations.get(String(ctxId))!);
-        }
         const userMsg: InternalMessage = { role: "user", content };
         if (ctxId !== undefined) userMsg["_context_id"] = ctxId;
         messages.push(userMsg);
       }
     } else if (entry.apiRole === "user") {
-      let content = resolveImageRefs(entry.content, options?.resolveImageRef);
+      const content = resolveImageRefs(entry.content, options?.resolveImageRef);
       const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-      if (ctxId !== undefined && annotations?.has(String(ctxId))) {
-        content = prependAnnotation(content, annotations.get(String(ctxId))!);
-      }
       const userMsg: InternalMessage = { role: "user", content };
       if (ctxId !== undefined) userMsg["_context_id"] = ctxId;
       if (entry.type === "summary") {
@@ -829,27 +808,6 @@ function validateToolCallProtocol(messages: InternalMessage[]): void {
       );
     }
   }
-}
-
-// ------------------------------------------------------------------
-// show_context annotation injection
-// ------------------------------------------------------------------
-
-/**
- * Prepend a show_context annotation to message content.
- * Handles both string content and array content blocks.
- */
-function prependAnnotation(content: unknown, annotation: string): unknown {
-  if (typeof content === "string") {
-    return `${annotation}\n\n${content}`;
-  }
-  if (Array.isArray(content)) {
-    const copy = (content as Array<Record<string, unknown>>).map((b) => ({ ...b }));
-    // Prepend annotation as a text block
-    copy.unshift({ type: "text", text: `${annotation}\n\n` });
-    return copy;
-  }
-  return content;
 }
 
 // ------------------------------------------------------------------

@@ -217,6 +217,7 @@ interface PendingToolCallState {
   // Streaming display hints
   streamLanguage?: string;
   streamMode?: StreamMode;
+  contextId?: string;
 }
 
 interface ParsedPartialField {
@@ -713,8 +714,10 @@ export interface ToolLoopOptions {
   ) => Promise<ToolResult | string>;
   /** Abort signal for cancellation. */
   signal?: AbortSignal;
-  /** Allocator that returns the round's context_id. Provided by Session for context ID tracking. */
+  /** Allocator that returns the round's context_id (used for text/reasoning). */
   contextIdAllocator?: (roundIndex: number) => string;
+  /** Allocator that returns a fresh context_id for each tool_call. */
+  toolContextIdAllocator?: () => string;
   /** Called after each provider response with the latest input token count and full Usage. */
   onTokenUpdate?: (inputTokens: number, usage?: import("../providers/base.js").Usage) => void;
   /**
@@ -794,6 +797,7 @@ export async function asyncRunToolLoop(
     builtinExecutor,
     signal,
     contextIdAllocator,
+    toolContextIdAllocator,
     onTokenUpdate,
     compactCheck,
     thinkingLevel,
@@ -962,7 +966,10 @@ export async function asyncRunToolLoop(
       const args = getToolArgsForEntry(pending) ?? {};
 
       const sections = deriveSectionsForState(pending.name, pending);
-      const contextId = ensureRoundContextId();
+      if (!pending.contextId && toolContextIdAllocator) {
+        pending.contextId = toolContextIdAllocator();
+      }
+      const contextId = pending.contextId ?? ensureRoundContextId();
       const display = generateToolCallDisplay(pending.name, args);
       const fmd = buildFileModifyData(pending);
       const meta = buildToolCallMeta(
@@ -1314,7 +1321,7 @@ export async function asyncRunToolLoop(
           },
           {
             isError,
-            contextId: ensureRoundContextId(),
+            contextId: pending?.contextId ?? ensureRoundContextId(),
             toolMetadata: mergedMetadata,
             execStartMs,
             previewText,
