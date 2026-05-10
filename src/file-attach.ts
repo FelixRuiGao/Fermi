@@ -26,6 +26,7 @@ import {
   loadProjectedDocumentView,
   projectedDocumentLabel,
 } from "./document-projection.js";
+import { EXCLUDE_DIRS } from "./tools/shared.js";
 
 // ------------------------------------------------------------------
 // Constants
@@ -72,11 +73,9 @@ export const IMAGE_MEDIA_TYPES: Record<string, string> = {
   ".tiff": "image/tiff",
 };
 
-const SCAN_EXCLUDE_DIRS = new Set([
-  ".git", ".venv", ".env", "__pycache__", "node_modules",
-  ".mypy_cache", ".pytest_cache", ".tox", "dist", "build",
-  ".eggs", ".cache", ".ruff_cache",
-]);
+// Use the unified exclude list so file-attach autocomplete, glob, grep,
+// and list_dir all share the same notion of "skipped by default".
+const SCAN_EXCLUDE_DIRS = EXCLUDE_DIRS;
 
 // ------------------------------------------------------------------
 // File scanning for autocomplete

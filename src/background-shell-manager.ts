@@ -244,7 +244,7 @@ export class BackgroundShellManager {
       return new ToolResult({ content: `Error: shell '${idArg}' not found.` });
     }
 
-    const maxChars = Math.max(500, Math.min(50_000, maxCharsArg ?? 8_000));
+    const maxChars = Math.max(500, Math.min(80_000, maxCharsArg ?? 30_000));
     const fullText = existsSync(entry.logPath) ? readFileSync(entry.logPath, "utf-8") : "";
     let body = "";
 

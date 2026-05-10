@@ -83,9 +83,9 @@ describe("Phase 2 tool validation and grep limits", () => {
   it("enforces grep depth and file-size limits with notices", async () => {
     const root = makeTempDir("fermi-phase2-search-limits-");
     try {
-      // Depth > 6 should be skipped
+      // Depth limit is SEARCH_MAX_DEPTH (8). Bury the file at depth 10 so it must be skipped.
       let deep = root;
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 10; i++) {
         deep = join(deep, `d${i}`);
         mkdirSync(deep);
       }

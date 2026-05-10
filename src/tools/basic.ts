@@ -36,6 +36,12 @@ import {
 import { classifyFile, IMAGE_MEDIA_TYPES } from "../file-attach.js";
 import { createPatch } from "diff";
 import {
+  EXCLUDE_DIRS,
+  shouldSkipDir,
+  truncateMiddle,
+  truncateLine,
+} from "./shared.js";
+import {
   type FileModifyDisplayData,
   type MatchInfo,
   inferLanguageByExt,
@@ -428,21 +434,26 @@ const BASH_ENV_ALLOWLIST = new Set([
 // ------------------------------------------------------------------
 
 const READ_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-const READ_MAX_LINES = 1000;
-const READ_MAX_CHARS = 50_000;
+const READ_MAX_LINES = 2000;
+const READ_MAX_CHARS = 80_000;
+const READ_MAX_LINE_CHARS = 2000; // per-line cap (catches minified files)
 const READ_MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB limit for images
 
 // ------------------------------------------------------------------
 // Search safety limits
 // ------------------------------------------------------------------
 
-const SEARCH_MAX_RESULTS = 50;
-const SEARCH_MAX_DEPTH = 6;
-const SEARCH_MAX_FILES = 2_000;
+const SEARCH_MAX_DEPTH = 8;
+const SEARCH_MAX_FILES = 5_000;
 const SEARCH_MAX_FILE_SIZE = 1 * 1024 * 1024; // 1 MB per file
-const SEARCH_MAX_TOTAL_BYTES = 8 * 1024 * 1024; // 8 MB total scanned text
+const SEARCH_MAX_TOTAL_BYTES = 16 * 1024 * 1024; // 16 MB total scanned text
 const SEARCH_MAX_PATTERN_LENGTH = 300;
-const SEARCH_MAX_DURATION_MS = 2_000;
+const SEARCH_MAX_PATTERNS = 16; // multi-pattern OR cap
+const SEARCH_MAX_DURATION_MS = 4_000;
+const SEARCH_DEFAULT_HEAD_LIMIT = 100; // max content lines / file paths returned
+const SEARCH_DEFAULT_PER_FILE_LIMIT = 15; // max content lines per file in content mode
+const SEARCH_LINE_MAX_CHARS = 2_000; // per-line truncation cap
+const SEARCH_OUTPUT_CHAR_CAP = 60_000; // overall output cap (head+tail middle-cut)
 
 // ------------------------------------------------------------------
 // File write safety (Phase 5)
@@ -458,12 +469,13 @@ const READ: ToolDef = {
   name: "read_file",
   description:
     "Read the contents of a text file (max 50 MB). " +
-    "Some document formats such as PDF, DOCX, and XLSX are returned as an auto-extracted Markdown view of the original file. " +
-    "Returns line window plus file metadata (including mtime_ms) for optional optimistic concurrency checks. " +
-    "Each call returns at most 1000 lines and 50000 characters. " +
-    "If the file exceeds these limits, the output is truncated with a notice. " +
-    "Use start_line / end_line to navigate large files in multiple calls. " +
-    "If both are omitted, reads from the beginning up to the limit.",
+    "Returns up to 2000 lines / 80,000 characters per call; " +
+    "individual lines longer than 2000 chars are truncated. " +
+    "PDF, DOCX, XLSX, and similar formats are returned as auto-extracted Markdown. " +
+    "Image files are returned as visual content blocks when the model supports multimodal input. " +
+    "Returns file metadata (including mtime_ms) for optional optimistic concurrency checks. " +
+    "Use start_line / end_line (or offset / limit) to navigate large files across multiple calls. " +
+    "If you know there are several files to read, prefer issuing multiple read_file calls in parallel.",
   parameters: {
     type: "object",
     properties: {
@@ -473,13 +485,20 @@ const READ: ToolDef = {
       },
       start_line: {
         type: "integer",
-        description: "First line to read (1-indexed, inclusive). Defaults to 1.",
+        description: "First line to read (1-indexed, inclusive). Defaults to 1. Alias: offset.",
       },
       end_line: {
         type: "integer",
         description:
-          "Last line to read (1-indexed, inclusive). " +
-          "Use -1 to read to the end of the file.",
+          "Last line to read (1-indexed, inclusive). Use -1 to read to the end of the file.",
+      },
+      offset: {
+        type: "integer",
+        description: "Alias for start_line (1-indexed first line).",
+      },
+      limit: {
+        type: "integer",
+        description: "Number of lines to read starting at start_line/offset. Alternative to end_line.",
       },
     },
     required: ["path"],
@@ -488,9 +507,18 @@ const READ: ToolDef = {
   tuiPolicy: { partialReveal: { completeArgs: ["path"] } },
 };
 
+const LIST_MAX_ENTRIES_DEFAULT = 200;
+const LIST_MAX_ENTRIES_CAP = 2_000;
+const LIST_MAX_DEPTH_DEFAULT = 2;
+const LIST_MAX_DEPTH_CAP = 6;
+
 const LIST: ToolDef = {
   name: "list_dir",
-  description: "List files and directories. Returns a tree up to 2 levels deep.",
+  description:
+    "List files and directories as a tree. Returns names with file sizes for files. " +
+    "Common build / cache directories (node_modules, .git, dist, target, .venv, etc.) are skipped by default; " +
+    "to inspect one, pass it as the `path` argument explicitly. " +
+    "If you are searching for a specific filename, prefer `glob`; for content matches, prefer `grep`.",
   parameters: {
     type: "object",
     properties: {
@@ -498,6 +526,20 @@ const LIST: ToolDef = {
         type: "string",
         description: "Directory path (default: current directory)",
         default: ".",
+      },
+      max_depth: {
+        type: "integer",
+        description: `Maximum recursion depth (1-${LIST_MAX_DEPTH_CAP}, default ${LIST_MAX_DEPTH_DEFAULT}).`,
+      },
+      max_entries: {
+        type: "integer",
+        description:
+          `Maximum entries to return (default ${LIST_MAX_ENTRIES_DEFAULT}, cap ${LIST_MAX_ENTRIES_CAP}). ` +
+          `When the cap is hit the output ends with a "(truncated)" notice.`,
+      },
+      include_hidden: {
+        type: "boolean",
+        description: "Include hidden (dot-prefixed) entries. Default false.",
       },
     },
     required: [],
@@ -510,23 +552,28 @@ const LIST: ToolDef = {
 const EDIT: ToolDef = {
   name: "edit_file",
   description:
-    "Apply a patch to an existing file. " +
-    "Provide edits array with one or more replacements (each old_str must appear exactly once, edits must not overlap). " +
-    "To append: use append_str (can be combined with edits — all replacements execute first, append last).",
+    "Apply a patch to an existing file. Each edit replaces an `old_str` with a `new_str`; " +
+    "by default `old_str` must appear exactly once in the file (or the call fails with the line numbers of all matches so you can disambiguate). " +
+    "Set `replace_all: true` on an edit to replace every occurrence — useful for renames. " +
+    "Multiple edits in one call are applied atomically and must not overlap. " +
+    "Use `append_str` to add content at the end of the file (can be combined with edits — appends run last). " +
+    "Refuses no-op edits where `old_str === new_str`.",
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "File path to edit" },
       edits: {
         type: "array",
-        description:
-          "One or more replacements applied in a single atomic write. " +
-          "Each item has old_str (must be unique in file) and new_str.",
+        description: "One or more replacements applied in a single atomic write.",
         items: {
           type: "object",
           properties: {
-            old_str: { type: "string", description: "Exact string to find (must be unique)" },
-            new_str: { type: "string", description: "Replacement string" },
+            old_str: { type: "string", description: "Exact string to find (must be unique unless replace_all=true)." },
+            new_str: { type: "string", description: "Replacement string. Must differ from old_str." },
+            replace_all: {
+              type: "boolean",
+              description: "Replace every occurrence instead of requiring uniqueness. Default false.",
+            },
           },
           required: ["old_str", "new_str"],
         },
@@ -553,7 +600,9 @@ const EDIT: ToolDef = {
 const WRITE: ToolDef = {
   name: "write_file",
   description:
-    "Create or overwrite a file with the given content. Parent directories are created automatically.",
+    "Create or overwrite a file with the given content. Parent directories are created automatically. " +
+    "Prefer write_file over edit_file when you intend to replace the entire file — it is fewer tokens " +
+    "than echoing the full existing content into edit_file. Use edit_file for targeted modifications.",
   parameters: {
     type: "object",
     properties: {
@@ -634,26 +683,35 @@ const TIME: ToolDef = {
 // Glob tool
 // ------------------------------------------------------------------
 
-const GLOB_MAX_RESULTS = 200;
-const GLOB_MAX_FILES_SCANNED = 10_000;
-const GLOB_MAX_DEPTH = 10;
+const GLOB_DEFAULT_LIMIT = 200;
+const GLOB_MAX_LIMIT = 1_000;
+const GLOB_MAX_FILES_SCANNED = 50_000;
 
 const GLOB: ToolDef = {
   name: "glob",
   description:
-    "Find files by name pattern. Returns matching paths sorted by modification time.",
+    "Find files by name/path pattern. Returns matching absolute paths sorted by modification time " +
+    "(most recently modified first). Patterns without `/` are auto-prefixed with `**/` so " +
+    "`*.ts` matches every `.ts` file in the tree. " +
+    "Common build / cache directories (node_modules, .git, dist, target, .venv, etc.) are skipped. " +
+    "Supports `**`, `*`, `?`, `[abc]`, and `{a,b}` brace expansion.",
   parameters: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
         description:
-          "Glob pattern to match (e.g. \"**/*.ts\", \"src/**/*.test.tsx\")",
+          "Glob pattern (e.g. \"*.ts\", \"**/*.test.tsx\", \"src/**/*.{ts,tsx}\"). " +
+          "Patterns without a slash are matched anywhere in the tree.",
       },
       path: {
         type: "string",
-        description: "Directory to search in (default: current directory)",
+        description: "Directory to search in (default: current directory).",
         default: ".",
+      },
+      limit: {
+        type: "integer",
+        description: `Maximum results to return (default ${GLOB_DEFAULT_LIMIT}, cap ${GLOB_MAX_LIMIT}).`,
       },
     },
     required: ["pattern"],
@@ -669,58 +727,72 @@ const GLOB: ToolDef = {
 const GREP: ToolDef = {
   name: "grep",
   description:
-    "Search file contents using regex. Supports context lines, glob filtering, and multiple output modes.",
+    "Search file contents by regex. Pattern can be a single string OR an array of strings " +
+    "(matches lines that contain ANY of the patterns — useful for snake_case/camelCase/PascalCase variants in one call). " +
+    "Smart case: an all-lowercase pattern is matched case-insensitively unless `-i` is set explicitly. " +
+    "Defaults: returns up to 100 results overall and 15 matching lines per file in content mode; " +
+    "individual lines longer than 2000 chars are truncated. " +
+    "Skips common build / cache directories (node_modules, .git, dist, target, .venv, etc.).",
   parameters: {
     type: "object",
     properties: {
       pattern: {
-        type: "string",
-        description: "Regex pattern to search for",
+        description:
+          "Regex pattern, or an array of regex patterns combined with OR logic. " +
+          "Plain identifiers are best — keep regex simple to avoid 0 matches.",
+        oneOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
       },
       path: {
         type: "string",
-        description: "Directory or file to search in (default: current directory)",
+        description: "Directory or file to search in (default: current directory).",
         default: ".",
       },
       glob: {
         type: "string",
-        description: "Glob pattern to filter files (e.g. \"*.ts\", \"*.{ts,tsx}\")",
+        description: "Filename glob filter (e.g. \"*.ts\", \"*.{ts,tsx}\").",
       },
       type: {
         type: "string",
-        description: "File type filter by extension (e.g. \"js\", \"py\", \"ts\")",
+        description: "File type filter by extension (e.g. \"js\", \"py\", \"ts\").",
       },
       output_mode: {
         type: "string",
         enum: ["content", "files_with_matches", "count"],
         description:
-          "Output mode: \"content\" (matching lines with context), " +
-          "\"files_with_matches\" (file paths only, default), " +
-          "\"count\" (match counts per file)",
+          "Output mode. \"files_with_matches\" (default) returns paths only. " +
+          "\"content\" returns matching lines (optionally with context). " +
+          "\"count\" returns N matches per file.",
       },
       "-A": {
         type: "integer",
-        description: "Lines to show after each match (content mode only)",
+        description: "Context lines AFTER each match (content mode only). Alias: after_lines.",
       },
       "-B": {
         type: "integer",
-        description: "Lines to show before each match (content mode only)",
+        description: "Context lines BEFORE each match (content mode only). Alias: before_lines.",
       },
       "-C": {
         type: "integer",
-        description: "Lines to show before and after each match (content mode only)",
+        description: "Context lines BOTH before and after each match. Alias: context_lines.",
       },
       "-i": {
         type: "boolean",
-        description: "Case insensitive search",
+        description: "Force case-insensitive search (overrides smart case). Alias: case_insensitive.",
       },
       "-n": {
         type: "boolean",
-        description: "Show line numbers (default true for content mode)",
+        description: "Show line numbers (default true for content mode). Alias: line_numbers.",
       },
       head_limit: {
         type: "integer",
-        description: "Limit output to first N entries",
+        description: `Cap overall results to N entries (default ${SEARCH_DEFAULT_HEAD_LIMIT}).`,
+      },
+      limit_per_file: {
+        type: "integer",
+        description: `Cap matches per file in content mode (default ${SEARCH_DEFAULT_PER_FILE_LIMIT}).`,
       },
     },
     required: ["pattern"],
@@ -770,7 +842,7 @@ export const BASH_OUTPUT_TOOL: ToolDef = {
       },
       max_chars: {
         type: "integer",
-        description: "Optional max characters to return (default 8000).",
+        description: "Optional max characters to return (default 30000, cap 80000).",
       },
     },
     required: ["id"],
@@ -948,7 +1020,17 @@ async function toolReadFile(
 
   let selected = lines.slice(start - 1, end);
 
-  // Apply character limit
+  // Per-line truncation for runaway minified lines.
+  let lineTrimCount = 0;
+  selected = selected.map((line) => {
+    if (line.length > READ_MAX_LINE_CHARS) {
+      lineTrimCount += 1;
+      return truncateLine(line, READ_MAX_LINE_CHARS);
+    }
+    return line;
+  });
+
+  // Apply character limit (counts post-line-trim characters)
   let charCount = 0;
   let truncatedAtLine: number | null = null;
   for (let i = 0; i < selected.length; i++) {
@@ -978,6 +1060,12 @@ async function toolReadFile(
       `Use start_line=${end + 1} to continue reading${isProjectedDocument ? " the extracted Markdown view of the same source path" : ""}.]`;
   }
 
+  if (lineTrimCount > 0) {
+    result +=
+      `\n\n[Note: ${lineTrimCount} line${lineTrimCount === 1 ? "" : "s"} ` +
+      `exceeded ${READ_MAX_LINE_CHARS} chars and ${lineTrimCount === 1 ? "was" : "were"} truncated.]`;
+  }
+
   return result;
 }
 
@@ -985,7 +1073,26 @@ async function toolReadFile(
 // list_dir
 // ------------------------------------------------------------------
 
-async function toolListDir(dirPath = "."): Promise<string> {
+interface ListDirOptions {
+  maxDepth: number;
+  maxEntries: number;
+  includeHidden: boolean;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+async function toolListDir(dirPath = ".", opts?: Partial<ListDirOptions>): Promise<string> {
+  const options: ListDirOptions = {
+    maxDepth: Math.min(Math.max(opts?.maxDepth ?? LIST_MAX_DEPTH_DEFAULT, 1), LIST_MAX_DEPTH_CAP),
+    maxEntries: Math.min(Math.max(opts?.maxEntries ?? LIST_MAX_ENTRIES_DEFAULT, 1), LIST_MAX_ENTRIES_CAP),
+    includeHidden: opts?.includeHidden ?? false,
+  };
+
   if (!existsSync(dirPath)) {
     return `ERROR: Directory not found: ${dirPath}`;
   }
@@ -995,9 +1102,13 @@ async function toolListDir(dirPath = "."): Promise<string> {
   }
 
   const lines: string[] = [];
+  let truncated = false;
+  let skippedDirs = 0;
 
   async function walk(dir: string, prefix: string, depth: number): Promise<void> {
-    if (depth > 2) return;
+    if (depth > options.maxDepth) return;
+    if (lines.length >= options.maxEntries) { truncated = true; return; }
+
     let entries: string[];
     try {
       entries = await fs.readdir(dir);
@@ -1005,41 +1116,70 @@ async function toolListDir(dirPath = "."): Promise<string> {
       return;
     }
 
+    const filtered: string[] = [];
+    for (const name of entries) {
+      if (!options.includeHidden && name.startsWith(".") && name !== ".") continue;
+      // Always skip names in EXCLUDE_DIRS during the walk. A user can still
+      // inspect e.g. node_modules by passing it as the root `path` — its
+      // own children (typically package names like "react") are unaffected.
+      if (EXCLUDE_DIRS.has(name)) {
+        skippedDirs += 1;
+        continue;
+      }
+      filtered.push(name);
+    }
+
     // Sort: directories first, then files, alphabetical
     const withStats = (await Promise.all(
-      entries
-        .filter(
-          (name) =>
-            !name.startsWith(".") &&
-            name !== "node_modules" &&
-            name !== "__pycache__",
-        )
-        .map(async (name) => {
-          const full = path.join(dir, name);
-          let isDir = false;
-          try {
-            isDir = (await fs.stat(full)).isDirectory();
-          } catch {
-            // skip inaccessible
-          }
-          return { name, full, isDir };
-        }),
+      filtered.map(async (name) => {
+        const full = path.join(dir, name);
+        let isDir = false;
+        let size = 0;
+        try {
+          const st = await fs.stat(full);
+          isDir = st.isDirectory();
+          size = st.size;
+        } catch {
+          // skip inaccessible
+        }
+        return { name, full, isDir, size };
+      }),
     )).sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
 
     for (const entry of withStats) {
-      const marker = entry.isDir ? "[DIR] " : "";
-      lines.push(`${prefix}${marker}${entry.name}`);
+      if (lines.length >= options.maxEntries) { truncated = true; return; }
       if (entry.isDir) {
+        lines.push(`${prefix}${entry.name}/`);
         await walk(entry.full, prefix + "  ", depth + 1);
+      } else {
+        lines.push(`${prefix}${entry.name}  [${formatFileSize(entry.size)}]`);
       }
     }
   }
 
   await walk(dirPath, "", 0);
-  return lines.length > 0 ? lines.join("\n") : "(empty directory)";
+
+  if (lines.length === 0) {
+    return skippedDirs > 0
+      ? `(empty after skipping ${skippedDirs} excluded director${skippedDirs === 1 ? "y" : "ies"})`
+      : "(empty directory)";
+  }
+
+  let output = lines.join("\n");
+  const notices: string[] = [];
+  if (truncated) {
+    notices.push(`Output truncated at ${options.maxEntries} entries — pass max_entries=${Math.min(options.maxEntries * 4, LIST_MAX_ENTRIES_CAP)} or narrow the path.`);
+  }
+  if (skippedDirs > 0) {
+    notices.push(`Skipped ${skippedDirs} excluded director${skippedDirs === 1 ? "y" : "ies"} (node_modules, .git, dist, etc.).`);
+  }
+  if (notices.length > 0) {
+    output += "\n\n" + notices.map((n) => `[${n}]`).join("\n");
+  }
+  return output;
 }
 
 
@@ -1200,9 +1340,37 @@ async function toolEditFileAppend(
 // edit_file multi-edit
 // ------------------------------------------------------------------
 
+/** Find every occurrence of needle in haystack as character offsets. */
+function findAllOffsets(haystack: string, needle: string): number[] {
+  if (!needle) return [];
+  const out: number[] = [];
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) break;
+    out.push(idx);
+    from = idx + needle.length;
+  }
+  return out;
+}
+
+/** Convert a character offset to a 1-indexed line number. */
+function offsetToLine(content: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < content.length; i++) {
+    if (content[i] === "\n") line++;
+  }
+  return line;
+}
+
+/** Truncate a snippet for inclusion in error messages. */
+function snippetFor(s: string, maxLen = 60): string {
+  return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
+}
+
 async function toolEditFileMulti(
   filePath: string,
-  edits: Array<{ old_str: string; new_str: string }>,
+  edits: Array<{ old_str: string; new_str: string; replace_all?: boolean }>,
   expectedMtimeMs?: number,
   appendStr?: string,
 ): Promise<string | ToolResult> {
@@ -1226,27 +1394,43 @@ async function toolEditFileMulti(
       return `ERROR: ${e instanceof Error ? e.message : String(e)}`;
     }
 
-    // Find all matches, validate uniqueness
+    // Find all matches; validate uniqueness unless replace_all is opted in.
+    // No-op edits (old_str === new_str) are rejected so the model doesn't
+    // confuse itself with diffs that don't change anything.
     const matches: MatchInfo[] = [];
-    for (const edit of edits) {
-      const count = content.split(edit.old_str).length - 1;
-      if (count === 0) {
-        const snippet = edit.old_str.length > 60
-          ? edit.old_str.slice(0, 60) + "..."
-          : edit.old_str;
-        return `ERROR: old_str not found in file: ${JSON.stringify(snippet)}`;
+    for (let editIdx = 0; editIdx < edits.length; editIdx++) {
+      const edit = edits[editIdx];
+      if (edit.old_str === edit.new_str) {
+        return (
+          `ERROR: edit #${editIdx + 1} has identical old_str and new_str — ` +
+          `this is a no-op. Adjust new_str or remove the edit.`
+        );
       }
-      if (count > 1) {
-        const snippet = edit.old_str.length > 60
-          ? edit.old_str.slice(0, 60) + "..."
-          : edit.old_str;
-        return `ERROR: old_str appears ${count} times (must be unique): ${JSON.stringify(snippet)}`;
+      const offsets = findAllOffsets(content, edit.old_str);
+      if (offsets.length === 0) {
+        return `ERROR: edit #${editIdx + 1}: old_str not found in file: ${JSON.stringify(snippetFor(edit.old_str))}`;
       }
-      matches.push({
-        index: content.indexOf(edit.old_str),
-        oldStr: edit.old_str,
-        newStr: edit.new_str,
-      });
+      if (offsets.length > 1 && !edit.replace_all) {
+        const lines = offsets.map((o) => offsetToLine(content, o));
+        const lineList = lines.length > 6
+          ? lines.slice(0, 6).join(", ") + `, … (${lines.length} total)`
+          : lines.join(", ");
+        return (
+          `ERROR: edit #${editIdx + 1}: old_str appears ${offsets.length} times ` +
+          `(at lines ${lineList}). ` +
+          `Either add more surrounding context to make the match unique, ` +
+          `or pass replace_all: true on this edit to replace every occurrence. ` +
+          `old_str: ${JSON.stringify(snippetFor(edit.old_str))}`
+        );
+      }
+      // Push every occurrence (single match by default, all matches when replace_all).
+      for (const off of offsets) {
+        matches.push({
+          index: off,
+          oldStr: edit.old_str,
+          newStr: edit.new_str,
+        });
+      }
     }
 
     // Sort by offset ascending for overlap check
@@ -1441,15 +1625,9 @@ async function atomicWriteTextFile(
 // bash
 // ------------------------------------------------------------------
 
+// Re-export for legacy callers; truncateMiddle is the canonical impl.
 function truncateOutput(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  const half = Math.floor(limit / 2);
-  const omitted = text.length - limit;
-  return (
-    text.slice(0, half) +
-    `\n\n... [truncated ${omitted.toLocaleString()} chars] ...\n\n` +
-    text.slice(-half)
-  );
+  return truncateMiddle(text, limit);
 }
 
 export function buildBashEnv(): NodeJS.ProcessEnv {
@@ -1467,11 +1645,32 @@ export function buildBashEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+/**
+ * Spill a full text payload to a session-scoped temp file. Returns the
+ * absolute path. Best-effort: returns null on failure (we don't want a
+ * spill failure to mask the original tool result).
+ */
+function spillOutputToFile(
+  baseDir: string,
+  prefix: string,
+  full: string,
+): string | null {
+  try {
+    const dir = path.join(baseDir, "bash-output");
+    mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${prefix}-${Date.now()}-${randomUUID().slice(0, 8)}.log`);
+    fsWriteFileSync(file, full, { encoding: "utf-8" });
+    return file;
+  } catch {
+    return null;
+  }
+}
+
 async function toolBash(
   command: string,
   timeout: number,
   cwd = "",
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; spillDir?: string } = {},
 ): Promise<string> {
   // Clamp timeout defensively (the dispatcher already validated presence/integer).
   timeout = Math.min(Math.max(1, timeout), BASH_MAX_TIMEOUT);
@@ -1525,6 +1724,14 @@ async function toolBash(
       const parts: string[] = [];
       if (out) parts.push(`PARTIAL STDOUT:\n${truncateOutput(out, half)}`);
       if (err) parts.push(`PARTIAL STDERR:\n${truncateOutput(err, half)}`);
+      const total = out.length + err.length;
+      if (opts.spillDir && total > BASH_MAX_OUTPUT_CHARS) {
+        const full =
+          (out ? `==== STDOUT ====\n${out}\n` : "") +
+          (err ? `==== STDERR ====\n${err}\n` : "");
+        const spill = spillOutputToFile(opts.spillDir, "bash-partial", full);
+        if (spill) parts.push(`Full untruncated output saved to: ${spill}`);
+      }
       return parts.join("\n");
     };
 
@@ -1595,6 +1802,11 @@ async function toolBash(
       const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const parts: string[] = [];
+      const total = stdout.length + stderr.length;
+      const willTruncate =
+        stdout.length > BASH_MAX_OUTPUT_CHARS ||
+        stderr.length > BASH_MAX_OUTPUT_CHARS;
+
       if (stdout) {
         parts.push(`STDOUT:\n${truncateOutput(stdout, BASH_MAX_OUTPUT_CHARS)}`);
       }
@@ -1602,6 +1814,21 @@ async function toolBash(
         parts.push(`STDERR:\n${truncateOutput(stderr, BASH_MAX_OUTPUT_CHARS)}`);
       }
       parts.push(`EXIT CODE: ${code ?? 1}`);
+
+      // If output was truncated and a spill dir was provided, persist the
+      // full output so the model can read_file the whole thing if needed.
+      if (willTruncate && opts.spillDir && total > 0) {
+        const full =
+          (stdout ? `==== STDOUT ====\n${stdout}\n` : "") +
+          (stderr ? `==== STDERR ====\n${stderr}\n` : "");
+        const spill = spillOutputToFile(opts.spillDir, "bash", full);
+        if (spill) {
+          parts.push(
+            `Full untruncated output saved to: ${spill}\n` +
+            `(${total.toLocaleString()} total chars; use read_file or grep to inspect.)`,
+          );
+        }
+      }
       finish(parts.join("\n"));
     });
 
@@ -2094,24 +2321,47 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(re);
 }
 
-const GLOB_SKIP_DIRS = new Set([
-  ".git", "node_modules", "__pycache__", ".next", ".nuxt",
-  "dist", ".tox", ".mypy_cache", ".pytest_cache", ".venv", "venv",
-]);
+/**
+ * Auto-prepend `**\/` to patterns that don't include a slash, so that
+ * `*.ts` matches anywhere in the tree (matches Cursor's glob_file_search
+ * behavior — what the model usually means by a "search by extension").
+ */
+function normalizeGlobPattern(pattern: string): string {
+  if (pattern.includes("/")) return pattern;
+  // Already covers anywhere via `**` prefix? Leave alone.
+  if (pattern.startsWith("**")) return pattern;
+  return "**/" + pattern;
+}
 
-async function toolGlob(pattern: string, searchPath: string): Promise<string> {
+/**
+ * Match a normalized glob pattern (relative path) using Bun's built-in
+ * matcher. Supports `**`, `*`, `?`, `[abc]`, `{a,b}`.
+ */
+function makeGlobMatcher(pattern: string): (relPath: string) => boolean {
+  const normalized = normalizeGlobPattern(pattern);
+  // Bun.Glob is provided by the Bun runtime (>=1.1).
+  // Falls back to the local regex implementation if Bun is unavailable
+  // (e.g. during type-check or in node-only test environments).
+  const BunGlob = (globalThis as unknown as { Bun?: { Glob?: new (p: string) => { match: (s: string) => boolean } } }).Bun?.Glob;
+  if (BunGlob) {
+    const g = new BunGlob(normalized);
+    return (relPath) => g.match(relPath);
+  }
+  const regex = globToRegex(normalized);
+  return (relPath) => regex.test(relPath);
+}
+
+async function toolGlob(pattern: string, searchPath: string, limit: number): Promise<string> {
   if (!existsSync(searchPath)) {
     return `ERROR: Path not found: ${searchPath}`;
   }
-
-  const regex = globToRegex(pattern);
+  const cap = Math.min(Math.max(1, limit), GLOB_MAX_LIMIT);
+  const match = makeGlobMatcher(pattern);
 
   const results: Array<{ path: string; mtime: number }> = [];
   let filesScanned = 0;
 
   async function walk(dir: string, depth: number, relPrefix: string): Promise<void> {
-    if (depth > GLOB_MAX_DEPTH) return;
-    if (results.length >= GLOB_MAX_RESULTS) return;
     if (filesScanned >= GLOB_MAX_FILES_SCANNED) return;
 
     let entries: string[];
@@ -2122,11 +2372,8 @@ async function toolGlob(pattern: string, searchPath: string): Promise<string> {
     }
 
     for (const name of entries) {
-      if (results.length >= GLOB_MAX_RESULTS) return;
       if (filesScanned >= GLOB_MAX_FILES_SCANNED) return;
-
-      if (GLOB_SKIP_DIRS.has(name)) continue;
-      if (name.startsWith(".") && name !== ".") continue;
+      if (shouldSkipDir(name)) continue;
 
       const full = path.join(dir, name);
       const rel = relPrefix ? relPrefix + "/" + name : name;
@@ -2142,7 +2389,7 @@ async function toolGlob(pattern: string, searchPath: string): Promise<string> {
         await walk(full, depth + 1, rel);
       } else if (stat.isFile()) {
         filesScanned++;
-        if (regex.test(rel)) {
+        if (match(rel)) {
           results.push({ path: full, mtime: stat.mtimeMs });
         }
       }
@@ -2157,11 +2404,15 @@ async function toolGlob(pattern: string, searchPath: string): Promise<string> {
 
   // Sort by mtime descending (most recently modified first)
   results.sort((a, b) => b.mtime - a.mtime);
+  const truncated = results.length > cap;
+  const shown = truncated ? results.slice(0, cap) : results;
 
-  const lines = results.map((r) => r.path);
-  let output = lines.join("\n");
-  if (results.length >= GLOB_MAX_RESULTS) {
-    output += `\n... (truncated at ${GLOB_MAX_RESULTS} results)`;
+  let output = shown.map((r) => r.path).join("\n");
+  if (truncated) {
+    output += `\n\n[Showing ${cap} of ${results.length} matches. Pass limit=${Math.min(cap * 4, GLOB_MAX_LIMIT)} or narrow the pattern to see more.]`;
+  }
+  if (filesScanned >= GLOB_MAX_FILES_SCANNED) {
+    output += `\n\n[Stopped after scanning ${GLOB_MAX_FILES_SCANNED.toLocaleString()} files; results may be incomplete.]`;
   }
   return output;
 }
@@ -2176,9 +2427,11 @@ interface GrepOptions {
   outputMode: "content" | "files_with_matches" | "count";
   afterContext: number;
   beforeContext: number;
-  caseInsensitive: boolean;
+  /** undefined = smart-case (auto), true = forced -i, false = forced case-sensitive */
+  caseInsensitive: boolean | undefined;
   showLineNumbers: boolean;
   headLimit: number;
+  perFileLimit: number;
 }
 
 /** Check if a filename matches a simple glob pattern (e.g. "*.ts", "*.{ts,tsx}") */
@@ -2193,29 +2446,57 @@ function matchFileType(filename: string, typeFilter: string): boolean {
   return ext === typeFilter.toLowerCase();
 }
 
-async function toolGrep(pattern: string, searchPath: string, options: GrepOptions): Promise<string> {
+async function toolGrep(
+  patterns: string[],
+  searchPath: string,
+  options: GrepOptions,
+): Promise<string> {
   if (!existsSync(searchPath)) {
     return `ERROR: Path not found: ${searchPath}`;
   }
 
-  if (!pattern) {
-    return "ERROR: pattern must be a non-empty string.";
+  if (patterns.length === 0) {
+    return "ERROR: pattern must be a non-empty string or array of strings.";
   }
-  if (pattern.length > SEARCH_MAX_PATTERN_LENGTH) {
-    return (
-      `ERROR: Regex pattern too long (${pattern.length} chars, ` +
-      `limit ${SEARCH_MAX_PATTERN_LENGTH}).`
-    );
+  if (patterns.length > SEARCH_MAX_PATTERNS) {
+    return `ERROR: Too many patterns (${patterns.length}; max ${SEARCH_MAX_PATTERNS}).`;
   }
-  // Catastrophic backtracking check
-  if (/(^|[^\\])\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(pattern)) {
-    return "ERROR: Regex appears too complex/risky (nested quantified group).";
+  for (const pat of patterns) {
+    if (!pat) {
+      return "ERROR: Invalid arguments for grep: pattern entries must be non-empty strings.";
+    }
+    if (pat.length > SEARCH_MAX_PATTERN_LENGTH) {
+      return (
+        `ERROR: Invalid arguments for grep: 'pattern' exceeds max length ` +
+        `(${pat.length} chars, limit ${SEARCH_MAX_PATTERN_LENGTH}).`
+      );
+    }
+    if (/(^|[^\\])\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/.test(pat)) {
+      return "ERROR: Regex appears too complex/risky (nested quantified group).";
+    }
   }
 
+  // Smart case: when caseInsensitive is undefined (auto), apply -i if every
+  // pattern is all-lowercase. Otherwise honor the explicit flag.
+  let effectiveCaseInsensitive: boolean;
+  if (options.caseInsensitive === undefined) {
+    effectiveCaseInsensitive = patterns.every((p) => p === p.toLowerCase());
+  } else {
+    effectiveCaseInsensitive = options.caseInsensitive;
+  }
+
+  // Combine multiple patterns into a single OR regex. For one pattern, use
+  // it directly to keep the existing regex semantics intact (capture groups,
+  // anchors, etc.). For multiple, wrap each in a non-capturing group so
+  // alternation has the right precedence.
   let regex: RegExp;
   try {
-    const flags = options.caseInsensitive ? "i" : "";
-    regex = new RegExp(pattern, flags);
+    const flags = effectiveCaseInsensitive ? "i" : "";
+    if (patterns.length === 1) {
+      regex = new RegExp(patterns[0]!, flags);
+    } else {
+      regex = new RegExp(patterns.map((p) => `(?:${p})`).join("|"), flags);
+    }
   } catch (e) {
     return `ERROR: Invalid regex: ${e instanceof Error ? e.message : String(e)}`;
   }
@@ -2233,7 +2514,7 @@ async function toolGrep(pattern: string, searchPath: string, options: GrepOption
   };
 
   // Results storage depends on output mode
-  const fileMatches: Array<{ file: string; matches: Array<{ line: number; text: string }>; count: number }> = [];
+  const fileMatches: Array<{ file: string; matches: Array<{ line: number; text: string }>; count: number; truncatedAt?: number }> = [];
   let totalEntries = 0;
 
   function shouldStop(): boolean {
@@ -2266,11 +2547,22 @@ async function toolGrep(pattern: string, searchPath: string, options: GrepOption
     const text = raw.toString("utf-8");
     const lines = text.split("\n");
     const matchingLines: Array<{ line: number; text: string }> = [];
+    const perFileCap = Math.max(1, options.perFileLimit);
+    let totalMatchesInFile = 0;
+    let truncatedAt: number | undefined;
 
     for (let i = 0; i < lines.length; i++) {
       if (regex.global || regex.sticky) regex.lastIndex = 0;
       if (regex.test(lines[i])) {
-        matchingLines.push({ line: i + 1, text: lines[i].trimEnd() });
+        totalMatchesInFile += 1;
+        if (matchingLines.length < perFileCap) {
+          matchingLines.push({
+            line: i + 1,
+            text: truncateLine(lines[i].trimEnd(), SEARCH_LINE_MAX_CHARS),
+          });
+        } else if (truncatedAt === undefined) {
+          truncatedAt = totalMatchesInFile;
+        }
       }
     }
 
@@ -2278,9 +2570,12 @@ async function toolGrep(pattern: string, searchPath: string, options: GrepOption
       fileMatches.push({
         file: filePath,
         matches: matchingLines,
-        count: matchingLines.length,
+        count: totalMatchesInFile,
+        truncatedAt,
       });
-      totalEntries++;
+      // headLimit counts entries (lines for content, files otherwise).
+      totalEntries +=
+        options.outputMode === "content" ? matchingLines.length : 1;
     }
   }
 
@@ -2300,7 +2595,7 @@ async function toolGrep(pattern: string, searchPath: string, options: GrepOption
 
     for (const name of entries) {
       if (shouldStop()) return;
-      if (name.startsWith(".") || name === "__pycache__" || name === "node_modules") continue;
+      if (shouldSkipDir(name)) continue;
       const full = path.join(dir, name);
       let stat;
       try {
@@ -2350,26 +2645,46 @@ async function toolGrep(pattern: string, searchPath: string, options: GrepOption
 
   // Format output based on mode
   let output = "";
+  let resultsTruncated = false;
   const { outputMode } = options;
 
   if (fileMatches.length === 0) {
     output = "No matches found.";
   } else if (outputMode === "files_with_matches") {
-    const lines = fileMatches.map((f) => f.file);
-    output = lines.join("\n");
+    const cap = options.headLimit > 0 ? options.headLimit : SEARCH_DEFAULT_HEAD_LIMIT;
+    if (fileMatches.length > cap) {
+      resultsTruncated = true;
+      output = fileMatches.slice(0, cap).map((f) => f.file).join("\n");
+    } else {
+      output = fileMatches.map((f) => f.file).join("\n");
+    }
   } else if (outputMode === "count") {
-    const lines = fileMatches.map((f) => `${f.file}:${f.count}`);
-    output = lines.join("\n");
+    const cap = options.headLimit > 0 ? options.headLimit : SEARCH_DEFAULT_HEAD_LIMIT;
+    if (fileMatches.length > cap) {
+      resultsTruncated = true;
+      output = fileMatches.slice(0, cap).map((f) => `${f.file}:${f.count}`).join("\n");
+    } else {
+      output = fileMatches.map((f) => `${f.file}:${f.count}`).join("\n");
+    }
   } else {
     // content mode — show matching lines with optional context
     const parts: string[] = [];
     const beforeCtx = options.beforeContext;
     const afterCtx = options.afterContext;
     const showNumbers = options.showLineNumbers;
+    const headCap = options.headLimit > 0 ? options.headLimit : SEARCH_DEFAULT_HEAD_LIMIT;
 
+    function pushLine(line: string): boolean {
+      if (parts.length >= headCap) {
+        resultsTruncated = true;
+        return false;
+      }
+      parts.push(line);
+      return true;
+    }
+
+    outer:
     for (const fm of fileMatches) {
-      if (options.headLimit > 0 && parts.length >= options.headLimit) break;
-
       if (beforeCtx > 0 || afterCtx > 0) {
         // Need to re-read file for context lines
         let fileLines: string[];
@@ -2380,39 +2695,52 @@ async function toolGrep(pattern: string, searchPath: string, options: GrepOption
         }
 
         for (const m of fm.matches) {
-          if (options.headLimit > 0 && parts.length >= options.headLimit) break;
           const startL = Math.max(0, m.line - 1 - beforeCtx);
           const endL = Math.min(fileLines.length, m.line + afterCtx);
 
           for (let li = startL; li < endL; li++) {
             const isMatch = li === m.line - 1;
             const prefix = isMatch ? ">" : " ";
-            const lineText = fileLines[li].trimEnd();
-            if (showNumbers) {
-              parts.push(`${fm.file}:${li + 1}:${prefix} ${lineText}`);
-            } else {
-              parts.push(`${fm.file}:${prefix} ${lineText}`);
-            }
+            const lineText = truncateLine(fileLines[li].trimEnd(), SEARCH_LINE_MAX_CHARS);
+            const formatted = showNumbers
+              ? `${fm.file}:${li + 1}:${prefix} ${lineText}`
+              : `${fm.file}:${prefix} ${lineText}`;
+            if (!pushLine(formatted)) break outer;
           }
-          parts.push("--");
+          if (!pushLine("--")) break outer;
         }
       } else {
         // No context — just matching lines
         for (const m of fm.matches) {
-          if (options.headLimit > 0 && parts.length >= options.headLimit) break;
-          if (showNumbers) {
-            parts.push(`${fm.file}:${m.line}: ${m.text}`);
-          } else {
-            parts.push(`${fm.file}: ${m.text}`);
-          }
+          const formatted = showNumbers
+            ? `${fm.file}:${m.line}: ${m.text}`
+            : `${fm.file}: ${m.text}`;
+          if (!pushLine(formatted)) break outer;
         }
+      }
+      if (fm.truncatedAt !== undefined) {
+        if (!pushLine(`${fm.file}: … (${fm.count - fm.matches.length} more matches in this file; raise limit_per_file to see them)`)) break;
       }
     }
     output = parts.join("\n");
   }
 
+  // Apply overall character cap (head+tail middle-cut) before notices.
+  let outputCharsTruncated = false;
+  if (output.length > SEARCH_OUTPUT_CHAR_CAP) {
+    output = truncateMiddle(output, SEARCH_OUTPUT_CHAR_CAP);
+    outputCharsTruncated = true;
+  }
+
   // Append notices
   const notices: string[] = [];
+  if (resultsTruncated) {
+    const cap = options.headLimit > 0 ? options.headLimit : SEARCH_DEFAULT_HEAD_LIMIT;
+    notices.push(`Reached results cap (${cap}). Narrow the pattern, restrict path/glob, or raise head_limit.`);
+  }
+  if (outputCharsTruncated) {
+    notices.push(`Output exceeded ${SEARCH_OUTPUT_CHAR_CAP.toLocaleString()} chars; head+tail kept, middle dropped.`);
+  }
   if (stats.skippedLargeFiles > 0) {
     notices.push(`Skipped ${stats.skippedLargeFiles} large file(s) over ${Math.round(SEARCH_MAX_FILE_SIZE / 1024)} KB.`);
   }
@@ -2443,8 +2771,16 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
       try {
         const a = expectArgsObject("read_file", args);
         const requestedPath = requiredStringArg("read_file", a, "path", { nonEmpty: true });
-        const startLine = optionalIntegerArg("read_file", a, "start_line");
-        const endLine = optionalIntegerArg("read_file", a, "end_line");
+        let startLine = optionalIntegerArg("read_file", a, "start_line");
+        let endLine = optionalIntegerArg("read_file", a, "end_line");
+        const offset = optionalIntegerArg("read_file", a, "offset");
+        const limit = optionalIntegerArg("read_file", a, "limit");
+        // offset is an alias for start_line; limit converts to end_line.
+        if (startLine == null && offset != null) startLine = offset;
+        if (endLine == null && limit != null) {
+          const effectiveStart = startLine ?? 1;
+          endLine = effectiveStart + Math.max(0, limit - 1);
+        }
         const filePath = scopedPath(
           requestedPath,
           "read",
@@ -2466,13 +2802,16 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
       try {
         const a = expectArgsObject("list_dir", args);
         const requestedPath = optionalStringArg("list_dir", a, "path", ".");
+        const maxDepth = optionalIntegerArg("list_dir", a, "max_depth");
+        const maxEntries = optionalIntegerArg("list_dir", a, "max_entries");
+        const includeHidden = a["include_hidden"] === true;
         const dirPath = scopedPath(
           requestedPath,
           "list",
           ctx,
           { mustExist: true, expectDirectory: true },
         );
-        return await toolListDir(dirPath);
+        return await toolListDir(dirPath, { maxDepth, maxEntries, includeHidden });
       } catch (e) {
         return formatToolError("list_dir", e);
       }
@@ -2486,7 +2825,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         const editsRaw = a.edits;
 
         // Validate edits array
-        const edits: Array<{ old_str: string; new_str: string }> = [];
+        const edits: Array<{ old_str: string; new_str: string; replace_all?: boolean }> = [];
         if (Array.isArray(editsRaw)) {
           for (const item of editsRaw) {
             if (!item || typeof item !== "object") {
@@ -2499,7 +2838,11 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
             if (typeof obj.new_str !== "string") {
               return "ERROR: Each item in edits must have a new_str.";
             }
-            edits.push({ old_str: obj.old_str, new_str: obj.new_str });
+            edits.push({
+              old_str: obj.old_str,
+              new_str: obj.new_str,
+              replace_all: obj.replace_all === true,
+            });
           }
           if (edits.length === 0) {
             return "ERROR: edits array must not be empty.";
@@ -2588,7 +2931,10 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
           }
         }
 
-        const output = await toolBash(command, timeout, cwd, { signal: rtCtx?.signal });
+        const output = await toolBash(command, timeout, cwd, {
+          signal: rtCtx?.signal,
+          spillDir: ctx?.sessionArtifactsDir,
+        });
 
         // Post-exec: only record mutations if command succeeded (exit code 0)
         const isError = output.startsWith("ERROR:");
@@ -2634,13 +2980,14 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         const a = expectArgsObject("glob", args);
         const pattern = requiredStringArg("glob", a, "pattern", { nonEmpty: true });
         const requestedPath = optionalStringArg("glob", a, "path", ".");
+        const limit = optionalIntegerArg("glob", a, "limit") ?? GLOB_DEFAULT_LIMIT;
         const globPath = scopedPath(
           requestedPath,
           "search",
           ctx,
           { mustExist: true, expectDirectory: true },
         );
-        return await toolGlob(pattern, globPath);
+        return await toolGlob(pattern, globPath, limit);
       } catch (e) {
         return formatToolError("glob", e);
       }
@@ -2648,7 +2995,29 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
     grep: async (args) => {
       try {
         const a = expectArgsObject("grep", args);
-        const pattern = requiredStringArg("grep", a, "pattern", { nonEmpty: true, maxLen: SEARCH_MAX_PATTERN_LENGTH });
+
+        // pattern: accept string | string[]
+        const patternRaw = a["pattern"];
+        let patterns: string[];
+        if (typeof patternRaw === "string") {
+          if (!patternRaw.trim()) {
+            return "ERROR: Invalid arguments for grep: 'pattern' must be a non-empty string.";
+          }
+          patterns = [patternRaw];
+        } else if (Array.isArray(patternRaw)) {
+          if (patternRaw.length === 0) {
+            return "ERROR: Invalid arguments for grep: 'pattern' array must not be empty.";
+          }
+          patterns = patternRaw.map((p, idx) => {
+            if (typeof p !== "string") {
+              throw new ToolArgValidationError("grep", `pattern[${idx}]`, `pattern[${idx}] must be a string.`);
+            }
+            return p;
+          });
+        } else {
+          return "ERROR: Invalid arguments for grep: 'pattern' must be a string or array of strings.";
+        }
+
         const requestedPath = optionalStringArg("grep", a, "path", ".");
         const searchPath = scopedPath(
           requestedPath,
@@ -2659,13 +3028,30 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         const globFilter = optionalStringArg("grep", a, "glob", "");
         const fileType = optionalStringArg("grep", a, "type", "");
         const outputMode = optionalStringArg("grep", a, "output_mode", "files_with_matches") as "content" | "files_with_matches" | "count";
-        const afterCtx = optionalIntegerArg("grep", a, "-A") ?? 0;
-        const beforeCtx = optionalIntegerArg("grep", a, "-B") ?? 0;
-        const contextCtx = optionalIntegerArg("grep", a, "-C") ?? 0;
-        const caseInsensitive = a["-i"] === true;
-        const showLineNumbers = a["-n"] !== false; // default true
+
+        // Context-line aliases: prefer hyphen forms (Cursor convention) but
+        // accept word forms because some LLMs translate them automatically.
+        const afterCtx =
+          optionalIntegerArg("grep", a, "-A") ??
+          optionalIntegerArg("grep", a, "after_lines") ?? 0;
+        const beforeCtx =
+          optionalIntegerArg("grep", a, "-B") ??
+          optionalIntegerArg("grep", a, "before_lines") ?? 0;
+        const contextCtx =
+          optionalIntegerArg("grep", a, "-C") ??
+          optionalIntegerArg("grep", a, "context_lines") ?? 0;
+
+        // Smart case: undefined when neither flag is passed (auto), explicit otherwise.
+        let caseInsensitive: boolean | undefined;
+        if (a["-i"] !== undefined) caseInsensitive = a["-i"] === true;
+        else if (a["case_insensitive"] !== undefined) caseInsensitive = a["case_insensitive"] === true;
+
+        const showLineNumbers = a["-n"] !== false && a["line_numbers"] !== false;
         const headLimit = optionalIntegerArg("grep", a, "head_limit") ?? 0;
-        return await toolGrep(pattern, searchPath, {
+        const perFileLimit =
+          optionalIntegerArg("grep", a, "limit_per_file") ?? SEARCH_DEFAULT_PER_FILE_LIMIT;
+
+        return await toolGrep(patterns, searchPath, {
           glob: globFilter || undefined,
           fileType: fileType || undefined,
           outputMode,
@@ -2674,6 +3060,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
           caseInsensitive,
           showLineNumbers,
           headLimit,
+          perFileLimit,
         });
       } catch (e) {
         return formatToolError("grep", e);

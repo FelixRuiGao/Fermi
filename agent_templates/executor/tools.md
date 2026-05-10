@@ -2,7 +2,9 @@
 
 `read_file(path, start_line?, end_line?)`
 
-Read text files (max 50 MB). Returns at most 1000 lines / 50,000 chars per call. Use `start_line` / `end_line` to navigate large files in multiple calls.
+Read text files (max 50 MB). Returns up to **2000 lines / 80,000 chars** per call; lines longer than 2000 chars are truncated. `offset`/`limit` are accepted as aliases for `start_line`/`end_line`.
+
+If you know there are several files to read, **issue multiple `read_file` calls in parallel** rather than serialising them. Avoid tiny repeated slices (e.g. 30-line chunks); pick a window that covers what you need in one call.
 
 Also reads image files (PNG, JPG, GIF, WebP, BMP, SVG, ICO, TIFF; max 20 MB) when the model supports multimodal input. The image is returned as a visual content block for direct inspection.
 
@@ -18,6 +20,8 @@ Create or overwrite a file. Parent directories are created automatically.
 write_file(path="{PROJECT_ROOT}/example.py", content="print('Hello, world!')")
 ```
 
+Prefer `write_file` over `edit_file` when you intend to replace the **entire** file contents — fewer tokens than echoing the existing content into `old_str`.
+
 Use `expected_mtime_ms` (from a prior `read_file`) to guard against overwriting concurrent external changes.
 
 To append content to an existing file, use `edit_file(path, append_str=...)` instead.
@@ -26,13 +30,21 @@ To append content to an existing file, use `edit_file(path, append_str=...)` ins
 
 `edit_file(path, edits, expected_mtime_ms?)`
 
-Apply a patch by replacing one or more unique strings. Each `old_str` must appear **exactly once** in the file — if it's not unique, provide more surrounding context.
+Apply a patch by replacing one or more strings. By default each `old_str` must appear **exactly once** in the file — if it isn't unique, the call fails with the line numbers of every match so you can either disambiguate by adding surrounding context or set `replace_all: true` on that edit. `old_str` and `new_str` must differ (no-op edits are rejected).
 
 **Single replacement:**
 
 ```
 edit_file(path="{PROJECT_ROOT}/example.py", edits=[
   { old_str: "Hello", new_str: "Hi" }
+])
+```
+
+**Replace every occurrence (e.g. for renames):**
+
+```
+edit_file(path="{PROJECT_ROOT}/example.py", edits=[
+  { old_str: "OldName", new_str: "NewName", replace_all: true }
 ])
 ```
 
@@ -55,7 +67,7 @@ To append content to the end of a file, use `append_str`:
 edit_file(path="{PROJECT_ROOT}/log.txt", append_str="\nNew entry")
 ```
 
-`append_str` can be combined with `edits` — all replacements execute first, then append:
+`append_str` can be combined with `edits` — replacements execute first, then append:
 
 ```
 edit_file(path="{PROJECT_ROOT}/example.py", edits=[
@@ -63,42 +75,47 @@ edit_file(path="{PROJECT_ROOT}/example.py", edits=[
 ], append_str="\n# Updated to v1.1")
 ```
 
-Supports `expected_mtime_ms` for concurrency safety. Prefer `edit_file` over `write_file` for modifications — it's smaller and safer.
+Supports `expected_mtime_ms` for concurrency safety. Prefer `edit_file` over `write_file` for targeted modifications.
 
 ## `list_dir`
 
-`list_dir(path?)`
+`list_dir(path?, max_depth?, max_entries?, include_hidden?)`
 
-List files and directories in a tree up to 2 levels deep.
+List files and directories as a tree. Defaults: depth 2, up to 200 entries. File entries include a size suffix (`[12 KB]`). Common build / cache directories (`node_modules`, `.git`, `dist`, `target`, `.venv`, …) are skipped unless you pass them explicitly as `path`.
+
+If you are looking for a specific filename, prefer `glob`; for content matches, prefer `grep`.
 
 ## `glob`
 
-`glob(pattern, path?)`
+`glob(pattern, path?, limit?)`
 
-Find files by name pattern. Returns matching paths sorted by modification time (newest first).
+Find files by name pattern. Returns matching absolute paths sorted by modification time (newest first). Default limit 200 (cap 1000).
 
-Supports patterns like `**/*.ts`, `src/**/*.test.tsx`, `*.{js,jsx}`.
+Patterns without a slash are auto-prefixed with `**/`, so `*.ts` matches every `.ts` file in the tree. Supports `**`, `*`, `?`, `[abc]`, and brace expansion (`*.{ts,tsx}`).
 
 ## `grep`
 
-`grep(pattern, path?, output_mode?, glob?, type?, -A?, -B?, -C?, -i?, head_limit?)`
+`grep(pattern, path?, output_mode?, glob?, type?, -A?, -B?, -C?, -i?, head_limit?, limit_per_file?)`
 
-Search file contents using regex. Supports glob filtering, file type filtering, context lines, and multiple output modes.
+Search file contents by regex. `pattern` accepts a single string **or an array of strings** — multiple patterns are combined with OR logic, useful for snake_case / PascalCase / camelCase variants in one call.
+
+Smart case: an all-lowercase pattern is matched case-insensitively automatically. Pass `-i: true` (or `-i: false`) to override.
+
+Defaults: returns up to 100 entries overall, 15 matching lines per file, with each line capped at 2000 chars.
 
 Key parameters:
 - `output_mode`: `"files_with_matches"` (default, paths only), `"content"` (matching lines), `"count"` (match counts).
-- `glob`: Filter files by pattern (e.g. `"*.ts"`, `"*.{ts,tsx}"`).
-- `type`: Filter by file type (e.g. `"js"`, `"py"`).
+- `glob`: Filter files by name pattern (e.g. `"*.ts"`, `"*.{ts,tsx}"`).
+- `type`: Filter by file extension (e.g. `"js"`, `"py"`).
 - `-A`, `-B`, `-C`: Context lines after/before/around each match (content mode only).
-- `-i`: Case insensitive.
-- `head_limit`: Limit number of results.
+- `-i`: Force case-insensitive (overrides smart case).
+- `head_limit`, `limit_per_file`: result caps.
 
 Recommended workflow for large files and logs:
 
 - Start with `grep` to find the relevant area.
 - Then use `read_file(start_line, end_line)` to inspect the matching region.
-- Prefer this over reading a very large file from the top unless you genuinely need the overall structure.
-- When output says "truncated", search the full log file or source file for specific keywords rather than re-requesting full content.
+- When output says "truncated", search the full log file with a more specific pattern rather than re-requesting full content.
 
 ## `bash`
 
@@ -140,7 +157,7 @@ Some filesystem operations have no dedicated tool; these are fine via bash:
 ### Other notes
 
 - **Timeouts:** Default 60s, max 600s. Long-running commands should specify a timeout explicitly.
-- **Output limit:** ~200KB per stream. Large outputs are truncated — if you expect a large output, pipe to a file and read it with `read_file`.
+- **Output limit:** ~200KB per stream. When a stream exceeds the cap the head and tail are kept and the middle is dropped; the **full untruncated output is also written to a temp file** and the path is included in the result, so you can `read_file` or `grep` the complete log if needed.
 - **Working directory:** Use the `cwd` parameter for one-off directory changes rather than `cd path && command`.
 
 ## `bash_background`
@@ -161,7 +178,7 @@ Read output from a tracked background shell.
 
 - Without `tail_lines`, returns unread output since the last `bash_output` call for that shell.
 - With `tail_lines`, returns the recent tail without advancing the unread cursor.
-- If output is truncated, prefer searching the full log file first and then reading the relevant region.
+- `max_chars` defaults to 30000 (cap 80000). If output is truncated, prefer searching the full log file first and then reading the relevant region.
 
 ## `kill_shell`
 

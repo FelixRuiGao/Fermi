@@ -7,6 +7,7 @@
  */
 
 import type { ToolDef } from "../providers/base.js";
+import { truncateMiddle } from "./shared.js";
 
 // ------------------------------------------------------------------
 // Constants
@@ -242,11 +243,10 @@ function buildOutput(
 }
 
 function normalizeOutput(output: string): string {
-  let normalized = output.trim();
-  if (normalized.length > OUTPUT_MAX_CHARS) {
-    normalized = normalized.slice(0, OUTPUT_MAX_CHARS) + "\n\n... (truncated)";
-  }
-  return normalized;
+  // Symmetrical head+tail truncation: long pages often have nav at the top
+  // and conclusions / FAQ / next-steps at the bottom — keeping both is
+  // strictly more useful than tail-dropped output.
+  return truncateMiddle(output.trim(), OUTPUT_MAX_CHARS);
 }
 
 async function fetchViaJina(
