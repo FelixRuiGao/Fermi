@@ -16,10 +16,10 @@ export function StatusBar({ state }: { state: TabState | null }): JSX.Element {
       role="status"
       aria-live="polite"
       aria-label={`Working: ${label}`}
-      className="session-bottom-gutter border-y border-dashed border-line-soft bg-pane py-2 pl-6"
+      className="session-bottom-gutter border-y border-line-soft bg-pane py-2 pl-6"
     >
       <div className="mx-auto flex max-w-[840px] items-center gap-2.5">
-        <span aria-hidden className="status-dot" />
+        <span aria-hidden className="working-spinner" />
         <span className="truncate text-[14.5px] text-ink-2" title={label}>{label}...</span>
       </div>
     </div>

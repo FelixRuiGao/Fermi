@@ -149,7 +149,7 @@ export function DiffView({
   return (
     <div
       className={cn(
-        'mt-1.5 overflow-hidden rounded-md border bg-code-bg',
+        'mt-1.5 overflow-hidden rounded border bg-code-bg',
         isError ? 'border-error/30' : 'border-line-soft',
       )}
     >
@@ -161,7 +161,7 @@ export function DiffView({
           {stats.adds > 0 && <span className="text-success">+{stats.adds}</span>}
           {stats.dels > 0 && <span className="text-error">−{stats.dels}</span>}
           {parsed.isNewFile && (
-            <span className="rounded-full border border-success/40 bg-success/10 px-1.5 py-px text-[11px] uppercase tracking-wider text-success">
+            <span className="rounded-full border border-success/40 bg-success/10 px-1.5 py-px text-[11.5px] text-success">
               new
             </span>
           )}

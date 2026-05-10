@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Square, Paperclip, Sun, Moon, Zap, ChevronDown, Check, Brain, Image, Shield, History, FolderOpen } from 'lucide-react'
+import { ArrowUp, Square, Paperclip, Zap, ChevronDown, Check, Brain, Image, Shield, History, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { compactModelLabel } from '@/lib/modelDisplay.js'
 import { projectName, shortPath } from '@/lib/path.js'
@@ -43,8 +43,6 @@ export function Composer({
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const historyDraftRef = useRef('')
-  const theme = useSessionStore((s) => s.theme)
-  const setTheme = useSessionStore((s) => s.setTheme)
   const selectModel = useSessionStore((s) => s.selectModel)
   const refreshStatus = useSessionStore((s) => s.refreshStatus)
   const isDraft = tab.status === 'draft'
@@ -160,7 +158,7 @@ export function Composer({
       />
 
       <div data-composer-shell className="relative mx-auto max-w-[840px]">
-        <div className="input-focus-shell rounded-[14px] border border-line-soft bg-pane-2 px-3.5 py-2 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+        <div className="input-focus-shell rounded-xl border border-line-soft bg-pane-2 px-3.5 py-2 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
           <textarea
             ref={taRef}
             value={text}
@@ -182,13 +180,13 @@ export function Composer({
                 navigateHistory(e.key === 'ArrowUp' ? -1 : 1)
               }
             }}
-            aria-label="Message agent"
-            placeholder="Message agent"
+            aria-label="Plan, build, ask anything"
+            placeholder="Plan, build, ask anything…"
             rows={1}
             className="composer-input block w-full resize-none bg-transparent px-0.5 py-1 text-[16px] leading-[1.45] text-ink outline-none placeholder:text-ink-3"
             style={{ minHeight: 34, maxHeight: 140, overflowY: 'auto' }}
           />
-          <div className="mt-1.5 flex h-8 items-center gap-1">
+          <div className="mt-1.5 flex h-8 items-center gap-1.5">
             <StatusPill label="Attach file" onClick={() => void attachFiles()}>
               <Paperclip className="h-3.5 w-3.5" strokeWidth={1.6} />
             </StatusPill>
@@ -200,7 +198,7 @@ export function Composer({
             <WorkspaceContextChip workDir={tab.workDir} />
             <div className="flex-1" />
             {tokens && (
-              <span className="mr-1 shrink-0 tabular-nums text-[13px] text-ink-3">
+              <span className="shrink-0 tabular-nums text-[13px] text-ink-3">
                 {tokens}
               </span>
             )}
@@ -218,24 +216,11 @@ export function Composer({
               models={state?.models ?? []}
               onSelect={(name) => selectModel(tab.tabId, name)}
             />
-            <button
-              type="button"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              title="Toggle theme"
-              aria-label="Toggle theme"
-              className="grid h-8 w-8 place-items-center rounded-[10px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
-            >
-              {theme === 'dark' ? (
-                <Sun className="h-3.5 w-3.5" strokeWidth={1.6} />
-              ) : (
-                <Moon className="h-3.5 w-3.5" strokeWidth={1.6} />
-              )}
-            </button>
             {disabled ? (
               <button
                 type="button"
                 onClick={interrupt}
-                className="grid h-8 w-8 place-items-center rounded-[10px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+                className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
                 title="Interrupt"
                 aria-label="Interrupt"
               >
@@ -247,10 +232,10 @@ export function Composer({
                 onClick={() => void send()}
                 disabled={!text.trim()}
                 className={cn(
-                  'grid h-8 w-8 place-items-center rounded-[10px] transition',
+                  'grid h-8 w-8 place-items-center rounded transition',
                   text.trim()
                     ? 'bg-ink text-pane hover:opacity-90'
-                    : 'text-ink-3 hover:bg-line-soft',
+                    : 'text-ink-4',
                 )}
                 title="Send"
                 aria-label="Send"
@@ -272,9 +257,11 @@ function WorkspaceContextChip({ workDir }: { workDir: string }): JSX.Element {
     <StatusPill label={`Open workspace: ${workDir}`} onClick={() => void api.workspace.openPath(workDir)}>
       <FolderOpen className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
       <span className="hidden max-w-[120px] truncate whitespace-nowrap sm:inline">{name}</span>
-      <span className="mono hidden max-w-[150px] truncate whitespace-nowrap text-[12px] font-normal text-ink-4 lg:inline">
-        {path !== name ? path : ''}
-      </span>
+      {path !== name && (
+        <span className="mono hidden max-w-[150px] truncate whitespace-nowrap text-[12px] font-normal text-ink-4 lg:inline">
+          {path}
+        </span>
+      )}
     </StatusPill>
   )
 }
@@ -315,18 +302,18 @@ function PermissionPicker({
         expanded={open}
         hasPopup="menu"
       >
-        <Shield className="h-[11px] w-[11px]" strokeWidth={1.8} />
+        <Shield className="h-3 w-3" strokeWidth={1.8} />
         <span className="hidden max-w-[86px] truncate whitespace-nowrap sm:inline">
           {PERMISSION_LABELS[current]}
         </span>
-        <ChevronDown className={cn('h-[9px] w-[9px] opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
+        <ChevronDown className={cn('h-2.5 w-2.5 opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
       </StatusPill>
       {open && (
         <div
           data-permission-menu
           role="menu"
           aria-label="Permission mode"
-          className="absolute bottom-full right-0 z-50 mb-2 w-[224px] overflow-hidden rounded-[14px] border border-line bg-pane-2 p-1.5 shadow-2xl"
+          className="absolute bottom-full right-0 z-50 mb-2 w-[224px] overflow-hidden rounded-xl border border-line bg-pane-2 p-1.5 shadow-2xl"
         >
           {PERMISSION_MODES.map((mode) => {
             const active = mode === current
@@ -341,7 +328,7 @@ function PermissionPicker({
                   void onSelect(mode)
                 }}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition',
+                  'flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition',
                   active ? 'bg-line-soft text-ink' : 'text-ink-2 hover:bg-line-soft/70 hover:text-ink',
                 )}
               >
@@ -413,21 +400,21 @@ function ModelPicker({
         expanded={open}
         hasPopup="dialog"
       >
-        <Zap className="h-[11px] w-[11px]" strokeWidth={1.8} />
+        <Zap className="h-3 w-3" strokeWidth={1.8} />
         <span
           className="truncate whitespace-nowrap"
           style={{ maxWidth: 'clamp(120px, 24vw, 250px)' }}
         >
           {label || current || 'no model'}
         </span>
-        <ChevronDown className={cn('h-[9px] w-[9px] opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
+        <ChevronDown className={cn('h-2.5 w-2.5 opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
       </StatusPill>
       {open && (
         <div
           data-model-menu
           role="dialog"
           aria-label="Select model"
-          className="absolute bottom-full right-0 z-50 mb-2 overflow-hidden rounded-[14px] border border-line bg-pane-2 shadow-2xl"
+          className="absolute bottom-full right-0 z-50 mb-2 overflow-hidden rounded-xl border border-line bg-pane-2 shadow-2xl"
           style={{ width: 'min(420px, calc(100vw - 32px))' }}
         >
           <div className="border-b border-line-soft px-3 py-2">
@@ -602,7 +589,7 @@ function StatusPill({
       aria-expanded={expanded}
       aria-haspopup={hasPopup}
       title={label}
-      className="inline-flex h-8 min-w-8 items-center justify-center gap-[5px] rounded-[10px] px-2.5 text-[13.5px] font-medium text-ink-2 transition hover:bg-line-soft hover:text-ink"
+      className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded px-2.5 text-[13.5px] font-medium text-ink-2 transition hover:bg-line-soft hover:text-ink"
     >
       {children}
     </button>

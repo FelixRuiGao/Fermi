@@ -4,8 +4,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  AlertCircle,
-  Brain,
   Check,
   ChevronRight,
   ChevronsDown,
@@ -258,7 +256,7 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
         <button
           type="button"
           onClick={() => setCollapsed(false)}
-          className="grid h-8 w-8 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
           title="Expand"
         >
           <ChevronsLeft className="h-3.5 w-3.5" />
@@ -277,7 +275,7 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
   const shellBadge = shells.filter((shell) => shell.status === 'running').length
 
   const tabs = [
-    { id: 'plan' as const, label: 'Plan', icon: <Check className="h-3.5 w-3.5" strokeWidth={2} />, badge: planRemaining },
+    { id: 'plan' as const, label: 'Plan', icon: <Check className="h-3.5 w-3.5" strokeWidth={1.8} />, badge: planRemaining },
     { id: 'agents' as const, label: 'Agents', icon: <Layers className="h-3.5 w-3.5" strokeWidth={1.8} />, badge: agentsActive },
     { id: 'context' as const, label: 'Context', icon: <History className="h-3.5 w-3.5" strokeWidth={1.8} />, badge: contextBadge },
     { id: 'git' as const, label: 'Git', icon: <GitBranch className="h-3.5 w-3.5" strokeWidth={1.8} />, badge: gitBadge },
@@ -285,7 +283,6 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
     { id: 'search' as const, label: 'Search', icon: <Search className="h-3.5 w-3.5" strokeWidth={1.8} />, badge: 0 },
     { id: 'shells' as const, label: 'Shells', icon: <SquareTerminal className="h-3.5 w-3.5" strokeWidth={1.8} />, badge: shellBadge },
   ]
-  const current = tabs.find((t) => t.id === activeTab) ?? tabs[0]!
 
   return (
     <aside
@@ -308,7 +305,7 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
               aria-label={t.label}
               aria-current={on ? 'page' : undefined}
               className={cn(
-                'relative grid h-8 w-8 place-items-center rounded-[9px] transition',
+                'relative grid h-8 w-8 place-items-center rounded transition',
                 on ? 'bg-pane-2 text-ink' : 'text-ink-3 hover:bg-line-soft hover:text-ink',
               )}
             >
@@ -330,7 +327,7 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
         <button
           type="button"
           onClick={() => setCollapsed(true)}
-          className="grid h-8 w-8 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
           title="Collapse"
           aria-label="Collapse right pane"
         >
@@ -339,15 +336,8 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-12 shrink-0 items-center border-b border-line-soft px-3">
-          <div className="flex items-center gap-2 text-[14.5px] font-semibold text-ink">
-            {current.icon}
-            <span>{current.label}</span>
-          </div>
-        </div>
-
         {/* Panel content */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="session-scroll min-h-0 flex-1 overflow-y-auto">
           {activeTab === 'plan' && <PlanPanel plan={plan} />}
           {activeTab === 'agents' && (
             <AgentsPanel
@@ -423,7 +413,7 @@ function PlanPanel({ plan }: { plan: PlanCheckpoint[] }): JSX.Element {
   if (plan.length === 0) {
     return (
       <div className="px-3.5 py-4">
-        <div className="text-[15px] font-semibold uppercase tracking-wider text-ink-3">Goal</div>
+        <div className="text-[14px] font-semibold text-ink-2">Goal</div>
         <div className="mt-1.5 text-[14.5px] leading-[1.55] text-ink-3">
           No plan checkpoints yet.
         </div>
@@ -433,7 +423,7 @@ function PlanPanel({ plan }: { plan: PlanCheckpoint[] }): JSX.Element {
 
   return (
     <div className="px-3.5 py-4">
-      <div className="text-[15px] font-semibold uppercase tracking-wider text-ink-3">Checkpoints</div>
+      <div className="text-[14px] font-semibold text-ink-2">Checkpoints</div>
       <div className="mt-2 flex flex-col gap-0.5">
         {plan.map((c, i) => {
           const status = normalizeStatus(c)
@@ -502,7 +492,7 @@ function ContextPanel({
   const disabled = currentTurnRunning || busy !== null
 
   return (
-    <div className="space-y-5 px-3 py-3">
+    <div className="space-y-5 px-3.5 py-4">
       <div>
         <PanelHeader title="Context" loading={loading} onRefresh={onRefresh} />
         <ContextUsageCard status={status} />
@@ -525,19 +515,16 @@ function ContextPanel({
           />
         </div>
         {currentTurnRunning && (
-          <div className="mt-2 rounded-lg border border-line-soft bg-pane-2 px-3 py-2 text-[13px] text-ink-3">
+          <div className="mt-2 px-0.5 text-[13px] text-ink-3">
             Context actions are available after the current turn finishes.
           </div>
         )}
       </div>
 
       <div>
-        <div className="mb-2 flex items-center gap-2 px-0.5">
-          <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
-            Rewind
-          </div>
-          <div className="h-px flex-1 bg-line-soft" />
-          <div className="mono text-[11.5px] text-ink-4">{targets.length}</div>
+        <div className="mb-2 flex items-baseline gap-2 px-0.5">
+          <div className="text-[13px] font-semibold text-ink-2">Rewind</div>
+          <div className="text-[12.5px] text-ink-4">{targets.length}</div>
         </div>
 
         {pendingRewind && (
@@ -561,7 +548,7 @@ function ContextPanel({
                 type="button"
                 onClick={onCancelRewind}
                 disabled={busy === 'rewind'}
-                className="rounded-[9px] px-2.5 py-1.5 text-[13px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-50"
+                className="rounded px-2.5 py-1.5 text-[13px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -569,7 +556,7 @@ function ContextPanel({
                 type="button"
                 onClick={onConfirmRewind}
                 disabled={disabled}
-                className="rounded-[9px] bg-warning px-2.5 py-1.5 text-[13px] font-medium text-pane transition hover:opacity-90 disabled:opacity-50"
+                className="rounded bg-warning px-2.5 py-1.5 text-[13px] font-medium text-pane transition hover:opacity-90 disabled:opacity-50"
               >
                 {busy === 'rewind' ? 'Rewinding' : 'Confirm rewind'}
               </button>
@@ -578,7 +565,7 @@ function ContextPanel({
         )}
 
         {targets.length === 0 ? (
-          <div className="rounded-lg border border-line-soft px-3 py-3 text-[14px] text-ink-3">
+          <div className="px-0.5 py-3 text-[14px] text-ink-3">
             {loading ? 'Loading rewind points…' : 'No rewind points available.'}
           </div>
         ) : (
@@ -635,14 +622,12 @@ function ContextActionButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'flex items-start gap-3 rounded-lg border border-line-soft bg-pane-2 px-3 py-2.5 text-left transition',
-        'hover:border-line hover:bg-pane disabled:cursor-default disabled:opacity-55',
-        active && 'border-line bg-pane',
+        'flex items-start gap-3 rounded px-3 py-2.5 text-left transition',
+        'hover:bg-line-soft disabled:cursor-default disabled:opacity-55',
+        active && 'bg-line-soft',
       )}
     >
-      <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md bg-line-soft text-ink">
-        {icon}
-      </span>
+      <span className="mt-0.5 shrink-0 text-ink-3">{icon}</span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13.5px] font-medium text-ink">{title}</div>
         <div className="mt-0.5 text-[12.5px] leading-[1.35] text-ink-3">
@@ -661,7 +646,7 @@ function ContextUsageCard({ status }: { status: SessionStatus | null }): JSX.Ele
   const tone = pct >= 85 ? 'danger' : pct >= 65 ? 'warning' : 'normal'
 
   return (
-    <div className="mt-2 rounded-lg border border-line-soft bg-pane-2 px-3 py-2.5">
+    <div className="mt-2 px-0.5 py-1.5">
       <div className="mb-2 flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-medium text-ink">Context usage</div>
@@ -880,7 +865,7 @@ function AgentsPanel({
   }, [agents, selectedAgentId, tabId])
 
   return (
-    <div className="space-y-4 px-3 py-3">
+    <div className="space-y-4 px-3.5 py-4">
       <ModelTiersPanel
         tiers={modelTiers}
         models={models}
@@ -910,7 +895,7 @@ function AgentsPanel({
       />
 
       <div>
-        <div className="mb-2 px-0.5 text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
+        <div className="mb-2 px-0.5 text-[13px] font-semibold text-ink-2">
           Sub-agents
         </div>
         {agents.length === 0 ? (
@@ -941,7 +926,7 @@ function AgentsPanel({
                   )}
                 >
                   <div className="mb-1.5 flex items-center gap-2">
-                    <span className="mono rounded-md bg-line-soft px-[7px] py-0.5 text-[11.5px] font-semibold uppercase tracking-wider text-ink-2">
+                    <span className="mono rounded-md bg-line-soft px-[7px] py-0.5 text-[11.5px] font-medium text-ink-2">
                       {a.template}
                     </span>
                     <span className="mono flex-1 text-[14px] text-ink">#{a.numericId}</span>
@@ -984,7 +969,7 @@ function AgentsPanel({
 
       {stderrLog.length > 0 && (
         <div>
-          <div className="mb-2 px-0.5 text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
+          <div className="mb-2 px-0.5 text-[13px] font-semibold text-ink-2">
             Diagnostics
           </div>
           <div className="space-y-1">
@@ -1054,7 +1039,7 @@ function ModelTiersPanel({
   return (
     <div>
       <PanelHeader title="Model tiers" loading={loading} onRefresh={onRefresh} />
-      <div className="mt-2 rounded-lg border border-line-soft bg-pane-2">
+      <div className="mt-2">
         {MODEL_TIER_LEVELS.map((level, index) => {
           const tier = tiers.find((item) => item.level === level) ?? emptyTier(level)
           const modelName = getTierModelName(tier, models)
@@ -1078,16 +1063,11 @@ function ModelTiersPanel({
                 index > 0 && 'border-t border-line-soft',
               )}
             >
-              <div className="mb-2 flex items-center gap-2">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-line-soft text-ink-2">
-                    <Brain className="h-3.5 w-3.5" strokeWidth={1.7} />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[13.5px] font-medium capitalize text-ink">{level}</div>
-                    <div className="truncate text-[12px] text-ink-4">
-                      {modelDisplayLabel}
-                    </div>
+              <div className="mb-2 flex items-baseline gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] font-medium capitalize text-ink">{level}</div>
+                  <div className="truncate text-[12px] text-ink-4">
+                    {modelDisplayLabel}
                   </div>
                 </div>
                 <span className="mono text-[11.5px] text-ink-4">
@@ -1143,7 +1123,7 @@ function ModelTiersPanel({
         })}
       </div>
       {disabled && (
-        <div className="mt-2 rounded-lg border border-line-soft px-3 py-2 text-[13px] text-ink-3">
+        <div className="mt-2 px-0.5 py-2 text-[13px] text-ink-3">
           Model tiers are available after the first message creates a session.
         </div>
       )}
@@ -1199,41 +1179,42 @@ function AgentInheritancePanel({
   return (
     <div>
       <div className="mb-2 flex items-center gap-2 px-0.5">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
-          Inheritance
-        </div>
-        <div className="h-px flex-1 bg-line-soft" />
+        <div className="text-[13px] font-semibold text-ink-2">Inheritance</div>
+        <div className="flex-1" />
         <button
           type="button"
           onClick={() => void onRefresh()}
           disabled={disabled}
-          className="grid h-7 w-7 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:cursor-default disabled:opacity-45"
+          className="grid h-7 w-7 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:cursor-default disabled:opacity-45"
           title="Refresh inheritance"
           aria-label="Refresh inheritance"
         >
           <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.8} />
         </button>
       </div>
-      <div className="rounded-lg border border-line-soft bg-pane-2 px-3 py-2.5">
-        <InheritanceToggle
-          label="MCP tools"
-          description="Child agents can use inherited MCP tool definitions."
-          enabled={mcpEnabled}
-          disabled={disabled || busy !== null}
-          busy={busy === 'mcp'}
-          onToggle={() => void onUpdate({ subAgentInheritMcp: !mcpEnabled })}
-        />
-        <div className="my-2 h-px bg-line-soft" />
-        <InheritanceToggle
-          label="Hooks"
-          description="Child sessions receive the parent hook runtime."
-          enabled={hooksEnabled}
-          disabled={disabled || busy !== null}
-          busy={busy === 'hooks'}
-          onToggle={() => void onUpdate({ subAgentInheritHooks: !hooksEnabled })}
-        />
+      <div>
+        <div className="py-2.5">
+          <InheritanceToggle
+            label="MCP tools"
+            description="Child agents can use inherited MCP tool definitions."
+            enabled={mcpEnabled}
+            disabled={disabled || busy !== null}
+            busy={busy === 'mcp'}
+            onToggle={() => void onUpdate({ subAgentInheritMcp: !mcpEnabled })}
+          />
+        </div>
+        <div className="border-t border-line-soft py-2.5">
+          <InheritanceToggle
+            label="Hooks"
+            description="Child sessions receive the parent hook runtime."
+            enabled={hooksEnabled}
+            disabled={disabled || busy !== null}
+            busy={busy === 'hooks'}
+            onToggle={() => void onUpdate({ subAgentInheritHooks: !hooksEnabled })}
+          />
+        </div>
         {settings && settings.agentModelPins > 0 && (
-          <div className="mono mt-2 rounded-md bg-line-soft px-2 py-1 text-[11.5px] text-ink-3">
+          <div className="mono mt-1 px-0.5 text-[11.5px] text-ink-4">
             {settings.agentModelPins} template model pin{settings.agentModelPins === 1 ? '' : 's'} configured
           </div>
         )}
@@ -1309,7 +1290,7 @@ function AgentModelPinsPanel({
   return (
     <div>
       <PanelHeader title="Template pins" loading={loading} onRefresh={onRefresh} />
-      <div className="mt-2 rounded-lg border border-line-soft bg-pane-2">
+      <div className="mt-2">
         {visibleTemplates.length === 0 ? (
           <div className="px-3 py-3 text-[13.5px] text-ink-3">
             {loading ? 'Loading templates…' : 'No agent templates loaded.'}
@@ -1451,8 +1432,8 @@ function ChildLogPanel({
     .slice(-36)
 
   return (
-    <div className="rounded-lg border border-line-soft bg-pane-2">
-      <div className="flex h-10 items-center gap-2 border-b border-line-soft px-3">
+    <div className="mt-3 border-t border-line-soft pt-3">
+      <div className="mb-2 flex items-center gap-2 px-0.5">
         <div className="min-w-0 flex-1">
           <div className="mono truncate text-[12.5px] font-semibold text-ink">
             Agent #{agent.numericId}
@@ -1467,17 +1448,17 @@ function ChildLogPanel({
           onClick={onClose}
           title="Close agent log"
           aria-label="Close agent log"
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-4 transition hover:bg-line-soft hover:text-ink"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-4 transition hover:bg-line-soft hover:text-ink"
         >
-          <X className="h-3 w-3" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
       {visibleEntries.length === 0 ? (
-        <div className="px-3 py-3 text-[13.5px] text-ink-3">
+        <div className="px-0.5 py-3 text-[13.5px] text-ink-3">
           {loading ? 'Loading agent log…' : 'No visible agent log entries yet.'}
         </div>
       ) : (
-        <div className="max-h-[320px] overflow-y-auto py-1.5">
+        <div className="max-h-[320px] overflow-y-auto">
           {visibleEntries.map((entry) => (
             <CompactLogRow key={entry.id} entry={entry} workDir={workDir} />
           ))}
@@ -1499,10 +1480,10 @@ function CompactLogRow({
 
   return (
     <div className="grid grid-cols-[58px_minmax(0,1fr)] gap-2 px-3 py-1.5">
-      <span className={cn('mono text-[11.5px] uppercase tracking-wider', type.className)}>
+      <span className={cn('mono text-[11.5px]', type.className)}>
         {type.label}
       </span>
-      <span className="min-w-0 truncate text-[12.8px] leading-5 text-ink-2">
+      <span className="min-w-0 truncate text-[13px] leading-5 text-ink-2">
         {text || 'No display text'}
       </span>
     </div>
@@ -1585,10 +1566,9 @@ function GitPanel({
     return (
       <div className="px-3.5 py-4">
         <PanelHeader title="Repository" loading={loading} onRefresh={onRefresh} />
-        <div className="mt-3 rounded-lg border border-line-soft bg-pane-2 px-3 py-3">
-          <div className="flex items-start gap-2 text-[14.5px] leading-[1.45] text-ink-3">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-            <span>No Git repository found.</span>
+        <div className="mt-3 px-0.5">
+          <div className="text-[14.5px] leading-[1.45] text-ink-3">
+            No Git repository found.
           </div>
           <div className="mt-3 grid grid-cols-1 gap-1.5">
             <WorkspaceActionButton
@@ -1640,10 +1620,10 @@ function GitPanel({
   }
 
   return (
-    <div className="px-3 py-3">
+    <div className="px-3.5 py-4">
       <PanelHeader title="Repository" loading={loading} onRefresh={onRefresh} />
 
-      <div className="mt-2 rounded-lg border border-line-soft bg-pane-2 px-3 py-3">
+      <div className="mt-3 px-0.5">
         <div className="flex items-center gap-2">
           <GitBranch className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.8} />
           <span className="mono min-w-0 flex-1 truncate text-[14px] text-ink">
@@ -1667,10 +1647,10 @@ function GitPanel({
           </div>
         )}
         {!status.clean && (
-          <div className="mt-3 grid grid-cols-3 gap-1.5">
-            <GitCount label="Staged" value={stagedFiles.length} tone="success" />
-            <GitCount label="Changed" value={unstagedFiles.length} tone="warning" />
-            <GitCount label="New" value={untrackedCount} tone="info" />
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[12.5px]">
+            <span className="mono text-success">{stagedFiles.length} staged</span>
+            <span className="mono text-warning">{unstagedFiles.length} changed</span>
+            <span className="mono text-info">{untrackedCount} new</span>
           </div>
         )}
         {!status.clean && (
@@ -1715,7 +1695,7 @@ function GitPanel({
 
       <div className="mt-4">
         {files.length === 0 ? (
-          <div className="rounded-lg border border-line-soft px-3 py-3 text-[14px] text-ink-3">
+          <div className="px-0.5 py-3 text-[14px] text-ink-3">
             No local file changes.
           </div>
         ) : (
@@ -1754,32 +1734,6 @@ function GitPanel({
 }
 
 const GIT_FILE_RENDER_LIMIT = 80
-
-function GitCount({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: number
-  tone: 'success' | 'warning' | 'info'
-}): JSX.Element {
-  return (
-    <div className="rounded-md border border-line-soft bg-pane px-2 py-1.5">
-      <div
-        className={cn(
-          'mono text-[14px] font-semibold leading-none',
-          tone === 'success' && 'text-success',
-          tone === 'warning' && 'text-warning',
-          tone === 'info' && 'text-info',
-        )}
-      >
-        {value}
-      </div>
-      <div className="mt-1 truncate text-[11.5px] text-ink-4">{label}</div>
-    </div>
-  )
-}
 
 function GitBulkDiffButton({
   children,
@@ -1899,7 +1853,7 @@ function GitFileSection({
   return (
     <section>
       <div className="mb-2 flex items-center gap-2 px-0.5">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
+        <div className="text-[13px] font-semibold text-ink-2">
           {title}
         </div>
         <div className="h-px flex-1 bg-line-soft" />
@@ -1944,13 +1898,13 @@ function SessionActivity({
   if (recentTools.length === 0) return <></>
   return (
     <div className="mt-5">
-      <div className="mb-2 px-0.5 text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
+      <div className="mb-2 px-0.5 text-[13px] font-semibold text-ink-2">
         Session activity
       </div>
       <div className="flex flex-col gap-px">
         {recentTools.slice(0, 8).map((r, i) => (
-          <div key={i} className="flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-pane-2">
-            <span className="mono grid h-4 w-4 shrink-0 place-items-center rounded-[5px] bg-line-soft text-[12px] font-semibold text-ink-2">
+          <div key={i} className="flex items-center gap-2 rounded-lg px-2.5 py-2 transition hover:bg-pane-2">
+            <span className="mono grid h-4 w-4 shrink-0 place-items-center rounded-md bg-line-soft text-[12px] font-semibold text-ink-2">
               {r.toolName === 'write_file' || r.toolName === 'edit_file' ? 'M' : r.toolName === 'bash' ? '$' : '›'}
             </span>
             <div className="min-w-0 flex-1">
@@ -1985,14 +1939,14 @@ function PanelHeader({
 }): JSX.Element {
   return (
     <div className="flex items-center gap-2 px-0.5">
-      <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
+      <div className="text-[13px] font-semibold text-ink-2">
         {title}
       </div>
       <div className="flex-1" />
       <button
         type="button"
         onClick={() => void onRefresh()}
-        className="grid h-7 w-7 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+        className="grid h-7 w-7 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
         title={`Refresh ${title.toLowerCase()}`}
         aria-label={`Refresh ${title.toLowerCase()}`}
       >
@@ -2131,7 +2085,7 @@ function GitFileRow({
         >
           <span
             className={cn(
-              'mono grid h-5 w-5 shrink-0 place-items-center rounded-md text-[11px] font-semibold',
+              'mono grid h-5 w-5 shrink-0 place-items-center rounded-md text-[11.5px] font-semibold',
               status.tone === 'add' && 'bg-success/10 text-success',
               status.tone === 'delete' && 'bg-error/10 text-error',
               status.tone === 'rename' && 'bg-info/10 text-info',
@@ -2303,7 +2257,7 @@ function FilesPanel({
   const visibleFiles = filteredFiles.slice(0, FILE_RENDER_LIMIT)
 
   return (
-    <div className="px-3 py-3">
+    <div className="px-3.5 py-4">
       <PanelHeader title="Files" loading={loading} onRefresh={onRefresh} />
 
       <div className="relative mt-2">
@@ -2315,13 +2269,13 @@ function FilesPanel({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Filter files"
-          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-2.5 text-[13.5px] text-ink outline-none transition placeholder:text-ink-4 hover:border-line"
+          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-2.5 text-[13.5px] text-ink outline-none transition placeholder:text-ink-3 hover:border-line"
           aria-label="Filter files"
         />
       </div>
 
-      <div className="mt-2 overflow-hidden rounded-lg border border-line-soft bg-pane-2">
-        <div className="flex h-9 items-center gap-2 border-b border-line-soft px-3">
+      <div className="mt-3">
+        <div className="flex h-7 items-center gap-2 px-0.5">
           <div className="mono min-w-0 flex-1 truncate text-[12px] text-ink-4">
             {loading ? 'loading' : `${filteredFiles.length} files`}
           </div>
@@ -2333,11 +2287,11 @@ function FilesPanel({
         </div>
 
         {visibleFiles.length === 0 ? (
-          <div className="px-3 py-3 text-[13.5px] text-ink-3">
+          <div className="px-0.5 py-3 text-[13.5px] text-ink-3">
             {loading ? 'Loading files…' : normalizedQuery ? 'No matching files.' : 'No files found.'}
           </div>
         ) : (
-          <div className="max-h-[calc(100vh-190px)] overflow-y-auto py-1">
+          <div className="max-h-[calc(100vh-190px)] overflow-y-auto">
             {visibleFiles.map((file) => (
               <FileListRow
                 key={file.path}
@@ -2363,13 +2317,13 @@ function FileListRow({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex h-10 w-full items-center gap-2 px-3 text-left transition hover:bg-pane"
+      className="group flex h-10 w-full items-center gap-2 rounded px-2 text-left transition hover:bg-line-soft"
       title={`Open ${file.path}`}
       aria-label={`Open ${file.path}`}
     >
       <FileText className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={1.6} />
       <div className="min-w-0 flex-1">
-        <div className="mono truncate text-[13px] leading-5 text-ink-2 group-hover:text-ink">
+        <div className="mono truncate text-[13px] leading-5 text-ink-2 transition group-hover:text-ink">
           {file.path}
         </div>
         <div className="mono truncate text-[11.5px] leading-4 text-ink-4">
@@ -2419,7 +2373,7 @@ function SearchPanel({ workDir }: { workDir: string }): JSX.Element {
   }, [runSearch])
 
   return (
-    <div className="px-3 py-3">
+    <div className="px-3.5 py-4">
       <PanelHeader title="Search" loading={loading} onRefresh={runSearch} />
 
       <div className="relative mt-2">
@@ -2431,28 +2385,30 @@ function SearchPanel({ workDir }: { workDir: string }): JSX.Element {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search text"
-          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-2.5 text-[13.5px] text-ink outline-none transition placeholder:text-ink-4 hover:border-line"
+          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-2.5 text-[13.5px] text-ink outline-none transition placeholder:text-ink-3 hover:border-line"
           aria-label="Search text"
         />
       </div>
 
-      <div className="mt-2 overflow-hidden rounded-lg border border-line-soft bg-pane-2">
-        <div className="flex h-9 items-center gap-2 border-b border-line-soft px-3">
-          <div className="mono min-w-0 flex-1 truncate text-[12px] text-ink-4">
-            {loading ? 'searching' : `${results.length} matches`}
+      <div className="mt-3">
+        {normalizedQuery.length >= 2 && (
+          <div className="flex h-7 items-center gap-2 px-0.5">
+            <div className="mono min-w-0 flex-1 truncate text-[12px] text-ink-4">
+              {loading ? 'searching' : `${results.length} matches`}
+            </div>
           </div>
-        </div>
+        )}
 
         {error ? (
-          <div className="px-3 py-3 text-[13.5px] text-error">{error}</div>
+          <div className="px-0.5 py-3 text-[13.5px] text-error">{error}</div>
         ) : normalizedQuery.length < 2 ? (
-          <div className="px-3 py-3 text-[13.5px] text-ink-3">No query.</div>
+          <div className="px-0.5 py-3 text-[13.5px] text-ink-3">Type to search.</div>
         ) : results.length === 0 ? (
-          <div className="px-3 py-3 text-[13.5px] text-ink-3">
+          <div className="px-0.5 py-3 text-[13.5px] text-ink-3">
             {loading ? 'Searching…' : 'No matches.'}
           </div>
         ) : (
-          <div className="max-h-[calc(100vh-190px)] overflow-y-auto py-1">
+          <div className="max-h-[calc(100vh-190px)] overflow-y-auto">
             {groups.map((group) => (
               <SearchResultGroup
                 key={group.path}
@@ -2502,7 +2458,7 @@ function SearchResultGroup({
         aria-label={`Open ${group.path}`}
       >
         <FileText className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={1.6} />
-        <div className="mono min-w-0 flex-1 truncate text-[12.8px] text-ink-2 group-hover:text-ink">
+        <div className="mono min-w-0 flex-1 truncate text-[13px] text-ink-2 transition group-hover:text-ink">
           {group.path}
         </div>
         <div className="mono shrink-0 text-[11.5px] text-ink-4">
@@ -2543,7 +2499,7 @@ function SearchResultRow({
       <div className="mono mb-0.5 text-[11.5px] text-ink-4">
         {result.line}:{result.column}
       </div>
-      <div className="line-clamp-2 text-[12.8px] leading-[1.4] text-ink-3">
+      <div className="line-clamp-2 text-[13px] leading-[1.4] text-ink-3">
         {highlightSearchMatch(result.text.trim(), query)}
       </div>
     </button>
@@ -2605,47 +2561,46 @@ function ShellsPanel({
   }
 
   return (
-    <div className="px-3 py-3">
+    <div className="px-3.5 py-4">
       <PanelHeader title="Shells" loading={loading} onRefresh={onRefresh} />
 
-      <div className="mt-2 rounded-lg border border-line-soft bg-pane-2 px-3 py-3">
-        <div className="flex items-center gap-2">
-          <SquareTerminal className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.8} />
-          <div className="min-w-0 flex-1">
-            <div className="text-[13.5px] font-medium text-ink">
-              {running.length > 0 ? `${running.length} running` : 'No running shells'}
-            </div>
-            <div className="mono mt-0.5 text-[12px] text-ink-4">
-              {disabled ? 'draft session' : `${shells.length} tracked`}
-            </div>
-          </div>
-          <button
-            type="button"
-            disabled={disabled || running.length === 0 || busy}
-            onClick={() => void killAll()}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-line-soft bg-pane px-2 text-[12.5px] font-medium text-ink-2 transition hover:border-line hover:text-ink disabled:cursor-default disabled:opacity-45"
-            title="Kill all running background shells"
-            aria-label="Kill all running background shells"
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={1.8} />
-            <span>{busy ? 'Killing' : 'Kill all'}</span>
-          </button>
+      {shells.length === 0 ? (
+        <div className="mt-3 px-0.5 py-3 text-[13.5px] text-ink-3">
+          {loading ? 'Loading shells…' : disabled ? 'No active session.' : 'No shells tracked.'}
         </div>
-      </div>
-
-      <div className="mt-3 overflow-hidden rounded-lg border border-line-soft bg-pane-2">
-        {shells.length === 0 ? (
-          <div className="px-3 py-3 text-[13.5px] text-ink-3">
-            {loading ? 'Loading shells…' : 'No shells tracked.'}
+      ) : (
+        <>
+          <div className="mt-2 flex items-center gap-2 px-0.5 py-1.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-[13.5px] font-medium text-ink">
+                {running.length > 0 ? `${running.length} running` : 'No running shells'}
+              </div>
+              <div className="mono mt-0.5 text-[12px] text-ink-4">
+                {`${shells.length} tracked`}
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={disabled || running.length === 0 || busy}
+              onClick={() => void killAll()}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-[12.5px] font-medium text-ink-2 transition hover:bg-line-soft hover:text-ink disabled:cursor-default disabled:opacity-45"
+              title="Kill all running background shells"
+              aria-label="Kill all running background shells"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={1.8} />
+              <span>{busy ? 'Killing' : 'Kill all'}</span>
+            </button>
           </div>
-        ) : (
-          <div className="divide-y divide-line-soft">
-            {shells.map((shell) => (
-              <ShellReportRow key={shell.id} shell={shell} />
+
+          <div className="mt-2">
+            {shells.map((shell, index) => (
+              <div key={shell.id} className={cn(index > 0 && 'border-t border-line-soft')}>
+                <ShellReportRow shell={shell} />
+              </div>
             ))}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   )
 }

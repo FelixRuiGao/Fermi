@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Code2, Layers, MoreHorizontal, FolderOpen, Pencil, X, Copy, GitBranch, ScrollText, Archive, Pin, Undo2 } from 'lucide-react'
+import { Code2, MoreHorizontal, FolderOpen, Pencil, X, Copy, GitBranch, ScrollText, Archive, Pin, Undo2 } from 'lucide-react'
 import { useSessionStore } from '@/state/sessionStore.js'
 import { Composer } from '@/components/Composer.js'
 import { Transcript, type TranscriptRewindTarget } from '@/components/Transcript.js'
@@ -169,20 +169,20 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
     )
   }
 
-  const name = projectName(tab.workDir)
+  const projectLabel = projectName(tab.workDir)
   const sessionTitle = (tab.title ?? tab.displayName ?? '').trim()
-  const showSessionSubtitle = tab.status !== 'draft' && sessionTitle.length > 0 && sessionTitle !== name
+  const headerTitle = sessionTitle.length > 0 && sessionTitle !== projectLabel ? sessionTitle : projectLabel
+  const headerSubtitle = headerTitle === projectLabel ? '' : projectLabel
 
   return (
     <div data-session-pane-root className="flex h-full min-w-0 flex-1 flex-col bg-pane">
       {/* Thread header — project name + tool buttons */}
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-soft px-6">
-        <Layers className="h-4 w-4 text-ink-3" strokeWidth={1.6} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-semibold leading-tight text-ink">{name}</div>
-          {showSessionSubtitle && (
+          <div className="truncate text-[15px] font-semibold leading-tight text-ink">{headerTitle}</div>
+          {headerSubtitle && (
             <div className="mt-0.5 truncate text-[12.5px] leading-tight text-ink-4">
-              {sessionTitle}
+              {headerSubtitle}
             </div>
           )}
         </div>
@@ -262,7 +262,7 @@ function TranscriptRewindDialog({
     <Dialog.Root open={target !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-line bg-pane-2 p-4 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-pane-2 p-4 shadow-2xl">
           <Dialog.Title className="flex items-center gap-2 text-[16px] font-semibold text-ink">
             <Undo2 className="h-4 w-4 text-warning" strokeWidth={1.8} />
             Rewind before this message
@@ -283,7 +283,7 @@ function TranscriptRewindDialog({
               <button
                 type="button"
                 disabled={busy}
-                className="rounded-[9px] px-3 py-1.5 text-[14px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
+                className="rounded px-3 py-1.5 text-[14px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
               >
                 Cancel
               </button>
@@ -292,7 +292,7 @@ function TranscriptRewindDialog({
               type="button"
               onClick={onConfirm}
               disabled={busy}
-              className="rounded-[9px] bg-warning px-3 py-1.5 text-[14px] font-medium text-pane transition hover:opacity-90 disabled:opacity-45"
+              className="rounded bg-warning px-3 py-1.5 text-[14px] font-medium text-pane transition hover:opacity-90 disabled:opacity-45"
             >
               {busy ? 'Rewinding' : 'Rewind'}
             </button>
@@ -318,7 +318,7 @@ function HeaderBtn({
       type="button"
       {...props}
       className={cn(
-        'grid h-8 w-8 place-items-center rounded-[9px] transition hover:bg-line-soft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        'grid h-8 w-8 place-items-center rounded transition hover:bg-line-soft hover:text-ink',
         active ? 'bg-line-soft text-ink' : 'text-ink-3',
       )}
       aria-label={label}
@@ -394,14 +394,14 @@ function HeaderMenu({
           <DropdownMenu.Content
             align="end"
             sideOffset={6}
-            className="z-50 min-w-[190px] rounded-[14px] border border-line bg-pane-2 p-1.5 shadow-2xl"
+            className="z-50 min-w-[190px] rounded-xl border border-line bg-pane-2 p-1.5 shadow-2xl"
           >
             {tab.status !== 'draft' && (
               <>
                 <DropdownMenu.Item
                   onSelect={onCopyLastResponse}
                   disabled={!canCopyLastResponse}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
                 >
                   <Copy className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Copy last response
@@ -409,7 +409,7 @@ function HeaderMenu({
                 <DropdownMenu.Item
                   onSelect={onCopyTranscript}
                   disabled={!canCopyTranscript}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
                 >
                   <ScrollText className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Copy transcript
@@ -417,7 +417,7 @@ function HeaderMenu({
                 <DropdownMenu.Item
                   onSelect={onForkSession}
                   disabled={!canForkSession}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
                 >
                   <GitBranch className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Fork session
@@ -425,7 +425,7 @@ function HeaderMenu({
                 <DropdownMenu.Item
                   onSelect={onTogglePinned}
                   disabled={!canTogglePinned}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
                 >
                   <Pin className={cn('h-3.5 w-3.5', pinned ? 'text-accent' : 'text-ink-4')} strokeWidth={1.7} />
                   {pinned ? 'Unpin session' : 'Pin session'}
@@ -433,14 +433,14 @@ function HeaderMenu({
                 <DropdownMenu.Item
                   onSelect={onArchiveSession}
                   disabled={!canArchiveSession}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
                 >
                   <Archive className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Archive session
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   onSelect={() => setRenameOpen(true)}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
                 >
                   <Pencil className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Rename session
@@ -449,7 +449,7 @@ function HeaderMenu({
             )}
             <DropdownMenu.Item
               onSelect={() => void api.workspace.openPath(tab.workDir)}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
             >
               <FolderOpen className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
               Open workspace
@@ -457,7 +457,7 @@ function HeaderMenu({
             <DropdownMenu.Separator className="my-1 h-px bg-line-soft" />
             <DropdownMenu.Item
               onSelect={onClose}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
             >
               <X className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
               {tab.status === 'draft' ? 'Discard draft' : 'Close session'}
@@ -595,7 +595,7 @@ function RenameSessionDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-line bg-pane-2 p-4 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-pane-2 p-4 shadow-2xl">
           <Dialog.Title className="text-[16px] font-semibold text-ink">
             Rename session
           </Dialog.Title>
@@ -619,7 +619,7 @@ function RenameSessionDialog({
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="rounded-[9px] px-3 py-1.5 text-[14px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink"
+                className="rounded px-3 py-1.5 text-[14px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink"
               >
                 Cancel
               </button>
@@ -628,7 +628,7 @@ function RenameSessionDialog({
               type="button"
               onClick={() => void submit()}
               disabled={!value.trim() || saving}
-              className="rounded-[9px] bg-ink px-3 py-1.5 text-[14px] font-medium text-pane transition hover:opacity-90 disabled:opacity-40"
+              className="rounded bg-ink px-3 py-1.5 text-[14px] font-medium text-pane transition hover:opacity-90 disabled:opacity-40"
             >
               Rename
             </button>

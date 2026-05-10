@@ -21,11 +21,10 @@ import {
   Puzzle,
   RefreshCw,
   Search,
-  Server,
-  ScrollText,
   Sun,
   X,
   ChevronDown,
+  type LucideIcon,
 } from 'lucide-react'
 import { useSessionStore } from '@/state/sessionStore.js'
 import type { ProviderSettingsItem, SessionHistoryItem, SessionTab, SettingsSnapshot } from '@shared/rpc.js'
@@ -121,28 +120,9 @@ export function Sidebar(): JSX.Element {
         className="flex w-[256px] shrink-0 flex-col bg-rail"
         style={{ boxShadow: 'inset -1px 0 0 var(--color-line-soft)' }}
       >
-      {/* Search + workspace button */}
-      <div className="px-2.5 pb-2.5 pt-2">
-        <div className="mb-2 flex h-7 items-center gap-2 px-1">
-          <div className="flex-1 text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
-            Workspaces
-          </div>
-          <button
-            type="button"
-            onClick={() => void onNewSession()}
-            disabled={creating}
-            title="Open workspace"
-            aria-label="Open workspace"
-            className={cn(
-              'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-3 transition',
-              'hover:bg-line-soft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
-              creating && 'opacity-50',
-            )}
-          >
-            <FolderOpen className="h-[13px] w-[13px]" strokeWidth={1.8} />
-          </button>
-        </div>
-        <div className="input-focus-shell flex h-9 items-center gap-2 rounded-[10px] border border-line-soft bg-pane-2 px-3">
+      {/* Search */}
+      <div className="px-2.5 pb-2.5 pt-3">
+        <div className="input-focus-shell flex h-9 items-center gap-2 rounded-lg border border-line-soft bg-pane-2 px-3">
           <Search className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={2} />
           <input
             value={query}
@@ -157,16 +137,16 @@ export function Sidebar(): JSX.Element {
               onClick={() => setQuery('')}
               title="Clear search"
               aria-label="Clear search"
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-4 transition hover:bg-line-soft hover:text-ink"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-4 transition hover:bg-line-soft hover:text-ink"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
       </div>
 
       {/* Project tree */}
-      <div className="flex-1 overflow-y-auto pt-1">
+      <div className="session-scroll flex-1 overflow-y-auto pt-1">
         {groups.length === 0 ? (
           <div className="px-4 py-6 text-[14px] text-ink-3">
             {trimmedQuery ? 'No matches' : 'No sessions'}
@@ -201,8 +181,8 @@ export function Sidebar(): JSX.Element {
             title="Open workspace"
             aria-label="Open workspace"
             className={cn(
-              'grid h-8 w-8 shrink-0 place-items-center rounded-[9px] text-ink-3 transition',
-              'hover:bg-line-soft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+              'grid h-8 w-8 shrink-0 place-items-center rounded text-ink-3 transition',
+              'hover:bg-line-soft hover:text-ink',
               creating && 'opacity-50',
             )}
           >
@@ -279,11 +259,11 @@ function FooterMenu({
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          className="grid h-7 w-7 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+          className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
           title="Settings"
           aria-label="Settings"
         >
-          <MoreHorizontal className="h-3.5 w-3.5" />
+          <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={1.6} />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -291,7 +271,7 @@ function FooterMenu({
           align="end"
           side="top"
           sideOffset={8}
-          className="z-50 min-w-[210px] rounded-[14px] border border-line bg-pane-2 p-1.5 shadow-2xl"
+          className="z-50 min-w-[210px] rounded-xl border border-line bg-pane-2 p-1.5 shadow-2xl"
         >
           <FooterMenuItem icon={Plus} label="New session" onSelect={onNewSession} />
           {activeTab && (
@@ -331,7 +311,7 @@ function FooterMenu({
           />
           <DropdownMenu.Separator className="my-1 h-px bg-line-soft" />
           <FooterMenuItem
-            icon={Monitor}
+            icon={RefreshCw}
             label={autoUpdate ? 'Auto-update off' : 'Auto-update on'}
             onSelect={() => void setAutoUpdate(!autoUpdate)}
           />
@@ -347,7 +327,7 @@ function FooterMenuItem({
   disabled,
   onSelect,
 }: {
-  icon: React.FC<{ className?: string }>
+  icon: LucideIcon
   label: string
   disabled?: boolean
   onSelect: () => void
@@ -358,7 +338,7 @@ function FooterMenuItem({
       onSelect={onSelect}
       className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
     >
-      <Icon className="h-3.5 w-3.5 text-ink-4" />
+      <Icon className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
       <span>{label}</span>
     </DropdownMenu.Item>
   )
@@ -398,11 +378,8 @@ function ProviderSettingsDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[78vh] w-[620px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[16px] border border-line bg-pane-2 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[78vh] w-[620px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-pane-2 shadow-2xl">
           <div className="flex h-14 items-center gap-3 border-b border-line-soft px-4">
-            <div className="grid h-8 w-8 place-items-center rounded-[10px] bg-line-soft text-ink">
-              <KeyRound className="h-4 w-4" strokeWidth={1.8} />
-            </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title className="truncate text-[16px] font-semibold text-ink">
                 Models & keys
@@ -414,7 +391,7 @@ function ProviderSettingsDialog({
             <button
               type="button"
               onClick={() => void loadSettings()}
-              className="grid h-8 w-8 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+              className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
               title="Refresh model settings"
               aria-label="Refresh model settings"
             >
@@ -423,7 +400,7 @@ function ProviderSettingsDialog({
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="grid h-8 w-8 place-items-center rounded-[9px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+                className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
                 title="Close"
                 aria-label="Close models and keys"
               >
@@ -432,34 +409,31 @@ function ProviderSettingsDialog({
             </Dialog.Close>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <div className="session-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
             {error && (
               <div className="mb-3 rounded-lg border border-error/25 bg-error/5 px-3 py-2 text-[13.5px] text-error">
                 {error}
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-2">
-              <SettingsInfoCell label="Default model" value={settings?.defaultModel ?? 'Not set'} />
-              <SettingsInfoCell label="Thinking" value={settings?.thinkingLevel ?? 'Model default'} />
-              <SettingsInfoCell label="Permission" value={settings?.permissionMode ?? 'Default'} />
+            <div className="space-y-2.5">
+              <SettingsRow label="Default model" value={settings?.defaultModel ?? 'Not set'} />
+              <SettingsRow label="Thinking" value={settings?.thinkingLevel ?? 'Model default'} />
+              <SettingsRow label="Permission" value={settings?.permissionMode ?? 'Default'} />
             </div>
 
-            <div className="mt-4">
-              <div className="mb-2 flex items-center gap-2 px-0.5">
-                <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-ink-4">
-                  Providers
-                </div>
-                <div className="h-px flex-1 bg-line-soft" />
-                <div className="mono text-[11.5px] text-ink-4">{providers.length}</div>
+            <div className="mt-7">
+              <div className="mb-1 flex items-baseline gap-2 px-0.5">
+                <div className="text-[14px] font-semibold text-ink">Providers</div>
+                <div className="text-[12.5px] text-ink-4">{providers.length}</div>
               </div>
 
               {providers.length === 0 ? (
-                <div className="rounded-lg border border-line-soft px-3 py-3 text-[14px] text-ink-3">
-                  No providers are configured in settings.json.
+                <div className="px-0.5 py-3 text-[14px] text-ink-3">
+                  No providers configured in settings.json.
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div>
                   {providers.map((provider) => (
                     <ProviderSettingsRow key={provider.id} provider={provider} />
                   ))}
@@ -476,7 +450,7 @@ function ProviderSettingsDialog({
               type="button"
               disabled={!settings?.settingsPath}
               onClick={() => void api.settings.openFile()}
-              className="rounded-[9px] border border-line-soft bg-pane px-3 py-1.5 text-[13px] font-medium text-ink-2 transition hover:border-line hover:text-ink disabled:cursor-default disabled:opacity-45"
+              className="rounded border border-line-soft bg-pane px-3 py-1.5 text-[13px] font-medium text-ink-2 transition hover:border-line hover:text-ink disabled:cursor-default disabled:opacity-45"
             >
               Open settings.json
             </button>
@@ -487,13 +461,11 @@ function ProviderSettingsDialog({
   )
 }
 
-function SettingsInfoCell({ label, value }: { label: string; value: string }): JSX.Element {
+function SettingsRow({ label, value }: { label: string; value: string }): JSX.Element {
   return (
-    <div className="rounded-lg border border-line-soft bg-pane px-3 py-2">
-      <div className="text-[11.5px] font-semibold uppercase tracking-[0.14em] text-ink-4">
-        {label}
-      </div>
-      <div className="mt-1 truncate text-[13.5px] text-ink-2">{value}</div>
+    <div className="flex items-baseline gap-3 px-0.5">
+      <div className="w-32 shrink-0 text-[13.5px] text-ink-3">{label}</div>
+      <div className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{value}</div>
     </div>
   )
 }
@@ -501,29 +473,22 @@ function SettingsInfoCell({ label, value }: { label: string; value: string }): J
 function ProviderSettingsRow({ provider }: { provider: ProviderSettingsItem }): JSX.Element {
   const status = providerStatus(provider)
   return (
-    <div className="rounded-lg border border-line-soft bg-pane px-3 py-2.5">
-      <div className="flex items-start gap-2">
-        <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-line-soft text-ink-2">
-          <Server className="h-3.5 w-3.5" strokeWidth={1.7} />
+    <div className="border-b border-line-soft px-0.5 py-3 last:border-b-0">
+      <div className="flex items-center gap-2">
+        <div className="mono min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink">
+          {provider.id}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="mono min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink">
-              {provider.id}
-            </div>
-            <span className={cn('rounded-md px-1.5 py-0.5 text-[11.5px] font-medium', status.className)}>
-              {status.label}
-            </span>
-          </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12.5px] text-ink-3">
-            <span>{provider.kind}</span>
-            {provider.apiKeyEnv && <span className="mono">{provider.apiKeyEnv}</span>}
-            {provider.baseUrl && <span className="mono max-w-[230px] truncate">{provider.baseUrl}</span>}
-            {provider.model && <span className="mono">{provider.model}</span>}
-            {provider.contextLength && <span className="mono">{formatContext(provider.contextLength)}</span>}
-            {provider.hasInlineKey && <span>inline key set</span>}
-          </div>
-        </div>
+        <span className={cn('rounded-md px-1.5 py-0.5 text-[11.5px] font-medium', status.className)}>
+          {status.label}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12.5px] text-ink-3">
+        <span>{provider.kind}</span>
+        {provider.apiKeyEnv && <span className="mono">{provider.apiKeyEnv}</span>}
+        {provider.baseUrl && <span className="mono max-w-[230px] truncate">{provider.baseUrl}</span>}
+        {provider.model && <span className="mono">{provider.model}</span>}
+        {provider.contextLength && <span className="mono">{formatContext(provider.contextLength)}</span>}
+        {provider.hasInlineKey && <span>inline key set</span>}
       </div>
     </div>
   )
@@ -531,7 +496,7 @@ function ProviderSettingsRow({ provider }: { provider: ProviderSettingsItem }): 
 
 function providerStatus(provider: ProviderSettingsItem): { label: string; className: string } {
   if (provider.kind === 'invalid') return { label: 'invalid', className: 'bg-error/10 text-error' }
-  if (provider.kind === 'local') return { label: 'local', className: 'bg-info/10 text-info' }
+  if (provider.kind === 'local') return { label: 'local', className: 'bg-line-soft text-ink-3' }
   if (provider.hasEnvValue) return { label: 'key found', className: 'bg-success/10 text-success' }
   return { label: 'env missing', className: 'bg-warning/10 text-warning' }
 }
@@ -604,11 +569,8 @@ function SkillsSettingsDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[78vh] w-[560px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[16px] border border-line bg-pane-2 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[78vh] w-[560px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-pane-2 shadow-2xl">
           <div className="flex h-14 items-center gap-3 border-b border-line-soft px-4">
-            <div className="grid h-8 w-8 place-items-center rounded-[10px] bg-line-soft text-ink">
-              <Puzzle className="h-4 w-4" strokeWidth={1.8} />
-            </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title className="truncate text-[16px] font-semibold text-ink">
                 Skills
@@ -621,7 +583,7 @@ function SkillsSettingsDialog({
               type="button"
               onClick={() => void loadSkills()}
               disabled={!tab || loading}
-              className="grid h-8 w-8 place-items-center rounded-[10px] text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
+              className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
               title="Reload skills"
               aria-label="Reload skills"
             >
@@ -630,7 +592,7 @@ function SkillsSettingsDialog({
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="grid h-8 w-8 place-items-center rounded-[10px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+                className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
                 title="Close"
                 aria-label="Close"
               >
@@ -639,7 +601,7 @@ function SkillsSettingsDialog({
             </Dialog.Close>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <div className="session-scroll min-h-0 flex-1 overflow-y-auto p-3">
             {!tab ? (
               <div className="px-3 py-8 text-center text-[14px] text-ink-4">
                 Select a session
@@ -659,7 +621,7 @@ function SkillsSettingsDialog({
                   key={skill.name}
                   onClick={() => void setSkillEnabled(skill, !skill.enabled)}
                   disabled={saving !== null}
-                  className="group flex w-full items-start gap-3 rounded-[12px] px-3 py-2.5 text-left text-ink-2 transition hover:bg-line-soft hover:text-ink disabled:cursor-default disabled:opacity-70"
+                  className="group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left text-ink-2 transition hover:bg-line-soft hover:text-ink disabled:cursor-default disabled:opacity-70"
                 >
                   <span
                     className={cn(
@@ -749,11 +711,8 @@ function RuntimeSettingsDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[82vh] w-[720px] max-w-[94vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[16px] border border-line bg-pane-2 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[82vh] w-[720px] max-w-[94vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-pane-2 shadow-2xl">
           <div className="flex h-14 items-center gap-3 border-b border-line-soft px-4">
-            <div className="grid h-8 w-8 place-items-center rounded-[10px] bg-line-soft text-ink">
-              <PlugZap className="h-4 w-4" strokeWidth={1.8} />
-            </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title className="truncate text-[16px] font-semibold text-ink">
                 Integrations
@@ -766,7 +725,7 @@ function RuntimeSettingsDialog({
               type="button"
               onClick={() => void loadRuntime()}
               disabled={!tab || loading}
-              className="grid h-8 w-8 place-items-center rounded-[10px] text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
+              className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
               title="Reload runtime status"
               aria-label="Reload runtime status"
             >
@@ -775,7 +734,7 @@ function RuntimeSettingsDialog({
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="grid h-8 w-8 place-items-center rounded-[10px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+                className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
                 title="Close"
                 aria-label="Close"
               >
@@ -784,7 +743,7 @@ function RuntimeSettingsDialog({
             </Dialog.Close>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <div className="session-scroll min-h-0 flex-1 overflow-y-auto p-3">
             {!tab ? (
               <div className="px-3 py-10 text-center text-[14px] text-ink-4">
                 Select a session
@@ -794,10 +753,9 @@ function RuntimeSettingsDialog({
                 Loading runtime status
               </div>
             ) : (
-              <div className="space-y-3">
-                <section className="rounded-[14px] border border-line-soft bg-pane px-3 py-3">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Server className="h-4 w-4 text-ink-4" strokeWidth={1.8} />
+              <div className="space-y-5">
+                <section>
+                  <div className="mb-3 flex items-center gap-2 px-0.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-[14px] font-semibold text-ink">MCP servers</div>
                       <div className="text-[12.5px] text-ink-4">
@@ -820,11 +778,11 @@ function RuntimeSettingsDialog({
                   ) : serverCount === 0 ? (
                     <RuntimeNotice text="No MCP server status reported" />
                   ) : (
-                    <div className="space-y-2">
+                    <div>
                       {mcpStatus.servers.map((server) => (
                         <div
                           key={server.name}
-                          className="rounded-[12px] border border-line-soft bg-pane-2 px-3 py-2.5"
+                          className="border-b border-line-soft py-3 last:border-b-0"
                         >
                           <div className="flex items-center gap-2">
                             <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">
@@ -866,9 +824,8 @@ function RuntimeSettingsDialog({
                   )}
                 </section>
 
-                <section className="rounded-[14px] border border-line-soft bg-pane px-3 py-3">
-                  <div className="mb-3 flex items-center gap-2">
-                    <ScrollText className="h-4 w-4 text-ink-4" strokeWidth={1.8} />
+                <section className="border-t border-line-soft pt-4">
+                  <div className="mb-3 flex items-center gap-2 px-0.5">
                     <div className="min-w-0 flex-1">
                       <div className="text-[14px] font-semibold text-ink">Hooks</div>
                       <div className="text-[12.5px] text-ink-4">
@@ -889,11 +846,11 @@ function RuntimeSettingsDialog({
                   ) : hookCount === 0 ? (
                     <RuntimeNotice text="No hooks registered" />
                   ) : (
-                    <div className="space-y-2">
+                    <div>
                       {hooksStatus.hooks.map((hook, index) => (
                         <div
                           key={`${hook.scope}:${hook.event}:${hook.name}:${index}`}
-                          className="rounded-[12px] border border-line-soft bg-pane-2 px-3 py-2.5"
+                          className="border-b border-line-soft py-3 last:border-b-0"
                         >
                           <div className="flex items-center gap-2">
                             <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">
@@ -940,10 +897,10 @@ function RuntimeNotice({
   return (
     <div
       className={cn(
-        'rounded-[12px] border px-3 py-3 text-[13.5px]',
+        'px-0.5 py-2 text-[13.5px]',
         tone === 'error'
-          ? 'border-error/25 bg-error/5 text-error'
-          : 'border-line-soft bg-pane-2 text-ink-4',
+          ? 'rounded bg-error/5 px-3 text-error'
+          : 'text-ink-4',
       )}
     >
       {text}
@@ -1023,13 +980,13 @@ function ProjectGroup({
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} ${name} sessions`}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left transition hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left transition hover:text-ink"
         >
           <ChevronDown
             className={cn('h-3 w-3 shrink-0 opacity-80 transition-transform', !expanded && '-rotate-90')}
             strokeWidth={2}
           />
-          <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-ink-2">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink-3">
             {name}
           </span>
         </button>
@@ -1045,7 +1002,7 @@ function ProjectGroup({
             creating && 'opacity-40',
           )}
         >
-          <Plus className="h-3 w-3" strokeWidth={2} />
+          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       </div>
 
@@ -1082,7 +1039,7 @@ function ProjectGroup({
                     }
                   }}
                   className={cn(
-                    'flex h-9 w-full cursor-pointer items-center rounded-[10px] pl-7 pr-[42px] text-left',
+                    'flex h-9 w-full cursor-pointer items-center rounded pl-7 pr-10 text-left transition',
                     active ? 'bg-pane-2 text-ink' : 'text-ink-2 hover:bg-line-soft',
                   )}
                 >
@@ -1129,14 +1086,14 @@ function ProjectGroup({
                       void onPinHistory(item.workDir, sessionId, !pinned)
                     }}
                     className={cn(
-                      'invisible absolute left-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-pane-2 text-ink-3 transition',
+                      'invisible absolute left-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded bg-pane-2 text-ink-3 transition',
                       'hover:bg-line hover:text-ink group-hover:visible',
                       pinned && 'text-accent',
                     )}
                     aria-label={`${pinned ? 'Unpin' : 'Pin'} ${label}`}
                     title={pinned ? 'Unpin session' : 'Pin session'}
                   >
-                    <Pin className="h-3 w-3" strokeWidth={1.9} />
+                    <Pin className="h-3 w-3" strokeWidth={1.8} />
                   </button>
                 )}
                 {tab ? (
@@ -1147,13 +1104,13 @@ function ProjectGroup({
                       void onClose(tab.tabId)
                     }}
                     className={cn(
-                      'invisible absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-pane-2 text-ink-3 transition',
-                      'hover:bg-line hover:text-ink group-hover:visible',
+                      'invisible absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-ink-3 transition',
+                      'hover:bg-line-soft hover:text-ink group-hover:visible',
                       active && 'visible',
                     )}
                     aria-label={`Close ${label}`}
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 ) : item.kind === 'history' ? (
                   <button
@@ -1162,11 +1119,11 @@ function ProjectGroup({
                       e.stopPropagation()
                       void onArchiveHistory(item.workDir, item.session.sessionId)
                     }}
-                    className="invisible absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-pane-2 text-ink-3 transition hover:bg-line hover:text-ink group-hover:visible"
+                    className="invisible absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink group-hover:visible"
                     aria-label={`Archive ${label}`}
                     title="Archive session"
                   >
-                    <Archive className="h-3 w-3" strokeWidth={1.8} />
+                    <Archive className="h-3.5 w-3.5" strokeWidth={1.8} />
                   </button>
                 ) : null}
               </div>
@@ -1176,7 +1133,7 @@ function ProjectGroup({
             <button
               type="button"
               onClick={() => setShowAll((value) => !value)}
-              className="mx-2 mt-1 flex h-8 items-center rounded-[9px] pl-7 pr-3 text-left text-[13.5px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
+              className="mx-2 mt-1 flex h-8 items-center rounded pl-7 pr-3 text-left text-[13.5px] text-ink-3 transition hover:bg-line-soft hover:text-ink"
             >
               {showAll ? 'Show fewer sessions' : `Show all ${items.length} sessions`}
             </button>

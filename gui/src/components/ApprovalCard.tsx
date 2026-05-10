@@ -142,7 +142,7 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
                 <span className="text-[14.5px] font-medium text-ink">Approval needed</span>
-                <span className="mono text-[12px] uppercase tracking-wider text-ink-3">
+                <span className="mono text-[12px] text-ink-3">
                   {ask.payload.permissionClass.replaceAll('_', ' ')}
                 </span>
               </div>
@@ -163,7 +163,7 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
                     onMouseEnter={() => setSelected(i)}
                     disabled={submitting}
                     className={cn(
-                      'group flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-left transition',
+                      'group flex w-full items-center gap-3 rounded px-3 py-2 text-left transition',
                       active ? 'bg-line-soft text-ink' : 'text-ink-2 hover:bg-line-soft/60',
                       isDeny && active && 'text-error',
                     )}
@@ -178,7 +178,7 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
                     </span>
                     <span className="flex-1 truncate text-[14.5px]">{label}</span>
                     {offer?.scope && (
-                      <span className="mono text-[12px] uppercase tracking-wider text-ink-3">
+                      <span className="mono text-[12px] text-ink-3">
                         {offer.scope}
                       </span>
                     )}
@@ -189,7 +189,7 @@ function ApprovalCard({ tab, ask }: { tab: SessionTab; ask: ApprovalAsk }): JSX.
           </ul>
 
           <div className="flex items-center justify-between border-t border-line-soft px-4 py-2">
-            <span className="mono truncate text-[12px] uppercase tracking-wider text-ink-4">
+            <span className="mono truncate text-[12px] text-ink-4">
               {ask.payload.toolName}
             </span>
             <span
@@ -250,10 +250,10 @@ function QuestionCard({ tab, ask }: { tab: SessionTab; ask: AgentQuestionAsk }):
                       key={oi}
                       onClick={() => setAnswers((a) => a.map((v, idx) => (idx === qi ? oi : v)))}
                       className={cn(
-                        'rounded-[10px] px-2.5 py-1 text-[14px] transition',
+                        'rounded px-2.5 py-1 text-[14px] transition',
                         answers[qi] === oi
                           ? 'bg-ink text-pane'
-                          : 'bg-line-soft text-ink-2 hover:bg-line',
+                          : 'bg-line-soft text-ink-2 hover:bg-line hover:text-ink',
                       )}
                     >
                       {opt.label}
@@ -268,7 +268,7 @@ function QuestionCard({ tab, ask }: { tab: SessionTab; ask: AgentQuestionAsk }):
               type="button"
               onClick={() => void submit()}
               disabled={submitting}
-              className="rounded-[10px] bg-ink px-3 py-1.5 text-[14px] font-medium text-pane hover:bg-ink-2 disabled:opacity-50"
+              className="rounded bg-ink px-3 py-1.5 text-[14px] font-medium text-pane transition hover:opacity-90 disabled:opacity-50"
             >
               Submit
             </button>

@@ -73,6 +73,8 @@
   --color-diff-rm-bg: rgba(200,60,70,0.08);
   --color-diff-rm-ink: #b54250;
 
+  --color-accent: #5d8fea;
+
   --color-success: #2f8b5b;
   --color-warning: #a07030;
   --color-error: #b54250;
@@ -122,28 +124,31 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.rename-title-input:focus-visible {
-  outline: none;
-}
-
-.sidebar-search-input:focus-visible {
-  outline: none;
-}
-
-.model-filter-input:focus-visible {
-  outline: none;
-}
-
-.agents-filter-input:focus-visible {
-  outline: none;
-}
-
-.right-pane-filter-input:focus-visible {
-  outline: none;
-}
-
+/* Named inputs suppress the global focus ring; instead they get a
+   subtle border brightening (or, when wrapped in .input-focus-shell,
+   the parent shell takes the focus state). */
+.sidebar-search-input:focus-visible,
 .composer-input:focus-visible {
   outline: none;
+}
+
+.rename-title-input,
+.model-filter-input,
+.right-pane-filter-input {
+  transition: border-color 120ms ease;
+}
+.rename-title-input:focus-visible,
+.model-filter-input:focus-visible,
+.right-pane-filter-input:focus-visible {
+  outline: none;
+  border-color: var(--color-line);
+}
+
+.input-focus-shell {
+  transition: border-color 120ms ease;
+}
+.input-focus-shell:focus-within {
+  border-color: var(--color-line);
 }
 
 *, *::before, *::after {
@@ -169,6 +174,10 @@ textarea:focus-visible {
   border-radius: 10px;
   border: 2px solid transparent;
   background-clip: padding-box;
+  transition: background 120ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-4);
 }
 ::-webkit-scrollbar-track { background: transparent; }
 
@@ -191,32 +200,17 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--color-line-soft);
 }
 
-/* Spinner for "working" session dot */
+/* Spinner shown wherever we indicate in-progress work */
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .working-spinner {
-  display: block;
+  display: inline-block;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   border: 1.4px solid var(--color-line);
   border-top-color: var(--color-ink);
   animation: spin 0.8s linear infinite;
-}
-
-.status-dot {
-  position: relative;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-ink-2);
-}
-.status-dot::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: var(--color-ink-2);
 }
 
 .shimmer-text {
@@ -287,7 +281,7 @@ textarea:focus-visible {
   padding: 0.06em 0.32em;
   background: var(--color-code-bg);
   border: 1px solid var(--color-line-soft);
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--color-code-ink);
 }
 
@@ -295,7 +289,7 @@ textarea:focus-visible {
 .markdown-body pre {
   margin: 0.6rem 0;
   border: 1px solid var(--color-line-soft);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--color-code-bg);
 }

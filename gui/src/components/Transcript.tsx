@@ -274,7 +274,7 @@ function UserBubble({
       )}
       <MessageCopyButton text={text} label="Copy message" align="left" />
       <div
-        className="max-w-[72%] whitespace-pre-wrap rounded-2xl px-4 py-[11px] text-[15.5px] leading-[1.55]"
+        className="max-w-[72%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-[15.5px] leading-[1.55]"
         style={{ background: 'var(--color-bubble)', color: 'var(--color-bubble-ink)' }}
       >
         {text}
@@ -299,8 +299,8 @@ function MessageRewindButton({
       aria-label="Rewind before this message"
       title="Rewind before this message"
       className={cn(
-        'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-4 opacity-0 transition',
-        'hover:bg-line-soft hover:text-ink focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        'grid h-7 w-7 shrink-0 place-items-center rounded text-ink-4 opacity-0 transition',
+        'hover:bg-line-soft hover:text-ink focus-visible:opacity-100',
         'group-hover/message:opacity-100',
       )}
     >
@@ -432,8 +432,8 @@ function MessageCopyButton({
       aria-label={copied ? 'Copied' : label}
       title={copied ? 'Copied' : label}
       className={cn(
-        'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-4 opacity-0 transition',
-        'hover:bg-line-soft hover:text-ink focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        'grid h-7 w-7 shrink-0 place-items-center rounded text-ink-4 opacity-0 transition',
+        'hover:bg-line-soft hover:text-ink focus-visible:opacity-100',
         'group-hover/message:opacity-100',
         align === 'right' && 'absolute right-0 top-0',
         disabled && 'pointer-events-none',
@@ -478,13 +478,13 @@ function ToolRow({
         onClick={() => canExpand && setOpen(!open)}
         disabled={!canExpand && !running}
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2 text-left transition',
+          'flex w-full items-center gap-2.5 rounded border px-3 py-2 text-left transition',
           'border-line-soft bg-code-bg',
           canExpand && 'cursor-pointer hover:border-line',
         )}
       >
         <span className="mono w-3.5 shrink-0 text-center text-[14px] text-ink-3">
-          {running ? <span className="status-dot" /> : prefix}
+          {running ? <span className="working-spinner" /> : prefix}
         </span>
         <span
           className={cn(
@@ -497,7 +497,7 @@ function ToolRow({
         {canExpand && (
           <ChevronRight
             className={cn(
-              'h-[11px] w-[11px] shrink-0 text-ink-4 transition-transform',
+              'h-3 w-3 shrink-0 text-ink-4 transition-transform',
               open && 'rotate-90',
             )}
             strokeWidth={2}
@@ -507,7 +507,7 @@ function ToolRow({
       {open && result && (
         <div
           className={cn(
-            'mono my-1 rounded-[10px] border border-line-soft bg-code-bg px-3.5 py-3 text-[13.5px] leading-[1.6] text-ink-2',
+            'mono my-1 rounded border border-line-soft bg-code-bg px-3.5 py-3 text-[13.5px] leading-[1.6] text-ink-2',
             'max-h-[400px] overflow-auto whitespace-pre',
             isError && 'border-error/30 text-error',
           )}
@@ -554,7 +554,7 @@ function FileEditPill({
         aria-expanded={showDiff}
         onClick={() => setShowDiff(!showDiff)}
         className={cn(
-          'inline-flex items-center gap-2 rounded-[10px] border border-line-soft bg-code-bg px-3 py-1.5',
+          'inline-flex items-center gap-2 rounded border border-line-soft bg-code-bg px-3 py-1.5',
           'transition hover:border-line',
           active && 'border-accent/50',
         )}
@@ -588,12 +588,8 @@ function SubAgentRow({ text }: { text: string }): JSX.Element {
 
 function CompactMarker({ text }: { text: string }): JSX.Element {
   return (
-    <div className="my-3 flex items-center gap-3">
-      <div className="h-px flex-1 bg-line-soft" />
-      <span className="text-[14.5px] font-medium uppercase tracking-[0.16em] text-ink-4">
-        {text || 'compact'}
-      </span>
-      <div className="h-px flex-1 bg-line-soft" />
+    <div className="my-3 text-center text-[12.5px] text-ink-4">
+      {text || 'Compacted'}
     </div>
   )
 }
@@ -604,7 +600,7 @@ function StatusRow({ text }: { text: string }): JSX.Element {
 
 function ErrorRow({ text }: { text: string }): JSX.Element {
   return (
-    <div className="my-1.5 flex items-start gap-2 rounded-[10px] border border-error/30 bg-error/5 px-3 py-2">
+    <div className="my-1.5 flex items-start gap-2 rounded border border-error/30 bg-error/5 px-3 py-2">
       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-error" />
       <div className="flex-1 text-[16px] text-error whitespace-pre-wrap">{text}</div>
     </div>
@@ -613,12 +609,8 @@ function ErrorRow({ text }: { text: string }): JSX.Element {
 
 function InterruptedRow({ text }: { text: string }): JSX.Element {
   return (
-    <div className="my-3 flex items-center gap-3">
-      <div className="h-px flex-1 border-t border-dashed border-line-soft" />
-      <span className="text-[14.5px] uppercase tracking-[0.14em] text-ink-3">
-        {text || 'Interrupted'}
-      </span>
-      <div className="h-px flex-1 border-t border-dashed border-line-soft" />
+    <div className="my-3 text-center text-[12.5px] text-ink-3">
+      {text || 'Interrupted'}
     </div>
   )
 }
