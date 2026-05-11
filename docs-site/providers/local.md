@@ -79,5 +79,5 @@ The key differences from cloud providers:
 
 - Make sure the server is running **before** you run `fermi init`. The wizard needs to query it for available models.
 - If you change models in your local server, re-run `fermi init` to update Fermi's configuration.
-- Local models generally have lower context windows than cloud models. Fermi's context management (summarize, compact) becomes especially important for keeping sessions productive.
+- Local models generally have lower context windows than cloud models. Fermi's context management (`summarize_context`, `/compact`) becomes especially important for keeping sessions productive.
 - Use `/model` at runtime to switch between local and cloud models within the same session.

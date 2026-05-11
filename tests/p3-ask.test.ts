@@ -115,7 +115,7 @@ describe("P3 ask behavior", () => {
     }
   });
 
-  it("updates summarize hint state and hint injection even when activation suspends on ask", async () => {
+  it("updates summarize_context hint state and hint injection even when activation suspends on ask", async () => {
     const root = makeTempDir("fermi-p3-ask-hint-");
     try {
       const s = makeSessionLike(root);

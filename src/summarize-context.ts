@@ -1,7 +1,7 @@
 /**
- * Log-native summarize tool implementation (append-only).
+ * Log-native summarize_context tool implementation (append-only).
  *
- * Summaries are appended to the log, but active context is assembled by
+ * Summary entries are appended to the log, but active context is assembled by
  * replacing the covered visible context groups with the new summary group.
  */
 
@@ -14,7 +14,7 @@ import {
 } from "./active-context.js";
 import { createSummary, type LogEntry } from "./log-entry.js";
 
-export interface SummarizeOperation {
+export interface SummarizeContextOperation {
   from: string;
   to: string;
   context_ids: string[];
@@ -35,14 +35,14 @@ interface LogValidationResult {
   error?: string;
 }
 
-export interface LogSummarizeExecutionResult {
+export interface LogSummarizeContextExecutionResult {
   output: string;
   results: OperationResult[];
   /** Summary entries to append to the log (caller appends). */
   newEntries: LogEntry[];
 }
 
-export interface SummarizeExecutionOptions {
+export interface SummarizeContextExecutionOptions {
   origin?: SummaryOrigin;
   exactRange?: {
     from: string;
@@ -51,7 +51,7 @@ export interface SummarizeExecutionOptions {
   };
 }
 
-function parseOperations(args: Record<string, unknown>): SummarizeOperation[] {
+function parseOperations(args: Record<string, unknown>): SummarizeContextOperation[] {
   const operations = (args["operations"] as Array<Record<string, unknown>>) ?? [];
   return operations.map((raw) => ({
     from: typeof raw["from"] === "string" ? raw["from"] : "",
@@ -92,9 +92,9 @@ function sameStringArray(a: string[], b: string[]): boolean {
 }
 
 function validateLogOperation(
-  op: SummarizeOperation,
+  op: SummarizeContextOperation,
   view: ActiveContextView,
-  options: SummarizeExecutionOptions,
+  options: SummarizeContextExecutionOptions,
   operationCount: number,
 ): LogValidationResult {
   const { context_ids, summary } = op;
@@ -115,21 +115,21 @@ function validateLogOperation(
 
   if (options.origin === "manual") {
     if (!options.exactRange) {
-      return { valid: false, error: "Manual /summarize is missing its selected range contract." };
+      return { valid: false, error: "Internal error: missing authorized range contract." };
     }
     if (operationCount !== 1) {
-      return { valid: false, error: "Manual /summarize requires exactly one summarize operation." };
+      return { valid: false, error: "This authorization expects exactly one summarize_context operation." };
     }
     if (op.from !== options.exactRange.from || op.to !== options.exactRange.to) {
       return {
         valid: false,
-        error: `Manual /summarize must use exactly from="${options.exactRange.from}" and to="${options.exactRange.to}".`,
+        error: `This authorization must use exactly from="${options.exactRange.from}" and to="${options.exactRange.to}".`,
       };
     }
     if (!sameStringArray(context_ids, options.exactRange.contextIds)) {
       return {
         valid: false,
-        error: "Manual /summarize expanded to a different context range than the user selected.",
+        error: "Operation range does not match the authorized range.",
       };
     }
     return { valid: true, groups };
@@ -138,14 +138,14 @@ function validateLogOperation(
   if (groups.some((group) => group.hasUserMessage || group.coversUserMessage)) {
     return {
       valid: false,
-      error: "Agent-initiated summarize cannot cover user messages. Use /summarize for user-selected turn compression.",
+      error: "Cannot summarize a range that contains user messages. Adjust the range to exclude user-message groups.",
     };
   }
 
   if (groups.some((group) => group.isSummary && group.summaryOrigin === "manual")) {
     return {
       valid: false,
-      error: "Agent-initiated summarize cannot cover user-created summaries.",
+      error: "Cannot re-summarize a previously-authorized summary block.",
     };
   }
 
@@ -154,7 +154,7 @@ function validateLogOperation(
   if (turnStart !== turnEnd) {
     return {
       valid: false,
-      error: "Agent-initiated summarize must stay within a single turn.",
+      error: "Cannot summarize across multiple turns. Keep each operation within a single turn.",
     };
   }
 
@@ -162,7 +162,7 @@ function validateLogOperation(
 }
 
 function buildSummaryEntry(
-  op: SummarizeOperation,
+  op: SummarizeContextOperation,
   allocateContextId: () => string,
   allocateLogId: () => string,
   turnIndex: number,
@@ -191,9 +191,8 @@ function buildSummaryEntry(
   let header: string;
   if (origin === "manual") {
     header =
-      "[User-compressed context — the user explicitly selected this range for summarization. " +
-      "This may contain verbatim user messages. " +
-      "Do not re-summarize this unless the user explicitly asks you to.]";
+      "[User-requested compressed context — created at the user's explicit request " +
+      "and may contain verbatim user content.]";
   } else {
     header =
       "[Compressed context — this is an automated summary of earlier tool output and exploration " +
@@ -232,7 +231,7 @@ function buildSummaryEntry(
   };
 }
 
-function formatExecutionOutput(ops: SummarizeOperation[], results: OperationResult[]): string {
+function formatExecutionOutput(ops: SummarizeContextOperation[], results: OperationResult[]): string {
   const succeeded = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success).length;
   const lines: string[] = [];
@@ -252,11 +251,11 @@ function formatExecutionOutput(ops: SummarizeOperation[], results: OperationResu
 }
 
 /**
- * Truncate long summarize content in projected tool arguments.
+ * Truncate long summarize_context content in projected tool arguments.
  * The full content is preserved in the summary entry; this only shrinks the
  * duplicated copy inside the tool_call before provider submission.
  */
-export function truncateSummarizeContent(content: string, newContextId?: string | number): string {
+export function truncateSummarizeContextContent(content: string, newContextId?: string | number): string {
   if (content.length <= 100) return content;
 
   let cutPoint: number;
@@ -273,9 +272,9 @@ export function truncateSummarizeContent(content: string, newContextId?: string 
 }
 
 /**
- * Execute summarize operations on the active context. Append-only: original
- * entries are never mutated. Returns new summary entries for the caller to
- * append after the summarize tool_result.
+ * Execute summarize_context operations on the active context. Append-only:
+ * original entries are never mutated. Returns new summary entries for the
+ * caller to append after the summarize_context tool_result.
  */
 export function execSummarizeContextOnLog(
   args: Record<string, unknown>,
@@ -283,8 +282,8 @@ export function execSummarizeContextOnLog(
   contextIdAllocator: () => string,
   logIdAllocator: () => string,
   turnIndex: number,
-  options: SummarizeExecutionOptions = {},
-): LogSummarizeExecutionResult {
+  options: SummarizeContextExecutionOptions = {},
+): LogSummarizeContextExecutionResult {
   const ops = parseOperations(args);
   if (!ops.length) {
     const results: OperationResult[] = [{

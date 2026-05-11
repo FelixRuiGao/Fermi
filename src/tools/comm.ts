@@ -117,16 +117,15 @@ export const SHOW_CONTEXT_TOOL: ToolDef = {
   tuiPolicy: { partialReveal: "immediate" },
 };
 
-export const SUMMARIZE_TOOL: ToolDef = {
-  name: "summarize",
+export const SUMMARIZE_CONTEXT_TOOL: ToolDef = {
+  name: "summarize_context",
   description:
     "Summarize a contiguous range of context groups — extract and preserve valuable information, discard the rest. " +
     "Specify the range with `from` and `to` context IDs (inclusive).\n\n" +
     "Rules:\n" +
     "- Do not summarize context groups that contain user messages.\n" +
-    "- Keep each operation within a single user turn.\n" +
-    "- Exception: when the context contains a <summarize-request> tag, follow it exactly — " +
-    "that request comes from the user and overrides the rules above for the specified range.\n\n" +
+    "- Keep each operation within a single user turn.\n\n" +
+    "Targets specific ranges. For whole-window compression, the system uses auto-compact (different mechanism).\n\n" +
     "If you need to inspect the current context distribution first, call show_context.\n\n" +
     "Example — single context group: from=\"a3f1\", to=\"a3f1\"\n" +
     "Example — two non-adjacent groups: use TWO separate operations (one per group), NOT one operation spanning the gap.",
@@ -149,7 +148,7 @@ export const SUMMARIZE_TOOL: ToolDef = {
             },
             content: {
               type: "string",
-              description: "Summary content preserving decisions, key facts, file paths, code references, and unresolved issues. Length should match the information density of the original — preserve everything you'd look back at.",
+              description: "Distilled content preserving decisions, key facts, file paths, code references, and unresolved issues. Length should match the information density of the original — preserve everything you'd look back at.",
             },
             reason: {
               type: "string",

@@ -220,7 +220,7 @@ function formatToolCallArgs(toolName: string, args: Record<string, unknown>): st
       if (qs?.length) return truncateText(String(qs[0]?.question ?? ""), 30).slice(1, -1);
       return "...";
     }
-    case "summarize": {
+    case "summarize_context": {
       const ops = args["operations"] as unknown[] | undefined;
       return `${ops?.length ?? 0} operations`;
     }
@@ -304,7 +304,7 @@ function formatToolResultBrief(toolName: string, resultStr: string): string {
       const match = resultStr.match(/(\d+) groups/);
       return match ? `${match[1]} groups` : "ok";
     }
-    case "summarize": {
+    case "summarize_context": {
       const match = resultStr.match(/(\d+) operation/);
       return match ? `${match[1]} operations` : "ok";
     }

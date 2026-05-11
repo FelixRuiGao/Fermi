@@ -8,7 +8,7 @@
 import type { LogEntry, TuiDisplayKind } from "./log-entry.js";
 import type { ConversationEntry, ConversationEntryKind } from "./ui/contracts.js";
 import { mergeConsecutiveSameRole } from "./context-rendering.js";
-import { truncateSummarizeContent } from "./summarize-context.js";
+import { truncateSummarizeContextContent } from "./summarize-context.js";
 import { buildActiveContextView, flattenActiveContextEntries } from "./active-context.js";
 
 // ------------------------------------------------------------------
@@ -525,7 +525,11 @@ export function projectToTuiEntries(
   options?: TuiProjectionOptions,
 ): ConversationEntry[] {
   const threshold = options?.compactFoldThreshold ?? 3;
-  const coveredSet = buildSummaryCoveredSet(entries, 0);
+  // TUI shows the full append-only history, including entries that have been
+  // covered by a later summary. Only the API projection hides them. This
+  // gives the user the ability to scroll back and verify what the summary
+  // captured (and lets pickers list groups that still exist on disk).
+  const coveredSet: Set<string> | undefined = undefined;
 
   // Find all compact_marker indices
   const compactMarkerIndices: number[] = [];
@@ -586,8 +590,8 @@ export interface ApiProjectionOptions {
   resolveImageRef?: (refPath: string) => { data: string; media_type: string } | null;
   /** Merge consecutive same-role messages for providers that require alternation. */
   requiresAlternatingRoles?: boolean;
-  /** Truncate summarize tool-call content before provider submission. */
-  truncateSummarizeToolArgs?: boolean;
+  /** Truncate summarize_context tool-call content before provider submission. */
+  truncateSummarizeContextToolArgs?: boolean;
   /** Enforce provider tool-call ordering invariants before submission. */
   enforceToolCallProtocol?: boolean;
 }
@@ -768,9 +772,9 @@ export function projectToApiMessages(
     );
   }
 
-  let projected = options?.truncateSummarizeToolArgs === false
+  let projected = options?.truncateSummarizeContextToolArgs === false
     ? messages
-    : truncateSummarizeToolArgs(messages);
+    : truncateSummarizeContextToolArgs(messages);
 
   if (options?.enforceToolCallProtocol) {
     validateToolCallProtocol(projected);
@@ -941,7 +945,7 @@ function injectLabeledUserContext(
   }
 }
 
-function truncateSummarizeToolArgs(
+function truncateSummarizeContextToolArgs(
   messages: InternalMessage[],
 ): InternalMessage[] {
   return messages.map((msg) => {
@@ -950,7 +954,7 @@ function truncateSummarizeToolArgs(
 
     let modified = false;
     const nextToolCalls = toolCalls.map((tc) => {
-      if ((tc["name"] as string) !== "summarize") return tc;
+      if ((tc["name"] as string) !== "summarize_context") return tc;
 
       const args = tc["arguments"] as Record<string, unknown> | undefined;
       const operations = args?.["operations"] as Array<Record<string, unknown>> | undefined;
@@ -971,7 +975,7 @@ function truncateSummarizeToolArgs(
         const { _result_context_id: _removed, ...rest } = op;
         return {
           ...rest,
-          content: truncateSummarizeContent(content, resultCtxId),
+          content: truncateSummarizeContextContent(content, resultCtxId),
         };
       });
 

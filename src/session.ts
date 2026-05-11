@@ -51,7 +51,7 @@ import {
   CHECK_STATUS_TOOL,
   AWAIT_EVENT_TOOL,
   SHOW_CONTEXT_TOOL,
-  SUMMARIZE_TOOL,
+  SUMMARIZE_CONTEXT_TOOL,
   ASK_TOOL,
   SEND_TOOL,
 } from "./tools/comm.js";
@@ -295,11 +295,11 @@ function appendManualInstruction(
 
 // -- Hint Prompt generators (two-tier) --
 function HINT_LEVEL1_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct}. Consider freeing space: call \`show_context\` first to see the distribution, then call \`summarize\` to compress groups you no longer need in full. Prioritize completed subtasks, large tool results you've already extracted key info from, and exploratory steps that led to a conclusion. Do not summarize context groups that contain user messages, and keep each summarize operation within a single user turn. Always inspect with show_context before summarizing. After summarizing, continue your work normally.]`;
+  return `[SYSTEM: Context usage has reached ${pct}. Consider freeing space: call \`show_context\` first to see the distribution, then call \`summarize_context\` to summarize groups you no longer need in full. Prioritize completed subtasks, large tool results you've already extracted key info from, and exploratory steps that led to a conclusion. Do not summarize context groups that contain user messages, and keep each summarize_context operation within a single user turn. Always inspect with show_context before summarizing. After summarizing, continue your work normally.]`;
 }
 
 function HINT_LEVEL2_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct} — auto-compact will trigger soon. You should act now: call \`show_context\` to see the distribution, then immediately call \`summarize\` to compress older groups. Prioritize completed subtasks, large tool results, and exploratory steps. Do not summarize context groups that contain user messages, and keep each summarize operation within a single user turn. Do not skip the show_context step. After summarizing, continue your work.]`;
+  return `[SYSTEM: Context usage has reached ${pct} — auto-compact will trigger soon. You should act now: call \`show_context\` to see the distribution, then immediately call \`summarize_context\` to summarize older groups. Prioritize completed subtasks, large tool results, and exploratory steps. Do not summarize context groups that contain user messages, and keep each summarize_context operation within a single user turn. Do not skip the show_context step. After summarizing, continue your work.]`;
 }
 
 function formatTokenCount(value: number): string {
@@ -320,7 +320,7 @@ const SYSTEM_PREFIXES = [
 ];
 
 const COMM_TOOL_NAMES = new Set([
-  "spawn", "kill_agent", "check_status", "await_event", "show_context", "summarize", "ask", "skill",
+  "spawn", "kill_agent", "check_status", "await_event", "show_context", "summarize_context", "ask", "skill",
   "bash_background", "bash_output", "kill_shell", "send",
 ]);
 
@@ -332,7 +332,7 @@ type DrainPendingToolCallsResult =
 const SAFE_INTERRUPT_TOOLS = new Set([
   "ask",
   "check_status",
-  "summarize",
+  "summarize_context",
   "glob",
   "grep",
   "kill_agent",
@@ -3163,7 +3163,7 @@ export class Session {
         check_status: (args) => this._execCheckStatus(args),
         await_event: (args) => this._execAwaitEvent(args),
         show_context: (args) => this._execShowContext(args),
-        summarize: (args) => this._execSummarizeTool(args),
+        summarize_context: (args) => this._execSummarizeContextTool(args),
         ask: (args) => this._execAsk(args),
         skill: (args) => this._execSkill(args),
         send: (args) => this._execSend(args),
@@ -3677,8 +3677,15 @@ export class Session {
       }
     }
 
+    // Includes both "user" and "summarize" turns, matching rewind's filter.
+    // /summarize injection turns ARE user-triggered actions and may
+    // accumulate non-trivial procedural overhead (show_context output,
+    // agent's reply, the summarize_context tool call/result); allowing
+    // them as direct picker targets lets users summarize that overhead
+    // without having to sweep over surrounding turns.
     for (const t of this.listTurns()) {
-      if (!t.inActiveWindow || t.turnKind !== "user") continue;
+      if (!t.inActiveWindow) continue;
+      if (t.turnKind !== "user" && t.turnKind !== "summarize") continue;
       if (t.turnIndex > this._turnCount) continue;
       const sortKey = visibleNonManualGroupsByTurn.get(t.turnIndex);
       if (sortKey === undefined) continue;
@@ -3723,7 +3730,7 @@ export class Session {
   }
 
   static readonly SUMMARIZE_TOOL_WHITELIST = new Set([
-    "show_context", "summarize", "read_file", "grep", "glob", "list_dir",
+    "show_context", "summarize_context", "read_file", "grep", "glob", "list_dir",
   ]);
 
   async runManualSummarize(
@@ -3755,31 +3762,32 @@ export class Session {
       }
       const exactContextIds = currentView.order.slice(fromIdx, toIdx + 1);
       const rangeLabel = rangeFrom === rangeTo ? rangeFrom : `${rangeFrom}..${rangeTo}`;
-      const focusPart = options?.focusPrompt?.trim()
-        ? `\nUser focus: ${options.focusPrompt.trim()}\n` +
-          `Use this to guide which non-user-message content to emphasize or de-emphasize. ` +
-          `This does NOT override the rule to preserve user messages verbatim.`
-        : "";
-      let prompt = [
-        `<summarize-request>`,
-        `The user has selected context groups to be summarized: from="${rangeFrom}" to="${rangeTo}" (${exactContextIds.length} groups).`,
-        ``,
-        `Instructions:`,
-        `1. Call \`show_context\` to inspect the content and size of the range.`,
-        `2. You may call \`read_file\`, \`grep\`, \`glob\`, or \`list_dir\` to verify details before writing the summary.`,
-        `3. Call \`summarize\` exactly once, with from="${rangeFrom}" and to="${rangeTo}". Do not split, shrink, or expand this range.`,
-        `4. If the selected range includes user messages, copy them into your summary word-for-word — do not paraphrase or omit any part.`,
-        `5. For non-user-message content, match the information density of the original — preserve file paths with line numbers,`,
-        `   key decisions and why, unresolved issues, code references you'd look back at, and any constraints the user stated.`,
-        `6. After summarizing, reply with a one-line description of what was compressed (e.g. "Compressed turns 3-5: auth exploration and test results"). Do not repeat the summary content.`,
-        ``,
-        `Do NOT continue the main task.`,
-        focusPart,
-        `</summarize-request>`,
-      ].join("\n");
+      const groupWord = exactContextIds.length === 1 ? "group" : "groups";
       const displayText = options?.focusPrompt?.trim()
         ? `/summarize ${options.focusPrompt.trim()}`
         : `/summarize ${rangeLabel}`;
+      const focusTail = options?.focusPrompt?.trim()
+        ? `\n\nUser's additional focus: ${options.focusPrompt.trim()}`
+        : "";
+      const prompt = [
+        displayText,
+        ``,
+        `<system-message>`,
+        `The user invoked the /summarize command, manually requesting summarization of context range ${rangeFrom}..${rangeTo} (${exactContextIds.length} ${groupWord}). For this turn only, the rule "do not summarize ranges containing user messages" is lifted for the specified range.`,
+        ``,
+        `Instructions for this turn:`,
+        `1. Call \`show_context\` to inspect the content and size of the range.`,
+        `2. You may call \`read_file\`, \`grep\`, \`glob\`, or \`list_dir\` to verify details before writing the distilled content.`,
+        `3. Call \`summarize_context\` exactly once, with from="${rangeFrom}" and to="${rangeTo}". Do not split, shrink, or expand this range.`,
+        `4. If the range contains user messages, preserve the user's words word-for-word — do not paraphrase or omit any part. Two exceptions:`,
+        `   - When a user message is exceptionally long, you may reorganize and tighten it, but every substantive element must remain intact: requirements, constraints, preferences, clarifications, and concrete details (paths, names, numbers, decisions). Shape may change; substance cannot be lost.`,
+        `   - File contents attached to user messages (e.g., inlined via @file references, pasted code blocks, or other resolved file refs) are not the user's words — they are data. Summarize them under the normal "preserve concrete facts" rules. The user's surrounding prose, including the @-reference itself, still preserves verbatim.`,
+        `5. For non-user-message content, match the information density of the original — preserve file paths with line numbers, key decisions and why, unresolved issues, code references you'd look back at, and any constraints the user stated.`,
+        `6. After summarizing, reply with a one-line description of what was summarized (e.g. "Summarized turns 3-5: auth exploration and test results"). Do not repeat the distilled content.`,
+        ``,
+        `Do NOT continue the main task.`,
+        `</system-message>${focusTail}`,
+      ].join("\n");
 
       // Enable tool whitelist for this turn
       this._summarizeToolWhitelist = (this.constructor as typeof Session).SUMMARIZE_TOOL_WHITELIST;
@@ -5895,7 +5903,7 @@ export class Session {
     return new ToolResult({ content: contextMap });
   }
 
-  private _execSummarizeTool(args: Record<string, unknown>): ToolResult {
+  private _execSummarizeContextTool(args: Record<string, unknown>): ToolResult {
     const result = execSummarizeContextOnLog(
       args,
       this._log,
@@ -5911,16 +5919,16 @@ export class Session {
     // breaking the tool_call → tool_result pairing in API projections.
     this._pendingSummaryEntries.push(...result.newEntries);
 
-    this._annotateLatestSummarizeToolCall(result.results);
+    this._annotateLatestSummarizeContextToolCall(result.results);
 
     this._touchLog();
 
     return new ToolResult({ content: result.output });
   }
 
-  private _annotateLatestSummarizeToolCall(results: Array<{ success: boolean; newContextId?: string }>): void {
+  private _annotateLatestSummarizeContextToolCall(results: Array<{ success: boolean; newContextId?: string }>): void {
     const resolvedToolCallIds = new Set<string>();
-    let summarizeEntry: LogEntry | null = null;
+    let summarizeContextEntry: LogEntry | null = null;
 
     for (let i = this._log.length - 1; i >= 0; i--) {
       const entry = this._log[i];
@@ -5933,13 +5941,13 @@ export class Session {
       if (entry.type !== "tool_call") continue;
       const toolCallId = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
       if (resolvedToolCallIds.has(toolCallId)) continue;
-      if ((entry.meta as Record<string, unknown>)["toolName"] !== "summarize") continue;
-      summarizeEntry = entry;
+      if ((entry.meta as Record<string, unknown>)["toolName"] !== "summarize_context") continue;
+      summarizeContextEntry = entry;
       break;
     }
 
-    if (!summarizeEntry) return;
-    const content = summarizeEntry.content as Record<string, unknown>;
+    if (!summarizeContextEntry) return;
+    const content = summarizeContextEntry.content as Record<string, unknown>;
     const args = (content["arguments"] as Record<string, unknown>) ?? {};
     const operations = ((args["operations"] as Array<Record<string, unknown>>) ?? []).map((op) => ({ ...op }));
 
@@ -5948,7 +5956,7 @@ export class Session {
       operations[i]["_result_context_id"] = results[i].newContextId;
     }
 
-    summarizeEntry.content = {
+    summarizeContextEntry.content = {
       ...content,
       arguments: {
         ...args,
@@ -6368,7 +6376,7 @@ export class Session {
     const ratio = this._lastInputTokens / budget;
     const pct = `${Math.round(ratio * 100)}%`;
 
-    // Child sessions: single warning at 90%, no summarize guidance
+    // Child sessions: single warning at 90%, no summarize_context guidance
     if (!this._capabilities.includeSpawnTool) {
       if (ratio >= 0.90 && this._hintState === "none") {
         this._deliverMessage({

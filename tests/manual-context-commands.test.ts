@@ -127,11 +127,12 @@ describe("manual summarize / compact commands", () => {
       expect(out).toBe("ok");
       const injected = session._log.findLast((e: any) => e.type === "user_message");
       expect(injected.display).toBe("/summarize keep deployment notes");
-      expect(String(injected.content)).toContain("<summarize-request>");
-      expect(String(injected.content)).toContain("</summarize-request>");
-      expect(String(injected.content)).toContain("from=\"seed1\" to=\"seed1\"");
-      expect(String(injected.content)).toContain("Call `summarize` exactly once");
-      expect(String(injected.content)).toContain("keep deployment notes");
+      expect(String(injected.content)).toContain("<system-message>");
+      expect(String(injected.content)).toContain("</system-message>");
+      expect(String(injected.content)).toContain("from=\"seed1\" and to=\"seed1\"");
+      expect(String(injected.content)).toContain("Call `summarize_context` exactly once");
+      expect(String(injected.content)).toContain("User's additional focus: keep deployment notes");
+      expect(String(injected.content).startsWith("/summarize keep deployment notes\n")).toBe(true);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }

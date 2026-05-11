@@ -22,7 +22,7 @@ import {
   CHECK_STATUS_TOOL,
   AWAIT_EVENT_TOOL,
   SHOW_CONTEXT_TOOL,
-  SUMMARIZE_TOOL,
+  SUMMARIZE_CONTEXT_TOOL,
   ASK_TOOL,
   SEND_TOOL,
 } from "./tools/comm.js";
@@ -115,7 +115,7 @@ export function ensureCommTools(
   if (capabilities.includeCheckStatusTool) wanted.push(CHECK_STATUS_TOOL);
   if (capabilities.includeAwaitEventTool) wanted.push(AWAIT_EVENT_TOOL);
   if (capabilities.includeShowContextTool) wanted.push(SHOW_CONTEXT_TOOL);
-  if (capabilities.includeSummarizeTool) wanted.push(SUMMARIZE_TOOL);
+  if (capabilities.includeSummarizeContextTool) wanted.push(SUMMARIZE_CONTEXT_TOOL);
   if (capabilities.includeAskTool) wanted.push(ASK_TOOL);
   for (const toolDef of wanted) {
     if (!existing.has(toolDef.name)) {

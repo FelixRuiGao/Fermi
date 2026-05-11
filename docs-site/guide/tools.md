@@ -44,7 +44,7 @@ Fermi provides 13 built-in tools and 8 orchestration tools. Additional tools com
 | Tool | Description |
 |------|-------------|
 | `show_context` | Display the context distribution map. Shows all context groups with sizes and types. Activates inline annotations until dismissed. |
-| `summarize` | Summarize groups of contiguous context IDs. Extracts valuable information and discards the rest. Operates at any granularity — from a single tool result to multiple turns. |
+| `summarize_context` | Summarize groups of contiguous context IDs. Extracts valuable information and discards the rest. Operates at any granularity — from a single tool result to multiple turns. |
 
 ### Sub-Agent Management
 

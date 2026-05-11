@@ -518,25 +518,25 @@ export function presentationTransform(
     }
   }
 
-  // Pre-associate summary entries with their summarize tool_call.
+  // Pre-associate summary entries with their summarize_context tool_call.
   // Summary entries are flushed right after the tool_result, so we track the
-  // last summarize callId and collect consecutive isSummary entries.
+  // last summarize_context callId and collect consecutive isSummary entries.
   const summariesByCallId = new Map<string, ReconciledConversationEntry[]>();
   const consumedSummaryIds = new Set<string>();
   {
-    let lastSummarizeCallId: string | null = null;
+    let lastSummarizeContextCallId: string | null = null;
     for (const e of entries) {
-      if (e.entry.kind === "tool_call" && getToolName(e) === "summarize") {
-        lastSummarizeCallId = getToolCallId(e) ?? null;
+      if (e.entry.kind === "tool_call" && getToolName(e) === "summarize_context") {
+        lastSummarizeContextCallId = getToolCallId(e) ?? null;
       } else if (e.entry.kind === "tool_result") {
         // tool_result doesn't break the chain
-      } else if (getMeta(e).isSummary && lastSummarizeCallId) {
-        const list = summariesByCallId.get(lastSummarizeCallId) ?? [];
+      } else if (getMeta(e).isSummary && lastSummarizeContextCallId) {
+        const list = summariesByCallId.get(lastSummarizeContextCallId) ?? [];
         list.push(e);
-        summariesByCallId.set(lastSummarizeCallId, list);
+        summariesByCallId.set(lastSummarizeContextCallId, list);
         consumedSummaryIds.add(e.id);
       } else {
-        lastSummarizeCallId = null;
+        lastSummarizeContextCallId = null;
       }
     }
   }
@@ -605,8 +605,8 @@ export function presentationTransform(
           : null;
         const toolOp = buildToolOperation(callEntry, resultEntry, activeEntryId);
 
-        // Fold pre-associated summary entries into the summarize tool's inline result
-        if (callToolName === "summarize" && callId) {
+        // Fold pre-associated summary entries into the summarize_context tool's inline result
+        if (callToolName === "summarize_context" && callId) {
           const summaries = summariesByCallId.get(callId);
           if (summaries && summaries.length > 0) {
             const summaryTexts: string[] = [];

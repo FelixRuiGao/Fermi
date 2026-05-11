@@ -102,8 +102,8 @@ describe("P4 shell governance", () => {
   });
 });
 
-describe("P6 summarize behavior", () => {
-  it("summarize succeeds and hint state is preserved until next API call", () => {
+describe("P6 summarize_context behavior", () => {
+  it("summarize_context succeeds and hint state is preserved until next API call", () => {
     const projectRoot = makeTempDir("fermi-p6-distill-hint-");
     try {
       const session = makeSession(projectRoot);
@@ -113,15 +113,15 @@ describe("P6 summarize behavior", () => {
         createAssistantText("asst-001", 1, 0, "hello", "hello", "seed1"),
       );
 
-      const success = (session as any)._execSummarizeTool({
+      const success = (session as any)._execSummarizeContextTool({
         operations: [{ from: "seed1", to: "seed1", content: "compressed" }],
       }) as ToolResult;
       expect(success.content).toContain("1 succeeded");
-      // Hint state is NOT reset by summarize itself —
+      // Hint state is NOT reset by summarize_context itself —
       // it's updated by _updateHintStateAfterApiCall based on actual inputTokens
       expect((session as any)._hintState).toBe("level1_sent");
 
-      const fail = (session as any)._execSummarizeTool({
+      const fail = (session as any)._execSummarizeContextTool({
         operations: [{ from: "missing", to: "missing", content: "will fail" }],
       }) as ToolResult;
       expect(fail.content).toContain("0 succeeded");

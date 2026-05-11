@@ -4,7 +4,7 @@ export interface SessionCapabilities {
   includeCheckStatusTool: boolean;
   includeAwaitEventTool: boolean;
   includeShowContextTool: boolean;
-  includeSummarizeTool: boolean;
+  includeSummarizeContextTool: boolean;
   includeAskTool: boolean;
   includeSkillTools: boolean;
 }
@@ -15,7 +15,7 @@ export const ROOT_SESSION_CAPABILITIES: SessionCapabilities = {
   includeCheckStatusTool: true,
   includeAwaitEventTool: true,
   includeShowContextTool: true,
-  includeSummarizeTool: true,
+  includeSummarizeContextTool: true,
   includeAskTool: true,
   includeSkillTools: true,
 };
@@ -26,7 +26,7 @@ export const CHILD_SESSION_CAPABILITIES: SessionCapabilities = {
   includeCheckStatusTool: false,
   includeAwaitEventTool: true,
   includeShowContextTool: false,
-  includeSummarizeTool: false,
+  includeSummarizeContextTool: false,
   includeAskTool: false,
   includeSkillTools: false,
 };

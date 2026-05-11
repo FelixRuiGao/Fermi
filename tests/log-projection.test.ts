@@ -136,18 +136,21 @@ describe("projectToTuiEntries", () => {
     ]);
   });
 
-  it("keeps summarized entries visible in TUI and hides summary entries", () => {
+  it("keeps both summarized originals and the summary visible in TUI (append-only history)", () => {
     const entries = basicLog();
     // Summary covers contextIds "c1" and "c2" (the user and assistant entries).
-    // The coverage system hides entries whose contextId is in coveredContextIds,
-    // AND hides the summary itself if its own contextId is covered by a later summary.
+    // The TUI shows the full history — only the API projection hides the
+    // covered originals. The user can still scroll back to verify what was
+    // captured by the summary.
     const summary = createSummary("sum-001", 1, "Summary of conversation", "Summary of conversation", "c3", ["c1", "c2"], 1);
     entries.push(summary);
 
     const tui = projectToTuiEntries(entries);
-    // Covered entries (c1, c2) are hidden; summary (c3) is visible
-    expect(tui).toHaveLength(1);
-    expect(tui[0]).toMatchObject({ kind: "user", text: "Summary of conversation", id: "sum-001" });
+    // Original user + assistant + summary entry are all visible.
+    expect(tui).toHaveLength(3);
+    expect(tui[0]).toMatchObject({ kind: "user", text: "Hello", id: "user-001" });
+    expect(tui[1]).toMatchObject({ kind: "assistant", text: "Hi there!", id: "asst-001" });
+    expect(tui[2]).toMatchObject({ kind: "user", text: "Summary of conversation", id: "sum-001" });
   });
 
   it("skips discarded entries", () => {

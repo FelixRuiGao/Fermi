@@ -28,10 +28,11 @@ describe("template type validation", () => {
       "utf-8",
     );
 
-    expect(toolsPrompt).toContain("Self-initiated");
     expect(toolsPrompt).toContain("Do **not** summarize context groups that contain user messages.");
-    expect(toolsPrompt).toContain("<summarize-request>");
-    expect(toolsPrompt).toContain("This is the only mode where summarizing user messages is allowed.");
+    expect(toolsPrompt).toContain("Do not summarize ranges that contain user messages on your own initiative.");
+    expect(toolsPrompt).not.toContain("<summarize-request>");
+    expect(toolsPrompt).not.toContain("user-requested mode");
+    expect(toolsPrompt).toContain("`summarize_context`");
   });
 
   it("rejects templates without type: agent", () => {

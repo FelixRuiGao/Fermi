@@ -23,11 +23,13 @@ The agent has two tools for fine-grained context control:
 
 Displays a context map showing all context groups with their sizes and types. Also activates inline annotations so the agent can see exactly what each context ID covers.
 
-#### `summarize`
+#### `summarize_context`
 
-Operates on groups of spatially contiguous context IDs. For each group, the agent writes a summary that preserves decisions, key facts, code references, and unresolved issues — then the original content is replaced by the summary.
+Operates on groups of spatially contiguous context IDs. For each group, the agent writes a distilled summary that preserves decisions, key facts, code references, and unresolved issues — then the original content is replaced by the summary.
 
 The key property: this is **append-only**. Original content is never deleted — summaries are appended, and the system dynamically determines what is visible based on what has been summarized. This means summarization is safe and reversible at the system level.
+
+`summarize_context` targets specific ranges. For whole-window reset when the context limit is reached, the system uses auto-compact (a separate mechanism, also exposed as the `/compact` user command).
 
 ### 3. Auto-Compact
 
@@ -46,7 +48,7 @@ Before-turn compact is interruptible: pressing Ctrl+C cancels the compact and pr
 
 ## User vs. Agent Summarization
 
-| | `/summarize` (user) | `summarize` tool (agent) |
+| | `/summarize` (user) | `summarize_context` tool (agent) |
 |---|---|---|
 | **Trigger** | User runs the slash command | Agent decides autonomously (or prompted by hints) |
 | **Selection** | Interactive picker: choose start/end turn range | Agent picks context IDs after inspecting the map |

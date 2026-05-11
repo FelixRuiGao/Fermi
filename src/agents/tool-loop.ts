@@ -155,7 +155,7 @@ export function generateToolCallDisplay(
           : `${toolName} ${shell}`;
       }
       return toolArgs["seconds"] !== undefined ? `${toolName} ${String(toolArgs["seconds"])}s` : toolName;
-    case "summarize":
+    case "summarize_context":
       return opsCount ? `${toolName} ${opsCount}` : toolName;
     case "skill":
       return name ? `${toolName} ${name}` : toolName;

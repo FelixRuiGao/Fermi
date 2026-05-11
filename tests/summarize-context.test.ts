@@ -11,22 +11,22 @@ import {
   createUserMessage,
   type LogEntry,
 } from "../src/log-entry.js";
-import { execSummarizeContextOnLog, truncateSummarizeContent } from "../src/summarize-context.js";
+import { execSummarizeContextOnLog, truncateSummarizeContextContent } from "../src/summarize-context.js";
 
 function allocIds(prefix: string): () => string {
   let i = 0;
   return () => `${prefix}${++i}`;
 }
 
-describe("truncateSummarizeContent", () => {
+describe("truncateSummarizeContextContent", () => {
   it("keeps short content unchanged", () => {
     const text = "short content";
-    expect(truncateSummarizeContent(text)).toBe(text);
+    expect(truncateSummarizeContextContent(text)).toBe(text);
   });
 
   it("truncates long content at space boundary and includes context reference", () => {
     const text = "A".repeat(95) + " word " + "B".repeat(80);
-    const out = truncateSummarizeContent(text, "ctx9");
+    const out = truncateSummarizeContextContent(text, "ctx9");
     expect(out).toContain("truncated");
     expect(out).toContain("context_id ctx9");
     expect(out.length).toBeLessThan(text.length);
@@ -34,7 +34,7 @@ describe("truncateSummarizeContent", () => {
 
   it("hard-truncates at 120 chars when no space found", () => {
     const text = "A".repeat(200);
-    const out = truncateSummarizeContent(text);
+    const out = truncateSummarizeContextContent(text);
     // 120 chars of A + suffix
     expect(out.startsWith("A".repeat(120))).toBe(true);
     expect(out).toContain("truncated");
@@ -101,7 +101,7 @@ describe("execSummarizeContextOnLog", () => {
     );
 
     expect(result.output).toContain("0 succeeded");
-    expect(result.output).toContain("cannot cover user messages");
+    expect(result.output).toContain("contains user messages");
   });
 
   it("skips compact_context entries (not indexable by context ID)", () => {
@@ -125,7 +125,7 @@ describe("execSummarizeContextOnLog", () => {
     expect(result.output).toContain("not found");
   });
 
-  it("summarizes a tool round sharing a single context ID", () => {
+  it("compresses a tool round sharing a single context ID", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
       createAssistantText("asst-001", 1, 0, "Checking", "Checking", "c7"),
@@ -267,7 +267,7 @@ describe("execSummarizeContextOnLog", () => {
     expect(result.output).toContain("already referenced by another operation");
   });
 
-  it("supports re-summarization with depth tracking", () => {
+  it("supports re-compression with depth tracking", () => {
     const entries: LogEntry[] = [
       createSystemPrompt("sys-001", "prompt"),
       createAssistantText("asst-001", 1, 0, "hello", "hello", "c1"),

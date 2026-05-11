@@ -186,7 +186,7 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
     },
     inlineResult: false,
   },
-  summarize: {
+  summarize_context: {
     category: "observe",
     displayName: "Summarize",
     text: (args) => {
