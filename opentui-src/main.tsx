@@ -271,6 +271,15 @@ export async function launchTui(): Promise<void> {
         themePref: nextTheme.pref,
         themeMode: nextTheme.mode,
       });
+      // Unmount the previous React tree before re-rendering. `@opentui/react`'s
+      // `createRoot.render()` allocates a fresh container on every call instead
+      // of reusing the existing one, so without an explicit unmount the old
+      // tree is orphaned: its useEffect cleanups never fire, useKeyboard
+      // listeners stay registered, and Renderable instances leak. unmount()
+      // calls `updateContainer(null, ...)` + `flushSyncWork()` which runs all
+      // cleanups synchronously and lets the host config's
+      // `detachDeletedInstance` destroy the orphaned Renderable subtree.
+      root.unmount();
       renderRuntime();
     } catch (err) {
       const message = formatError(err);
