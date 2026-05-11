@@ -860,7 +860,10 @@ export const KILL_SHELL_TOOL: ToolDef = {
   name: "kill_shell",
   description:
     "Terminate one or more tracked background shells. " +
-    "Use when a watcher or dev server is no longer needed, or a command is stuck.",
+    "The signal is sent to the entire process group so children (npm → vite, etc.) are killed in full. " +
+    "After kill the shell entry stays so you can read its final log via bash_output, but the process is gone — " +
+    "killed shells do not auto-restart, and HMR / file-watching stops. " +
+    "You can reuse the same id in a new bash_background once the prior shell has stopped.",
   parameters: {
     type: "object",
     properties: {

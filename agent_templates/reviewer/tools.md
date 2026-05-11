@@ -111,7 +111,9 @@ Read output from a tracked background shell.
 
 `kill_shell(ids, signal?)`
 
-Terminate one or more tracked background shells. Default signal is `TERM`.
+Terminate one or more tracked background shells. Default signal is `TERM`. The signal goes to the **entire process group** so tools that fork (`npm run dev`, `vite`, `cargo watch`) are killed in full.
+
+After kill, the entry stays for log inspection via `bash_output`, but the process is gone — no HMR, no auto-restart. You can reuse the same `id` in a new `bash_background` once the prior shell has stopped.
 
 # Tool: time
 
