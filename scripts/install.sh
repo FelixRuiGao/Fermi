@@ -19,14 +19,14 @@ asset=""
 case "$os" in
   Darwin)
     if [ "$arch_label" != "arm64" ]; then
-      echo "fermi: macOS x64 is not published in this release; only Apple Silicon (arm64) is supported." >&2
+      echo "fermi: this script does not publish a macOS x64 build. Run on Apple Silicon, or build from source: https://github.com/${REPO}#building-from-source" >&2
       exit 1
     fi
     asset="fermi-darwin-arm64.tar.gz"
     ;;
   Linux)
     if [ "$arch_label" != "x64" ]; then
-      echo "fermi: Linux arm64 is not published in this release; only Linux x64 is supported." >&2
+      echo "fermi: this script does not publish a Linux $arch_label build. Run on x86_64, or build from source: https://github.com/${REPO}#building-from-source" >&2
       exit 1
     fi
     asset="fermi-linux-x64.tar.gz"

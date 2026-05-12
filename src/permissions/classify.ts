@@ -14,6 +14,7 @@ import path from "node:path";
 import type { InvocationAssessment, PermissionClass } from "./types.js";
 import type { ParsedBashCommand, ParsedBashSegment } from "./bash/types.js";
 import { parseTrackableBashMutation } from "../tools/basic.js";
+import { osCapabilities } from "../platform/index.js";
 import { resolveCdContextParsed } from "./cd-context.js";
 
 // ------------------------------------------------------------------
@@ -86,6 +87,14 @@ const BASH_SAFE_COMMANDS = new Set([
 const BASH_REVERSIBLE_COMMANDS = new Set(["mkdir"]);
 const BASH_DYNAMIC_REVERSIBLE = new Set(["cp", "mv"]);
 
+// POSIX-shared danger commands. Case-sensitive lookup (Unix
+// convention — `RM` is genuinely a different file from `rm` and we
+// don't want to flag legitimate scripts named with caps).
+//
+// Platform-specific danger commands (Windows registry/disk/network
+// tools) live in osCapabilities.platformSpecificDangerCommands and
+// are matched case-insensitively because Windows file lookup is
+// case-insensitive (REG QUERY → reg.exe).
 const BASH_DANGER_COMMANDS = new Set([
   "rm", "rmdir",
   "sudo", "su", "doas",
@@ -99,6 +108,13 @@ const BASH_DANGER_COMMANDS = new Set([
   "passwd",
   "crontab",
 ]);
+
+function isDangerCommand(name: string): boolean {
+  if (BASH_DANGER_COMMANDS.has(name)) return true;
+  // Windows-specific names: lowercased compare so `REG`, `Reg`, `reg`
+  // all flag (Git Bash uses Win32 case-insensitive file lookup).
+  return osCapabilities.platformSpecificDangerCommands.has(name.toLowerCase());
+}
 
 const BASH_POTENT_COMMANDS = new Set([
   "touch", "ln",
@@ -397,7 +413,7 @@ function classifyParsedCommand(cmd: ParsedBashCommand): PermissionClass {
     return hasDangerous ? "write_potent" : "read";
   }
 
-  if (BASH_DANGER_COMMANDS.has(name)) return "write_danger";
+  if (isDangerCommand(name)) return "write_danger";
   if (BASH_REVERSIBLE_COMMANDS.has(name)) return "write_reversible";
   if (BASH_DYNAMIC_REVERSIBLE.has(name)) return "write_reversible";
   if (BASH_SAFE_COMMANDS.has(name)) return "read";

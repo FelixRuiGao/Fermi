@@ -11,6 +11,7 @@
 
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
+import { toPosixPath } from "../security/path.js";
 import type { GateAdvisor, GateDecision } from "../tool-runtime.js";
 import type { ToolPreflightContext } from "../agents/tool-loop.js";
 import { classifyTool, classifyToolAsync } from "./classify.js";
@@ -167,14 +168,18 @@ export class PermissionAdvisor implements GateAdvisor {
     const isWrite = ctx.toolName === "write_file" || ctx.toolName === "edit_file";
     const accessKind = isWrite ? "write_reversible" as const : "read" as const;
 
-    // Compute directory prefix: directories use themselves, files use parent
+    // Compute directory prefix: directories use themselves, files use
+    // parent. Normalize to forward-slash form so rules created on
+    // Windows (where path.resolve returns `\`-separated paths) compare
+    // correctly against subsequent invocations via the same matcher.
+    const subject = toPosixPath(resolvedPath);
     let dirPrefix: string;
-    if (resolvedPath.endsWith("/")) {
-      dirPrefix = resolvedPath;
+    if (subject.endsWith("/")) {
+      dirPrefix = subject;
     } else {
       let isDir = false;
       try { isDir = existsSync(resolvedPath) && statSync(resolvedPath).isDirectory(); } catch { /* ignore */ }
-      dirPrefix = isDir ? resolvedPath + "/" : path.dirname(resolvedPath) + "/";
+      dirPrefix = isDir ? subject + "/" : toPosixPath(path.dirname(resolvedPath)) + "/";
     }
 
     // Check existing external path rules

@@ -114,6 +114,42 @@ export interface BinaryAssetProvider {
 }
 
 // --------------------------------------------------------------------
+// OS capabilities — coarse-grained yes/no flags about what the host OS
+// implements. Used by business code to skip operations that don't
+// apply on the current platform (e.g. POSIX chmod on Windows). Keeping
+// these as boolean flags rather than `process.platform` checks lets
+// business code stay platform-agnostic.
+// --------------------------------------------------------------------
+
+export interface OsCapabilities {
+  /**
+   * True on macOS and Linux, false on Windows. POSIX permission bits
+   * (chmod, the 0o600 / 0o755 model) only have meaningful semantics
+   * on POSIX filesystems. Use this to skip `chmodSync` calls rather
+   * than branching on `process.platform === "win32"`.
+   */
+  readonly supportsPosixPermissions: boolean;
+
+  /**
+   * Names of dangerous executables that exist primarily on this
+   * platform. Used by the bash command classifier to flag commands
+   * the LLM might invoke through the shell.
+   *
+   * Stored lowercased; the classifier MUST compare against
+   * `name.toLowerCase()`. Windows file lookup is case-insensitive,
+   * so `REG QUERY ...` from Git Bash resolves to the same `reg.exe`
+   * as `reg query ...`; a case-sensitive lookup would let the LLM
+   * trivially bypass the danger gate by varying casing.
+   *
+   * POSIX-shared danger commands (rm, sudo, chmod, ...) stay in
+   * `classify.ts` with case-sensitive matching — Unix convention is
+   * case-sensitive paths, and a file genuinely named `RM` should not
+   * collide with `rm`.
+   */
+  readonly platformSpecificDangerCommands: ReadonlySet<string>;
+}
+
+// --------------------------------------------------------------------
 // Aggregate
 // --------------------------------------------------------------------
 
@@ -122,4 +158,5 @@ export interface PlatformProviders {
   clipboard: ClipboardProvider;
   browser: BrowserProvider;
   binaryAsset: BinaryAssetProvider;
+  osCapabilities: OsCapabilities;
 }

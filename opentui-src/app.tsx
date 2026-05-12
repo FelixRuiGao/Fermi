@@ -197,18 +197,14 @@ function isFileOverlayEligible(value: string, cursorOffset: number): boolean {
 }
 
 async function copyToClipboard(text: string, rendererCopy: (text: string) => boolean): Promise<boolean> {
-  // Try the platform-native tool first (pbcopy / wl-copy / xclip).
-  // The platform layer also internally falls back to OSC 52 written
-  // directly to stderr. As a last resort we call the renderer's own
-  // OSC 52 path, which goes through the active OpenTUI terminal
-  // handle and may succeed in some terminals where the raw stderr
-  // write doesn't.
-  try {
-    const ok = await clipboard.writeText(text);
-    if (ok) return true;
-  } catch {
-    // fall through to renderer copy
-  }
+  // Try the platform-native tool first (pbcopy / wl-copy / xclip /
+  // clip.exe). The platform layer also internally falls back to OSC
+  // 52 written directly to stderr. As a last resort we call the
+  // renderer's own OSC 52 path, which goes through the active
+  // OpenTUI terminal handle and may succeed in some terminals where
+  // the raw stderr write doesn't.
+  const ok = await clipboard.writeText(text);
+  if (ok) return true;
   return rendererCopy(text);
 }
 

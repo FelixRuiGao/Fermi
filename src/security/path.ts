@@ -11,6 +11,23 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
+/**
+ * Normalize a filesystem path to forward-slash form so prefix matches
+ * work the same way on Windows (where `path.resolve` returns `\`) and
+ * on POSIX (where it returns `/`). Idempotent on POSIX. Used by the
+ * permission system to compare external-path rules against resolved
+ * paths without leaking OS-specific separator handling into callers.
+ *
+ * Note: this does NOT lower-case the path. Windows file systems are
+ * usually case-insensitive but `path.resolve` preserves case, so a
+ * rule stored for `C:\Users\Foo` will not match `c:\users\foo`. That
+ * gap is documented as a known Windows limitation rather than papered
+ * over here.
+ */
+export function toPosixPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 export type PathAccessKind =
   | "read"
   | "write"

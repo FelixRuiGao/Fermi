@@ -31,9 +31,16 @@ export function isRemoteSession(): boolean {
 }
 
 /**
- * Check whether an executable exists on $PATH. Avoids spawning a
- * shell — uses `command -v` / `where` directly. Cached by name for
- * the lifetime of the process since $PATH rarely changes at runtime.
+ * Check whether an executable exists on $PATH. Cached by name for the
+ * lifetime of the process since $PATH rarely changes at runtime.
+ *
+ * Why this uses `/bin/sh` rather than the resolved bash from
+ * `posix.ts`: this helper is a low-level dependency of every shell
+ * provider (called from the linux clipboard probe at module load,
+ * for instance), so it can't depend on a higher-level resolved
+ * shell without circularity. `command -v` is a POSIX shell builtin
+ * that works the same in sh, dash, and bash, and `sh` exists on
+ * every POSIX install without requiring a separate probe.
  */
 const _commandExistsCache = new Map<string, boolean>();
 

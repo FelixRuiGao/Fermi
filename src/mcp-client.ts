@@ -17,6 +17,7 @@
 import type { MCPServerConfig } from "./config.js";
 import { ToolDef, ToolResult } from "./providers/base.js";
 import { VERSION } from "./version.js";
+import { osCapabilities } from "./platform/index.js";
 import { chmodSync, existsSync, statSync } from "node:fs";
 import * as path from "node:path";
 
@@ -95,7 +96,7 @@ export function ensureCredentialFilePermissions(
   serverName: string,
   env: Record<string, string>,
 ): void {
-  if (process.platform === "win32") return;
+  if (!osCapabilities.supportsPosixPermissions) return;
   for (const [key, rawValue] of Object.entries(env)) {
     if (!isCredentialFileEnvKey(key)) continue;
     if (!looksLikePathValue(rawValue)) continue;

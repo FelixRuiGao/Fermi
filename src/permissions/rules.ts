@@ -18,6 +18,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getFermiHomeDir } from "../home-path.js";
+import { toPosixPath } from "../security/path.js";
 import type { PermissionRule, PermissionRuleFile, InvocationAssessment, ExternalPathRule } from "./types.js";
 
 // ------------------------------------------------------------------
@@ -76,9 +77,25 @@ export class PermissionRuleStore {
   // -- Mutations -------------------------------------------------------
 
   addRule(rule: Omit<PermissionRule, "id" | "createdAt">): PermissionRule {
+    // Defensive normalization: store external_path prefixes in
+    // forward-slash form regardless of the caller's input. advisor.ts
+    // already normalizes before calling us, but normalizing here too
+    // protects any future caller (manual config edit, scripted rule
+    // creation) from mixing backslashes and forward slashes on disk.
+    let normalizedRule: Omit<PermissionRule, "id" | "createdAt"> = rule;
+    if (rule.type === "external_path") {
+      // Inside this branch `rule` is a discriminated narrow on the
+      // union, but Omit<> drops the discriminant correlation for
+      // TypeScript's inference. Cast both ends explicitly.
+      const external = rule as Omit<ExternalPathRule, "id" | "createdAt">;
+      normalizedRule = {
+        ...external,
+        pathPrefix: toPosixPath(external.pathPrefix),
+      } as Omit<PermissionRule, "id" | "createdAt">;
+    }
     const full = {
-      ...rule,
-      id: this._generateId(rule.scope),
+      ...normalizedRule,
+      id: this._generateId(normalizedRule.scope),
       createdAt: Date.now(),
     } as PermissionRule;
 
@@ -131,14 +148,21 @@ export class PermissionRuleStore {
     resolvedPath: string,
     accessKind: "read" | "write_reversible",
   ): ExternalPathRule | null {
+    // Both rule.pathPrefix and resolvedPath are normalized to
+    // forward-slash form here. addRule normalizes on write too, so
+    // freshly stored rules already use `/`; this normalization on
+    // read covers any pathPrefix that snuck in pre-D27 or via a
+    // direct file edit.
+    const subject = toPosixPath(resolvedPath);
     const allRules = this._getEffectiveRules();
     for (const rule of allRules) {
       if (rule.type !== "external_path") continue;
       if (rule.action !== "allow") continue;
       if (accessKind === "write_reversible" && rule.accessKind !== "write_reversible") continue;
-      // Normalize: ensure prefix ends with / to prevent /tmp/foo matching /tmp/foobar
-      const prefix = rule.pathPrefix.endsWith("/") ? rule.pathPrefix : rule.pathPrefix + "/";
-      if (resolvedPath.startsWith(prefix) || resolvedPath === prefix.slice(0, -1)) return rule;
+      const normalized = toPosixPath(rule.pathPrefix);
+      // Ensure prefix ends with / to prevent /tmp/foo matching /tmp/foobar
+      const prefix = normalized.endsWith("/") ? normalized : normalized + "/";
+      if (subject.startsWith(prefix) || subject === prefix.slice(0, -1)) return rule;
     }
     return null;
   }
@@ -150,7 +174,8 @@ export class PermissionRuleStore {
     for (const rule of allRules) {
       if (rule.type !== "external_path") continue;
       if (rule.action !== "allow") continue;
-      prefixes.push(rule.pathPrefix.endsWith("/") ? rule.pathPrefix : rule.pathPrefix + "/");
+      const normalized = toPosixPath(rule.pathPrefix);
+      prefixes.push(normalized.endsWith("/") ? normalized : normalized + "/");
     }
     return prefixes;
   }

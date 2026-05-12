@@ -125,6 +125,11 @@ const IMAGE_MIME_TYPES: { mime: string; mediaType: ClipboardImageMediaType }[] =
 ];
 
 export const linuxClipboard: ClipboardProvider = {
+  // Reflects the primary mechanism chosen at module load. Note that
+  // a single writeText() call may transparently fall through to OSC 52
+  // when the primary tool returns a non-zero status, so the actual
+  // mechanism used for an individual call may differ from this id.
+  // Treated as diagnostic context, not a per-call accuracy guarantee.
   id: tooling ? tooling.id : "linux-osc52-fallback",
 
   async writeText(text: string): Promise<boolean> {
