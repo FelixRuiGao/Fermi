@@ -7,17 +7,36 @@ INSTALL_DIR="${FERMI_INSTALL_DIR:-$HOME/.fermi/bin}"
 os="$(uname -s)"
 arch="$(uname -m)"
 
-if [ "$os" != "Darwin" ]; then
-  echo "fermi: only macOS is supported in this release (got $os)" >&2
-  exit 1
-fi
-
+# Normalize arch labels to what we publish.
 case "$arch" in
-  arm64|aarch64) ;;
-  *) echo "fermi: only Apple Silicon (arm64) is supported (got $arch)" >&2; exit 1 ;;
+  arm64|aarch64) arch_label="arm64" ;;
+  x86_64|amd64)  arch_label="x64" ;;
+  *) echo "fermi: unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 
-asset="fermi-darwin-arm64.tar.gz"
+# Map OS + arch to the published tarball name.
+asset=""
+case "$os" in
+  Darwin)
+    if [ "$arch_label" != "arm64" ]; then
+      echo "fermi: macOS x64 is not published in this release; only Apple Silicon (arm64) is supported." >&2
+      exit 1
+    fi
+    asset="fermi-darwin-arm64.tar.gz"
+    ;;
+  Linux)
+    if [ "$arch_label" != "x64" ]; then
+      echo "fermi: Linux arm64 is not published in this release; only Linux x64 is supported." >&2
+      exit 1
+    fi
+    asset="fermi-linux-x64.tar.gz"
+    ;;
+  *)
+    echo "fermi: unsupported OS: $os (this script supports Darwin and Linux; Windows users should download fermi-win32-x64.tar.gz directly from Releases)" >&2
+    exit 1
+    ;;
+esac
+
 if [ "${FERMI_VERSION:-}" ]; then
   url="https://github.com/${REPO}/releases/download/${FERMI_VERSION}/${asset}"
 else
@@ -44,9 +63,11 @@ mkdir -p "$INSTALL_DIR"
 tar -xzf "$tmp/$asset" -C "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/fermi" 2>/dev/null || true
 
-# Remove the macOS quarantine attribute so Gatekeeper doesn't block the
-# unsigned binary on first launch.
-xattr -dr com.apple.quarantine "$INSTALL_DIR/fermi" 2>/dev/null || true
+# macOS only: strip Gatekeeper quarantine off the unsigned binary so
+# it can launch without a manual right-click → Open dance.
+if [ "$os" = "Darwin" ]; then
+  xattr -dr com.apple.quarantine "$INSTALL_DIR/fermi" 2>/dev/null || true
+fi
 
 path_line='export PATH="$HOME/.fermi/bin:$PATH"'
 profile=""

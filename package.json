@@ -74,7 +74,9 @@
     "vitepress": "^1.6.4"
   },
   "optionalDependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0"
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@opentui/core-linux-x64": "0.2.1",
+    "@opentui/core-win32-x64": "0.2.1"
   },
   "overrides": {
     "@opentui/core": "workspace:*"

@@ -1,22 +1,28 @@
 /**
  * Image compression / resizing.
  *
- * Uses macOS `sips` (scriptable image processing system) — no npm dependencies.
- * Constraints:
+ * Implemented with `jimp` (pure JS, cross-platform). Same constraints
+ * as the previous sips-based implementation:
  *   - Long edge ≤ 2000 px
  *   - File size  ≤ 4.5 MB
+ *
+ * Behaviour:
+ *   1. Decode the buffer into a Jimp image.
+ *   2. If long edge > 2000 px, downscale preserving aspect ratio.
+ *   3. If the encoded result fits under 4.5 MB, return PNG; otherwise
+ *      progressively re-encode as JPEG with decreasing quality.
+ *   4. Last resort: return the lowest-quality JPEG even if still
+ *      slightly over the limit (matches the prior sips fallback).
  */
 
-import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, extname } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { Jimp } from "jimp";
 
 const MAX_LONG_EDGE = 2000;
 const MAX_SIZE_BYTES = 4.5 * 1024 * 1024; // 4.5 MB
+
+// Quality ladder used when the PNG output is too large. Each value
+// is the JPEG quality passed to `getBuffer("image/jpeg", { quality })`.
+const JPEG_QUALITY_LADDER = [90, 85, 80, 70, 60];
 
 export interface ProcessedImage {
   base64: string;
@@ -26,130 +32,65 @@ export interface ProcessedImage {
   sizeBytes: number;
 }
 
-interface SipsDimensions {
-  width: number;
-  height: number;
-}
-
-async function sipsGetDimensions(filePath: string): Promise<SipsDimensions> {
-  const { stdout } = await execFileAsync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", filePath], {
-    timeout: 5000,
-  });
-  const wMatch = stdout.match(/pixelWidth:\s*(\d+)/);
-  const hMatch = stdout.match(/pixelHeight:\s*(\d+)/);
-  return {
-    width: wMatch ? parseInt(wMatch[1], 10) : 0,
-    height: hMatch ? parseInt(hMatch[1], 10) : 0,
-  };
-}
-
-async function sipsResize(filePath: string, outPath: string, maxEdge: number): Promise<void> {
-  await execFileAsync("sips", [
-    "--resampleHeightWidthMax", String(maxEdge),
-    filePath,
-    "--out", outPath,
-  ], { timeout: 10000 });
-}
-
-async function sipsToJpeg(filePath: string, outPath: string, quality: number): Promise<void> {
-  await execFileAsync("sips", [
-    "-s", "format", "jpeg",
-    "-s", "formatOptions", String(Math.round(quality * 100)),
-    filePath,
-    "--out", outPath,
-  ], { timeout: 10000 });
-}
-
 /**
  * Process an image buffer: resize if too large, compress if too heavy.
- *
- * macOS only — throws on other platforms.
+ * Cross-platform — runs on macOS, Linux, and Windows without external
+ * binaries.
  */
 export async function processImage(
   inputBuffer: Buffer,
-  inputMediaType: string,
+  _inputMediaType: string,
 ): Promise<ProcessedImage> {
-  if (process.platform !== "darwin") {
-    throw new Error("Image processing requires macOS (sips).");
+  const image = await Jimp.fromBuffer(inputBuffer);
+
+  const longEdge = Math.max(image.bitmap.width, image.bitmap.height);
+  if (longEdge > MAX_LONG_EDGE) {
+    if (image.bitmap.width >= image.bitmap.height) {
+      image.resize({ w: MAX_LONG_EDGE });
+    } else {
+      image.resize({ h: MAX_LONG_EDGE });
+    }
   }
 
-  const ext = inputMediaType === "image/jpeg" ? ".jpg"
-    : inputMediaType === "image/tiff" ? ".tiff"
-    : ".png";
+  const width = image.bitmap.width;
+  const height = image.bitmap.height;
 
-  const tmpBase = join(tmpdir(), `la-imgproc-${process.pid}-${Date.now()}`);
-  const srcPath = `${tmpBase}-src${ext}`;
-  const resizedPath = `${tmpBase}-resized.png`;
-  const jpegPath = `${tmpBase}-compressed.jpg`;
+  // 1. Try PNG first — lossless, fits most attachments.
+  const pngBuf = await image.getBuffer("image/png");
+  if (pngBuf.length <= MAX_SIZE_BYTES) {
+    return {
+      base64: pngBuf.toString("base64"),
+      mediaType: "image/png",
+      width,
+      height,
+      sizeBytes: pngBuf.length,
+    };
+  }
 
-  const tempFiles = [srcPath, resizedPath, jpegPath];
-
-  try {
-    writeFileSync(srcPath, inputBuffer);
-
-    // 1. Get dimensions
-    const dims = await sipsGetDimensions(srcPath);
-    const longEdge = Math.max(dims.width, dims.height);
-
-    // 2. Resize if long edge exceeds limit
-    let currentPath = srcPath;
-    let currentWidth = dims.width;
-    let currentHeight = dims.height;
-
-    if (longEdge > MAX_LONG_EDGE) {
-      await sipsResize(srcPath, resizedPath, MAX_LONG_EDGE);
-      currentPath = resizedPath;
-      const newDims = await sipsGetDimensions(resizedPath);
-      currentWidth = newDims.width;
-      currentHeight = newDims.height;
-    }
-
-    // 3. Check size — if already within limits, return as PNG
-    let currentBuffer = readFileSync(currentPath);
-    if (currentBuffer.length <= MAX_SIZE_BYTES) {
-      const mediaType = currentPath.endsWith(".jpg") ? "image/jpeg" as const : "image/png" as const;
+  // 2. PNG too large — re-encode as JPEG with decreasing quality.
+  let lastJpegBuf: Buffer | null = null;
+  for (const quality of JPEG_QUALITY_LADDER) {
+    const buf = await image.getBuffer("image/jpeg", { quality });
+    lastJpegBuf = buf;
+    if (buf.length <= MAX_SIZE_BYTES) {
       return {
-        base64: currentBuffer.toString("base64"),
-        mediaType,
-        width: currentWidth,
-        height: currentHeight,
-        sizeBytes: currentBuffer.length,
+        base64: buf.toString("base64"),
+        mediaType: "image/jpeg",
+        width,
+        height,
+        sizeBytes: buf.length,
       };
     }
-
-    // 4. Convert to JPEG with decreasing quality until under size limit
-    const qualities = [0.90, 0.85, 0.80, 0.70, 0.60];
-    for (const q of qualities) {
-      await sipsToJpeg(currentPath, jpegPath, q);
-      currentBuffer = readFileSync(jpegPath);
-      if (currentBuffer.length <= MAX_SIZE_BYTES) {
-        const jpegDims = await sipsGetDimensions(jpegPath);
-        return {
-          base64: currentBuffer.toString("base64"),
-          mediaType: "image/jpeg",
-          width: jpegDims.width,
-          height: jpegDims.height,
-          sizeBytes: currentBuffer.length,
-        };
-      }
-    }
-
-    // 5. Last resort: return the lowest quality JPEG even if over limit
-    const finalDims = await sipsGetDimensions(jpegPath);
-    return {
-      base64: currentBuffer.toString("base64"),
-      mediaType: "image/jpeg",
-      width: finalDims.width,
-      height: finalDims.height,
-      sizeBytes: currentBuffer.length,
-    };
-  } finally {
-    for (const f of tempFiles) {
-      try {
-        if (existsSync(f)) unlinkSync(f);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
   }
+
+  // 3. Even the lowest quality is over the limit. Return it anyway
+  //    (matches the prior sips-based behaviour).
+  const finalBuf = lastJpegBuf ?? pngBuf;
+  return {
+    base64: finalBuf.toString("base64"),
+    mediaType: lastJpegBuf ? "image/jpeg" : "image/png",
+    width,
+    height,
+    sizeBytes: finalBuf.length,
+  };
 }

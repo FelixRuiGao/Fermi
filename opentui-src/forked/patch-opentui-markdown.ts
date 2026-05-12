@@ -9,11 +9,11 @@ import {
 } from "@opentui/core";
 import type { ColorInput, TextChunk } from "@opentui/core";
 import type { MarkedToken, Tokens } from "marked";
-import { execSync } from "node:child_process";
 import {
   isFermiMarkdownPatchDisabled,
   writeFermiOpenTuiDiag,
 } from "./core/lib/diagnostic.js";
+import { clipboard } from "../../src/platform/index.js";
 import type { DisplayTheme } from "../display/theme/types.js";
 import { isShikiReady, setShikiTheme, shikiHighlightToChunks } from "./shiki-highlighter.js";
 
@@ -359,17 +359,15 @@ if (isFermiMarkdownPatchDisabled()) {
     wrapper.onMouseDown = () => {
       const raw = wrapper[CODE_CONTENT];
       if (!raw) return;
-      try {
-        execSync("pbcopy", { input: raw, timeout: 2000 });
+      void clipboard.writeText(raw).then((ok) => {
+        if (!ok) return;
         copyText.content = "copied!";
         copyText.fg = currentMarkdownTheme.codeCopyFlash;
         setTimeout(() => {
           copyText.content = "copy";
           copyText.fg = currentMarkdownTheme.codeCopyFg;
         }, 1500);
-      } catch {
-        // ignore
-      }
+      });
     };
 
     return wrapper;

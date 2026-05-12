@@ -107,8 +107,12 @@ export interface CommandContext {
   /** Trigger a manual compact request through the TUI execution pipeline. */
   onManualCompactRequested?: (instruction: string) => void;
 
-  /** Copy text to the system clipboard. Returns true on success. */
-  copyToClipboard?: (text: string) => boolean;
+  /**
+   * Copy text to the system clipboard. Returns true on success.
+   * Implementations may be async (the platform-native tool runs in
+   * a child process), so callers should `await` the return value.
+   */
+  copyToClipboard?: (text: string) => boolean | Promise<boolean>;
 
   /** True while the agent is producing output for the current turn. */
   isProcessing?: () => boolean;
@@ -1717,7 +1721,7 @@ async function cmdCopy(ctx: CommandContext): Promise<void> {
     return;
   }
 
-  const ok = ctx.copyToClipboard(lastText);
+  const ok = await ctx.copyToClipboard(lastText);
   hint(ok ? `Copied agent response (${lastText.length} chars).` : "Copy failed.");
 }
 

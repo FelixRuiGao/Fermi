@@ -3,31 +3,50 @@
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
-// Fermi v0.3.0 ships a single binary for macOS Apple Silicon. Other platforms
-// are not supported in this release.
-if (process.platform !== "darwin" || process.arch !== "arm64") {
-  console.error(`build-binary: unsupported host ${process.platform}-${process.arch}; expected darwin-arm64`);
+// Builds the single-file binary for the host platform. CI runs this
+// once per matrix slot (darwin-arm64 / linux-x64 / win32-x64) so each
+// runner produces its own tarball. Cross-compilation is intentionally
+// not supported here — the bundled native libopentui binary has to
+// match the host, and that's simplest when host == target.
+
+type SupportedHost =
+  | { platform: "darwin"; arch: "arm64" }
+  | { platform: "linux"; arch: "x64" }
+  | { platform: "win32"; arch: "x64" };
+
+function detectHost(): SupportedHost {
+  const { platform, arch } = process;
+  if (platform === "darwin" && arch === "arm64") return { platform, arch };
+  if (platform === "linux" && arch === "x64") return { platform, arch };
+  if (platform === "win32" && arch === "x64") return { platform, arch };
+  console.error(
+    `build-binary: unsupported host ${platform}-${arch}. ` +
+      `Supported: darwin-arm64, linux-x64, win32-x64.`,
+  );
   process.exit(1);
 }
 
+const host = detectHost();
+
 const root = resolve(import.meta.dir, "..");
 const buildDir = join(root, "build");
-const binaryName = "fermi";
+const binaryName = host.platform === "win32" ? "fermi.exe" : "fermi";
 const binaryPath = join(buildDir, binaryName);
 const entrypoint = join(root, "opentui-src", "main.tsx");
 const treeSitterWorkerEntrypoint = join(root, "opentui-src", "forked", "core", "lib", "tree-sitter", "parser.worker.ts");
 const treeSitterWorkerDir = join(buildDir, "tree-sitter");
 const assetDirs = ["agent_templates", "prompts", "skills"] as const;
-const releaseTarball = join(buildDir, "fermi-darwin-arm64.tar.gz");
+const releaseTarball = join(buildDir, `fermi-${host.platform}-${host.arch}.tar.gz`);
+const bunTarget = `bun-${host.platform}-${host.arch}` as const;
 
 function nativeLibName(): string {
-  if (process.platform === "darwin") return "libopentui.dylib";
-  if (process.platform === "win32") return "opentui.dll";
+  if (host.platform === "darwin") return "libopentui.dylib";
+  if (host.platform === "win32") return "opentui.dll";
   return "libopentui.so";
 }
 
 function findNativeLibrary(): string {
-  const packageName = `@opentui/core-${process.platform}-${process.arch}`;
+  const packageName = `@opentui/core-${host.platform}-${host.arch}`;
   const candidates = [
     join(root, "node_modules", packageName, nativeLibName()),
     join(root, "opentui-src", "forked", "core", "zig", "zig-out", "lib", nativeLibName()),
@@ -36,7 +55,7 @@ function findNativeLibrary(): string {
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found) {
     throw new Error(
-      `Could not find ${nativeLibName()} for ${process.platform}-${process.arch}. Checked:\n` +
+      `Could not find ${nativeLibName()} for ${host.platform}-${host.arch}. Checked:\n` +
         candidates.map((candidate) => `  - ${candidate}`).join("\n"),
     );
   }
@@ -63,7 +82,7 @@ await run([
   "bun",
   "build",
   "--compile",
-  "--target=bun-darwin-arm64",
+  `--target=${bunTarget}`,
   "--outfile",
   binaryPath,
   "--external",
@@ -93,7 +112,7 @@ for (const dir of assetDirs) {
 }
 
 const nativeSource = findNativeLibrary();
-const nativeTargetDir = join(buildDir, "native", `${process.platform}-${process.arch}`);
+const nativeTargetDir = join(buildDir, "native", `${host.platform}-${host.arch}`);
 mkdirSync(nativeTargetDir, { recursive: true });
 cpSync(nativeSource, join(nativeTargetDir, basename(nativeSource)), { dereference: true });
 

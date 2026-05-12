@@ -11,7 +11,8 @@ import { existsSync, statSync, readFileSync, readdirSync, realpathSync, writeFil
 import { randomUUID, createHash } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+
+import { shell } from "../platform/index.js";
 
 import type { ToolDef } from "../providers/base.js";
 import { ToolResult } from "../providers/base.js";
@@ -403,31 +404,8 @@ function buildFileMutation(
 const BASH_MAX_TIMEOUT = 600; // 10 minutes hard cap (seconds)
 const BASH_MAX_OUTPUT_CHARS = 200_000; // ~200 KB text cap per stream
 const BASH_TIMEOUT_KILL_SIGNAL: NodeJS.Signals = "SIGKILL";
-const BASH_ENV_ALLOWLIST = new Set([
-  "PATH",
-  "HOME",
-  "SHELL",
-  "TERM",
-  "COLORTERM",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "LC_MESSAGES",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "PWD",
-  "USER",
-  "LOGNAME",
-  "TZ",
-  "NO_COLOR",
-  "FORCE_COLOR",
-  "CI",
-  "XDG_RUNTIME_DIR",
-  "XDG_CONFIG_HOME",
-  "XDG_CACHE_HOME",
-  "XDG_DATA_HOME",
-]);
+// Env filtering and shell selection live in src/platform/shell. The
+// allowlist used to be defined here as BASH_ENV_ALLOWLIST.
 
 // ------------------------------------------------------------------
 // Read limits
@@ -1686,19 +1664,14 @@ async function atomicWriteTextFile(
 // bash
 // ------------------------------------------------------------------
 
+/**
+ * Build the env passed to a bash child. Thin re-export of the
+ * platform-shell provider so callers don't need to import from
+ * `src/platform/`. Kept as a named export for backwards compatibility
+ * with existing imports (BackgroundShellManager).
+ */
 export function buildBashEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value == null) continue;
-    if (BASH_ENV_ALLOWLIST.has(key) || key.startsWith("LC_")) {
-      env[key] = value;
-    }
-  }
-  // Keep a usable PATH even if parent PATH is missing.
-  if (!env["PATH"]) {
-    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin";
-  }
-  return env;
+  return shell.buildChildEnv();
 }
 
 /**
@@ -1767,16 +1740,11 @@ async function toolBash(
   }
 
   return new Promise<string>((resolve) => {
-    // `detached: true` makes the child a process-group leader (pgid == pid),
-    // so we can kill its entire descendant tree with `process.kill(-pid, ...)`.
-    // Without this, grandchildren (e.g. `vite` under `npm run dev`) inherit
-    // stdio pipes from the dead shell, and the `close` event never fires.
-    const child = spawn("sh", ["-c", command], {
-      cwd: runCwd,
-      env: buildBashEnv(),
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: true,
-    });
+    // Shell selection, env filtering, and process-group setup live in
+    // src/platform/shell. `killTree` reaps the whole descendant tree
+    // so long-running grandchildren (e.g. vite under `npm run dev`)
+    // don't leak as orphans.
+    const child = shell.spawn({ command, cwd: runCwd });
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -1788,15 +1756,7 @@ async function toolBash(
     let cause: "close" | "timeout" | "abort" | "error" = "close";
 
     const killGroup = () => {
-      const pid = child.pid;
-      if (pid == null) return;
-      try {
-        process.kill(-pid, BASH_TIMEOUT_KILL_SIGNAL);
-      } catch {
-        // Fall back to killing just the leader if group kill is unavailable
-        // (e.g. process already died, platform edge case, permission issue).
-        try { child.kill(BASH_TIMEOUT_KILL_SIGNAL); } catch {}
-      }
+      shell.killTree(child, BASH_TIMEOUT_KILL_SIGNAL);
     };
 
     const collectPartial = (): string => {

@@ -37,6 +37,8 @@
       },
       "optionalDependencies": {
         "@modelcontextprotocol/sdk": "^1.12.0",
+        "@opentui/core-linux-x64": "0.2.1",
+        "@opentui/core-win32-x64": "0.2.1",
       },
     },
     "opentui-src/forked/core": {
@@ -297,6 +299,10 @@
     "@opentui/core": ["@opentui/core@workspace:opentui-src/forked/core"],
 
     "@opentui/core-darwin-arm64": ["@opentui/core-darwin-arm64@0.2.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-vT8rgeNdkzD84wCcS5zmrSVFgR/SjeVr+2FNM/icTjwKh9Jq3cY6UY7/EFck3PRjrmanNu4zw7W5lFKSpMxnPQ=="],
+
+    "@opentui/core-linux-x64": ["@opentui/core-linux-x64@0.2.1", "", { "os": "linux", "cpu": "x64" }, "sha512-Xdds+HnAbFiylTdxyYhRxPFPnrHm75KTi7QCA1JHU3lb8Sfwrxv3nlYtFhEV798y4osafsghL20Nq5mqVPjizQ=="],
+
+    "@opentui/core-win32-x64": ["@opentui/core-win32-x64@0.2.1", "", { "os": "win32", "cpu": "x64" }, "sha512-ywwRbyjPPEbNe3da+ez4NxIaJWQ79sA2gdepuHKUVdmdxsevdRpAxOHkEpJNtiVvphPc/On9EsP25Hmn5gjYxg=="],
 
     "@opentui/react": ["@opentui/react@0.2.1", "", { "dependencies": { "@opentui/core": "0.2.1", "react-reconciler": "^0.32.0" }, "peerDependencies": { "react": ">=19.0.0", "react-devtools-core": "^7.0.1", "ws": "^8.18.0" } }, "sha512-kHxNHqukauhf1StjuGV36DoR42dBPxU3YVj1wo/V2SOumC/enF6zxBnnsWC3EUWqxLKnMkufh38AvHL3EJ1Taw=="],
 

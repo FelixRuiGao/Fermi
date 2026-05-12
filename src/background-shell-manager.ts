@@ -19,11 +19,11 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 
 import { ToolResult } from "./providers/base.js";
 import { SafePathError, safePath } from "./security/path.js";
-import { buildBashEnv } from "./tools/basic.js";
+import { shell } from "./platform/index.js";
 import {
   argOptionalInteger,
   argOptionalString,
@@ -194,19 +194,12 @@ export class BackgroundShellManager {
     entry: BackgroundShellEntry,
     sig: NodeJS.Signals,
   ): boolean {
-    const pid = entry.process.pid;
-    if (pid != null) {
-      try {
-        process.kill(-pid, sig);
-        return true;
-      } catch {
-        // Fall through to single-child kill (group kill can fail if the
-        // child died between spawn and now, or on platforms / mocks where
-        // process groups aren't available).
-      }
-    }
+    // Process-group semantics live in the shell provider so the
+    // POSIX `process.kill(-pid, sig)` path doesn't leak into business
+    // code. The provider falls back to a leader-only kill when the
+    // group call fails.
     try {
-      entry.process.kill(sig);
+      shell.killTree(entry.process, sig);
       return true;
     } catch {
       return false;
@@ -312,14 +305,16 @@ export class BackgroundShellManager {
 
     let child: ChildProcess;
     try {
-      child = spawn("sh", ["-lc", commandArg], {
+      // Shell selection, env filtering, and process-group setup live
+      // in src/platform/shell. Spawned non-login: PATH is already
+      // forwarded from Fermi's parent process, and sourcing the full
+      // login profile per spawn adds 400–600ms on machines with
+      // nvm/pyenv/etc. in ~/.bash_profile — costly for fast iterations
+      // in tests and small commands.
+      child = shell.spawn({
+        command: commandArg,
         cwd,
-        env: buildBashEnv(),
         stdio: ["ignore", "pipe", "pipe"],
-        // detached=true puts the child in its own process group so the
-        // whole tree can be killed via process.kill(-pid). Without this,
-        // killing only the sh leaks npm/vite/etc as orphans.
-        detached: true,
       });
     } catch (e) {
       return new ToolResult({ content: `Error: failed to start background shell: ${e}` });

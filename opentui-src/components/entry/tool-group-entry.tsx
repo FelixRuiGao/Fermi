@@ -1,8 +1,9 @@
 /** @jsxImportSource @opentui/react */
 
 import React, { useState } from "react";
-import { execSync } from "node:child_process";
 import path from "node:path";
+
+import { browser } from "../../../src/platform/index.js";
 
 import { RGBA, createTextAttributes } from "@opentui/core";
 
@@ -26,10 +27,8 @@ interface ToolGroupEntryProps {
 }
 
 function openFile(filePath: string): void {
-  try {
-    const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
-    execSync(`open ${JSON.stringify(resolved)}`, { stdio: "ignore" });
-  } catch { /* ignore open failures */ }
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+  browser.openFile(resolved);
 }
 
 /** A file-path text element with hover highlight and click-to-open. */

@@ -1,7 +1,8 @@
 /** @jsxImportSource @opentui/react */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { execSync } from "node:child_process";
+
+import { clipboard } from "../src/platform/index.js";
 
 import type {
   CommandRegistry,
@@ -195,13 +196,20 @@ function isFileOverlayEligible(value: string, cursorOffset: number): boolean {
   return findFileReferenceQuery(value, cursorOffset) !== null;
 }
 
-function copyToClipboard(text: string, rendererCopy: (text: string) => boolean): boolean {
+async function copyToClipboard(text: string, rendererCopy: (text: string) => boolean): Promise<boolean> {
+  // Try the platform-native tool first (pbcopy / wl-copy / xclip).
+  // The platform layer also internally falls back to OSC 52 written
+  // directly to stderr. As a last resort we call the renderer's own
+  // OSC 52 path, which goes through the active OpenTUI terminal
+  // handle and may succeed in some terminals where the raw stderr
+  // write doesn't.
   try {
-    execSync("pbcopy", { input: text, timeout: 2000 });
-    return true;
+    const ok = await clipboard.writeText(text);
+    if (ok) return true;
   } catch {
-    return rendererCopy(text);
+    // fall through to renderer copy
   }
+  return rendererCopy(text);
 }
 
 function sameChildSessionList(
@@ -2021,10 +2029,13 @@ export function OpenTuiApp({
     }
 
     if (hasSelection && isCopyCombo) {
-      const copied = copyToClipboard(selectionText, (text) => renderer.copyToClipboardOSC52(text));
-      if (!copied) {
-        showHint("Copy failed.");
-      }
+      // copyToClipboard is async because the native tool runs in a
+      // child process; we eagerly clear selection and only surface a
+      // hint when the copy ultimately fails.
+      void copyToClipboard(selectionText, (text) => renderer.copyToClipboardOSC52(text))
+        .then((copied) => {
+          if (!copied) showHint("Copy failed.");
+        });
       renderer.clearSelection();
       event.preventDefault();
       event.stopPropagation();

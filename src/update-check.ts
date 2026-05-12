@@ -23,6 +23,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+
+import { binaryAsset } from "./platform/index.js";
 import { getFermiHomeDir } from "./home-path.js";
 
 const GITHUB_REPO = "FelixRuiGao/Fermi";
@@ -80,9 +82,7 @@ export function compareVersions(current: string, latest: string): boolean {
 }
 
 function assetName(): string {
-  const platform = process.platform;
-  const arch = process.arch === "x64" ? "x64" : process.arch;
-  return `fermi-${platform}-${arch}.tar.gz`;
+  return binaryAsset.tarballName;
 }
 
 async function fetchLatestRelease(): Promise<{ version: string; downloadUrl: string | null } | null> {

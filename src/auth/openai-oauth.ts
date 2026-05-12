@@ -12,10 +12,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { platform } from "node:os";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
 import { confirm, select } from "@inquirer/prompts";
+import { browser } from "../platform/index.js";
 import { getFermiHomeDir } from "../home-path.js";
 import {
   deviceCodeLoginCLI as copilotDeviceCodeLoginCLI,
@@ -217,22 +216,15 @@ async function fetchForm(
 }
 
 // =============================================================================
-// Platform helpers
+// Session helpers
 // =============================================================================
 
 function openBrowser(url: string): void {
-  try {
-    const p = platform();
-    if (p === "darwin") {
-      execSync(`open ${JSON.stringify(url)}`, { stdio: "ignore" });
-    } else if (p === "win32") {
-      execSync(`start "" ${JSON.stringify(url)}`, { stdio: "ignore" });
-    } else {
-      execSync(`xdg-open ${JSON.stringify(url)}`, { stdio: "ignore" });
-    }
-  } catch {
-    // Browser open failed — user will need to copy the URL manually
-  }
+  // Routes through the platform browser provider (open / xdg-open /
+  // start). All failure modes are swallowed inside the provider so
+  // the user just sees the printed URL fall back to "please copy
+  // this manually".
+  browser.openUrl(url);
 }
 
 function isRemoteSession(): boolean {
