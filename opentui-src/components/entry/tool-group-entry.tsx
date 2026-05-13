@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import path from "node:path";
 
-import { browser } from "../../../src/platform/index.js";
+import { browser, osCapabilities } from "../../../src/platform/index.js";
 
 import { RGBA, createTextAttributes } from "@opentui/core";
 
@@ -74,7 +74,8 @@ function ToolGroupEntryInner(
     "tool",
   );
 
-  const indicator = active ? "›" : entry.state === "error" ? "⏺" : "⏺";
+  // See tool-operation-entry.tsx — done-state glyph is per-platform.
+  const indicator = active ? "›" : osCapabilities.toolIndicatorGlyph;
 
   const toggleExpand = () => setExpanded((prev) => !prev);
 
@@ -112,7 +113,7 @@ function ToolGroupEntryInner(
           {items.map((item) => {
             const name = item.toolDisplayName ?? "?";
             const text = item.toolText ?? "";
-            const itemIndicator = item.state === "error" ? "⏺" : "⏺";
+            const itemIndicator = osCapabilities.toolIndicatorGlyph;
             const itemColor = getActivityIndicatorColor(
               { active: false, error: item.state === "error", interrupted: item.toolInterrupted === true },
               theme,

@@ -7,9 +7,9 @@ import type { DisplayThemeTokens } from "./types.js";
  */
 export const DARK_TOKENS: DisplayThemeTokens = {
   colors: {
-    userBg: "#322e3e",
+    userBg: "#2a2632",
     border: "#2a2630",
-    scrollbarTrack: "#2a263044",
+    scrollbarTrack: "#ffffff55",
     text: "#d0d6e0",
     dim: "#636a76",
     muted: "#454a54",

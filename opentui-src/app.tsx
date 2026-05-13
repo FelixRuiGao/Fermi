@@ -57,6 +57,7 @@ import {
 } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import "./forked/patch-opentui-markdown.js";
+import "./forked/patch-opentui-scrollbar.js";
 import { applyMarkdownTheme } from "./forked/patch-opentui-markdown.js";
 import {
   getFermiAssistantRenderer,

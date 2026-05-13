@@ -31,12 +31,16 @@ describe("selectOsCapabilities", () => {
     const caps = withPlatform("darwin", selectOsCapabilities);
     expect(caps.supportsPosixPermissions).toBe(true);
     expect(caps.platformSpecificDangerCommands.size).toBe(0);
+    expect(caps.toolIndicatorGlyph).toBe("⏺"); // U+23FA, renders correctly in mono fonts on macOS
+    expect(caps.conversationScrollMultiplier).toBe(1);
   });
 
   it("reports POSIX permissions on linux", () => {
     const caps = withPlatform("linux", selectOsCapabilities);
     expect(caps.supportsPosixPermissions).toBe(true);
     expect(caps.platformSpecificDangerCommands.size).toBe(0);
+    expect(caps.toolIndicatorGlyph).toBe("⏺");
+    expect(caps.conversationScrollMultiplier).toBe(1);
   });
 
   it("disables POSIX permissions and ships Windows danger commands on win32", () => {
@@ -49,6 +53,8 @@ describe("selectOsCapabilities", () => {
     expect(caps.platformSpecificDangerCommands.has("netsh")).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("taskkill")).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("wmic")).toBe(true);
+    expect(caps.toolIndicatorGlyph).toBe("⬤"); // U+2B24 — avoids PowerShell's square-outlined record icon fallback
+    expect(caps.conversationScrollMultiplier).toBe(3);
   });
 
   it("stores Windows danger command names lowercased so the classifier's case-insensitive lookup works", () => {

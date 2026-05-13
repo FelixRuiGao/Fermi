@@ -15,6 +15,7 @@ import { DetailThinkingTab } from "../../components/entry/detail-thinking-tab.js
 import { DetailToolTab } from "../../components/entry/detail-tool-tab.js";
 import { InputArea } from "../../input/input-area.js";
 import { ScrollViewport } from "../primitives/scroll-viewport.js";
+import { osCapabilities } from "../../../src/platform/index.js";
 import type { TabState } from "../../sidebar/sidebar-tabs.js";
 import type { DisplayTheme } from "../theme/index.js";
 import type {
@@ -400,6 +401,7 @@ export function OpenTuiScreen({
               scrollRef={scrollRef}
               stickyScroll={true}
               stickyStart="bottom"
+              multiplier={osCapabilities.conversationScrollMultiplier}
             >
               <box flexDirection="column" gap={0}>
                 <PresentationPanel

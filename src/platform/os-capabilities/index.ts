@@ -12,6 +12,8 @@ const POSIX_CAPS: OsCapabilities = {
   // POSIX has no platform-specific danger commands beyond the shared
   // POSIX set already in classify.ts (rm, sudo, chmod, ...).
   platformSpecificDangerCommands: new Set(),
+  toolIndicatorGlyph: "⏺", // ⏺ BLACK CIRCLE FOR RECORD
+  conversationScrollMultiplier: 1,
 };
 
 // Lowercased — see OsCapabilities.platformSpecificDangerCommands
@@ -29,6 +31,12 @@ const WIN32_DANGER_COMMANDS: ReadonlySet<string> = new Set([
 const WIN32_CAPS: OsCapabilities = {
   supportsPosixPermissions: false,
   platformSpecificDangerCommands: WIN32_DANGER_COMMANDS,
+  toolIndicatorGlyph: "⬤", // ⬤ BLACK LARGE CIRCLE — see OsCapabilities JSDoc
+  // Windows Terminal / PowerShell deliver raw wheel ticks without
+  // OS-level acceleration. 3× brings the perceived scroll speed
+  // closer to the macOS default, which is what most users compare
+  // against. See OsCapabilities JSDoc for the rationale.
+  conversationScrollMultiplier: 3,
 };
 
 export function selectOsCapabilities(): OsCapabilities {

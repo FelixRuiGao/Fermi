@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import path from "node:path";
 
-import { browser } from "../../../src/platform/index.js";
+import { browser, osCapabilities } from "../../../src/platform/index.js";
 
 import { RGBA, createTextAttributes } from "@opentui/core";
 
@@ -132,11 +132,12 @@ function ToolOperationEntryInner(
   const shimmer = useShimmer(displayName, toolNameRgba, active, ATTRS_BOLD);
   const interrupted = entry.toolInterrupted === true;
 
-  const indicator = active
-    ? "›"
-    : entry.state === "error"
-      ? "⏺"
-      : "⏺";
+  // Done-state glyph is platform-specific: on Windows PowerShell's
+  // default font U+23FA falls through to Segoe UI Symbol and renders
+  // as a square-outlined "record" icon, so the win32 osCapabilities
+  // profile substitutes U+2B24 BLACK LARGE CIRCLE which stays a clean
+  // filled circle in Cascadia Mono / Consolas.
+  const indicator = active ? "›" : osCapabilities.toolIndicatorGlyph;
 
   const indicatorColor = active
     ? toolNameColor

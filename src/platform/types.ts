@@ -147,6 +147,36 @@ export interface OsCapabilities {
    * collide with `rm`.
    */
   readonly platformSpecificDangerCommands: ReadonlySet<string>;
+
+  /**
+   * Glyph used as the left-side indicator on completed tool-call
+   * entries in the TUI.
+   *
+   * Why a per-platform default: macOS/Linux terminals render U+23FA
+   * BLACK CIRCLE FOR RECORD (⏺) as a clean filled circle slightly
+   * larger than a bullet, which reads as a deliberate "this is a
+   * completed action" marker. Windows PowerShell's default font
+   * (Cascadia Mono / Consolas) does not contain U+23FA, so the
+   * terminal falls through to Segoe UI Symbol / Emoji and renders
+   * the same codepoint as a "record button" icon with a square
+   * outline — visually wrong and inconsistent with the bullet next
+   * to it. U+2B24 BLACK LARGE CIRCLE (⬤) lives in the geometric
+   * shapes block that Cascadia / Consolas ship directly, so on
+   * Windows it stays a plain circle.
+   */
+  readonly toolIndicatorGlyph: string;
+
+  /**
+   * Multiplier applied to mouse-wheel delta in the main conversation
+   * scroll viewport. 1 on macOS / Linux (terminals typically deliver
+   * the user's preferred OS-level scroll acceleration already). 3 on
+   * Windows where Windows Terminal / PowerShell deliver a single
+   * tick-per-notch raw delta without OS-side acceleration, making
+   * the default scrolling feel sluggish compared to native macOS
+   * inertia. The value is applied per scroll event by injecting a
+   * ConstantScrollAccel into the conversation ScrollViewport.
+   */
+  readonly conversationScrollMultiplier: number;
 }
 
 // --------------------------------------------------------------------

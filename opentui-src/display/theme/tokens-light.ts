@@ -15,9 +15,9 @@ import { DARK_TOKENS } from "./tokens-dark.js";
  */
 export const LIGHT_TOKENS: DisplayThemeTokens = {
   colors: {
-    userBg: "#eef0f3",          // raised surface, just darker than white
+    userBg: "#eef0f3cc",        // raised surface w/ 80% alpha for subtle blend
     border: "#d0d7de",          // standard divider
-    scrollbarTrack: "#d0d7de44",
+    scrollbarTrack: "#00000055",
     text: "#1f2328",            // primary fg
     dim: "#656d76",             // secondary fg — readable but quieter
     muted: "#afb8c1",           // tertiary fg — close to surface
