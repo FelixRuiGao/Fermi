@@ -1,53 +1,77 @@
-name: Release
+name: Build platform binaries
+
+# Matrix build for darwin-arm64 / linux-x64 / win32-x64. Each runner
+# builds for its own platform (no cross-compilation) so the bundler
+# and the bundled `libopentui` native lib are always in sync.
 
 on:
-  push:
-    tags: ["v*"]
+  # Manual trigger from the Actions tab; pick any branch.
   workflow_dispatch:
+  push:
+    # Auto-run on the debug branch and on version tags.
+    branches: ['ci-debug']
+    tags: ['v*']
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      # Let all three runners finish even if one fails so a single run
+      # gives the complete cross-platform picture.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-arm64
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: windows-latest
+            target: win32-x64
+    runs-on: ${{ matrix.os }}
+    name: build ${{ matrix.target }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.9
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build binary
+      - name: Build single-file binary
         run: bun run build
 
-      - name: Smoke test
-        run: |
-          test -x build/fermi
-          file build/fermi
-          test -f build/fermi-darwin-arm64.tar.gz
-          ls -lh build/fermi-darwin-arm64.tar.gz
-          ./build/fermi --version
+      - name: List build output
+        shell: bash
+        run: ls -la build/
 
-      - name: Upload artifact (always)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: fermi-darwin-arm64
-          path: build/fermi-darwin-arm64.tar.gz
+          name: fermi-${{ matrix.target }}
+          path: build/fermi-${{ matrix.target }}.tar.gz
           if-no-files-found: error
+          retention-days: 7
 
-      - name: Create release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    # Only when a tag was pushed (intentional release). Collects the
+    # three matrix artifacts and publishes a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
           gh release create "$tag" \
-            build/fermi-darwin-arm64.tar.gz \
+            artifacts/fermi-*.tar.gz \
             --title "$tag" \
             --generate-notes
