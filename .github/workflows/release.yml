@@ -62,6 +62,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # `gh release create --generate-notes` reads git history; a
+      # checkout is required even though we don't otherwise need the
+      # source. Shallow fetch is enough.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -71,7 +77,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
+          # Pre-release tags (-alpha/-beta/-rc) skip "latest" so
+          # they don't displace stable installs.
+          prerelease_flag=""
+          case "$tag" in
+            *-alpha*|*-beta*|*-rc*) prerelease_flag="--prerelease" ;;
+          esac
           gh release create "$tag" \
             artifacts/fermi-*.tar.gz \
             --title "$tag" \
-            --generate-notes
+            --generate-notes \
+            $prerelease_flag
