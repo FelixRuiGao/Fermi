@@ -11,17 +11,28 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ChevronDown,
   ChevronRight,
   AlertTriangle,
   File,
+  FileCode,
+  FileCode2,
+  FileJson,
+  FilePenLine,
+  FilePlus,
+  FileText,
+  FileType,
   Copy,
   Check,
+  Search,
   Undo2,
+  type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { Markdown } from '@/components/Markdown.js'
 import { shortenSummary } from '@/lib/path.js'
 import { DiffView } from '@/components/DiffView.js'
+import { iconForExtension } from '@/lib/fileIcon.js'
 
 interface LogEntry {
   id: string
@@ -334,16 +345,23 @@ function ThoughtBlock({ text, active }: { text: string; active: boolean }): JSX.
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex min-h-7 items-center gap-1.5 text-[15px]"
+        className="group flex min-h-7 items-center gap-1.5 rounded-md text-[14.5px] transition hover:bg-line-soft/40"
       >
-        <span className="font-medium text-ink-3">Thinking</span>
         <ChevronRight
           className={cn('h-3 w-3 text-ink-4 transition-transform', open && 'rotate-90')}
           strokeWidth={2}
         />
+        <span className={cn('font-medium', active ? 'shimmer-text text-ink-2' : 'text-ink-3 group-hover:text-ink-2')}>
+          Thinking
+        </span>
       </button>
       {open && (
-        <div className={cn('mt-1 text-[15px] leading-[1.6] text-ink-4 whitespace-pre-wrap', active && 'shimmer-text')}>
+        <div
+          className={cn(
+            'mt-1 ml-1 border-l-2 border-line-soft pl-3 text-[14.5px] leading-[1.6] text-ink-4 whitespace-pre-wrap',
+            active && 'shimmer-text border-accent/40',
+          )}
+        >
           {renderThoughtText(text)}
         </div>
       )}
@@ -532,49 +550,85 @@ function FileEditPill({
   active: boolean
   workDir?: string
 }): JSX.Element {
-  const [showDiff, setShowDiff] = useState(false)
+  const [expanded, setExpanded] = useState(true)
+  const toolName = getToolName(call)
+  const isWrite = toolName === 'write_file'
   const display = call.display ?? ''
   const space = display.indexOf(' ')
   const path = space > 0 ? display.slice(space + 1) : display
   const shortPath = shortenSummary(path, workDir)
+  const basename = path.split('/').filter(Boolean).pop() ?? path
 
   const resultDisplay = result?.display ?? ''
   const resultContent = result?.content as { content?: string } | undefined
   const resultText = (resultContent?.content ?? '').replace(/\s*\[mtime_ms=\d+\]/g, '')
+  const isError = (result as { isError?: boolean } | null)?.isError === true
 
-  // Count actual diff lines (lines like " 3 +code" or " 3 -code")
   const diffLines = resultDisplay.split('\n')
   const actualAdds = diffLines.filter((l) => /^\s*\d+\s+\+/.test(l)).length
   const actualDels = diffLines.filter((l) => /^\s*\d+\s+-/.test(l)).length
 
+  // Detect "new file" from result text or write_file with no existing target.
+  const isNew = isWrite && /^new file/i.test(resultText.trim()) || actualDels === 0 && isWrite
+
+  const HeaderIcon = isNew ? FilePlus : FilePenLine
+  const headerLabel = isNew ? 'Created' : isWrite ? 'Overwrote' : 'Edited'
+  const FileIcon = iconForExtension(basename)
+
   return (
-    <div className="my-1 inline-block">
+    <div
+      className={cn(
+        'my-2 overflow-hidden rounded-xl border bg-code-bg',
+        isError ? 'border-error/40' : active ? 'border-accent/40' : 'border-line-soft',
+      )}
+    >
       <button
         type="button"
-        aria-expanded={showDiff}
-        onClick={() => setShowDiff(!showDiff)}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
         className={cn(
-          'inline-flex items-center gap-2 rounded border border-line-soft bg-code-bg px-3 py-1.5',
-          'transition hover:border-line',
-          active && 'border-accent/50',
+          'flex w-full items-center gap-2.5 px-3 py-2 text-left transition',
+          'hover:bg-line-soft/40',
         )}
       >
-        <File className="h-3 w-3 text-ink-3" strokeWidth={1.6} />
-        <span className="text-[14px] text-ink">{shortPath}</span>
-        {actualAdds > 0 && (
-          <span className="text-[13px] text-diff-add-ink">+{actualAdds}</span>
-        )}
-        {actualDels > 0 && (
-          <span className="text-[13px] text-diff-rm-ink">−{actualDels}</span>
-        )}
-      </button>
-      {showDiff && result && (
-        <DiffView
-          text={resultDisplay}
-          workDir={workDir}
-          isError={false}
-          resultSummary={resultText}
+        <span
+          className={cn(
+            'grid h-6 w-6 shrink-0 place-items-center rounded-md',
+            isNew ? 'bg-success/10 text-success' : 'bg-accent/10 text-accent',
+          )}
+        >
+          <HeaderIcon className="h-3.5 w-3.5" strokeWidth={1.7} />
+        </span>
+        <span className="text-[11.5px] font-medium uppercase tracking-wide text-ink-4">
+          {headerLabel}
+        </span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[13.5px]">
+          <FileIcon className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={1.6} />
+          <span className="mono truncate font-medium text-ink">{basename}</span>
+          {shortPath && shortPath !== basename && (
+            <span className="mono ml-1 truncate text-[12px] text-ink-4">{shortPath}</span>
+          )}
+        </span>
+        <span className="mono flex shrink-0 items-center gap-1.5 text-[13px]">
+          {actualAdds > 0 && <span className="text-diff-add-ink">+{actualAdds}</span>}
+          {actualDels > 0 && <span className="text-diff-rm-ink">−{actualDels}</span>}
+        </span>
+        <ChevronDown
+          className={cn('h-3.5 w-3.5 shrink-0 text-ink-4 transition-transform', !expanded && '-rotate-90')}
+          strokeWidth={1.8}
         />
+      </button>
+      {expanded && result && resultDisplay && (
+        <div className="border-t border-line-soft/60">
+          <DiffView
+            text={resultDisplay}
+            workDir={workDir}
+            isError={isError}
+            resultSummary={resultText && resultText !== resultDisplay ? resultText : undefined}
+            hideHeader
+            flush
+          />
+        </div>
       )}
     </div>
   )
@@ -690,17 +744,20 @@ function ExploreGroup({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex min-h-7 items-center gap-1.5 text-[15px]"
+        className="group flex w-full min-h-7 items-center gap-2 rounded-md py-1 pl-0.5 pr-1 text-left transition hover:bg-line-soft/40"
       >
-        <span className="font-medium text-ink-3">Explore</span>
-        <span className="text-ink-4">({summary})</span>
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-line-soft/70 text-ink-3 transition group-hover:text-ink">
+          <Search className="h-3 w-3" strokeWidth={2} />
+        </span>
+        <span className="text-[14.5px] font-medium text-ink-2">Explore</span>
+        <span className="truncate text-[13.5px] text-ink-4">{summary}</span>
         <ChevronRight
-          className={cn('h-3 w-3 text-ink-4 transition-transform', open && 'rotate-90')}
+          className={cn('ml-auto h-3 w-3 shrink-0 text-ink-4 transition-transform', open && 'rotate-90')}
           strokeWidth={2}
         />
       </button>
       {open && (
-        <div className="mt-1.5 flex flex-col gap-0.5 pl-0.5">
+        <div className="mt-1 flex flex-col gap-0 border-l border-line-soft/70 pl-3">
           {pairs.map((p) => (
             <ExploreItem key={p.call.id} call={p.call} result={p.result} workDir={workDir} dense />
           ))}
@@ -725,13 +782,25 @@ function ExploreItem({
   const display = call.display ?? toolName
   const isError = (result?.meta as Record<string, unknown> | undefined)?.['isError'] === true
 
-  // Build the description line: "Read file.ts L1-50" / "Grepped pattern in dir"
+  const verb = exploreDisplayName(toolName) // "Read" / "List" / "Glob" / "Search"
   const desc = formatExploreDesc(toolName, display, workDir)
+  // Try to strip the leading verb from desc to avoid duplication.
+  const stripped = desc.replace(new RegExp(`^${verb}\\s+`, 'i'), '')
 
   return (
-    <div className={cn(dense ? 'my-0.5' : 'my-2', 'text-[14.5px] leading-[1.55] text-ink-3')}>
-      {desc}
-      {isError && ' failed'}
+    <div
+      className={cn(
+        'group flex items-baseline gap-2 leading-[1.55] text-ink-3',
+        dense ? 'py-0.5' : 'my-2',
+      )}
+    >
+      <span className="mono shrink-0 text-[11.5px] uppercase tracking-wide text-ink-4">
+        {verb}
+      </span>
+      <span className={cn('mono min-w-0 flex-1 truncate text-[13px]', isError ? 'text-error' : 'text-ink-2')}>
+        {stripped}
+        {isError && ' · failed'}
+      </span>
     </div>
   )
 }

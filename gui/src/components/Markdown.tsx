@@ -7,7 +7,7 @@
  * (very frequent during streaming) don't wipe the highlights.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { cn } from '@/lib/cn.js'
 import { highlightCode } from '@/lib/shiki.js'
@@ -101,8 +101,55 @@ export function Markdown({
     }
   }, [baseHtml, highlightCache, theme])
 
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Attach a "Copy" button overlay to each <pre> code block after render.
+  // Code blocks are dangerouslySetInnerHTML so we inject post-render via DOM.
+  // CSS lives in globals.css (.markdown-body .md-copy-btn) so styles persist
+  // across re-renders that wipe inline className strings.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const pres = root.querySelectorAll<HTMLPreElement>('pre:not([data-copy-attached])')
+    pres.forEach((pre) => {
+      pre.setAttribute('data-copy-attached', '1')
+      pre.classList.add('md-pre')
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.textContent = 'Copy'
+      btn.setAttribute('aria-label', 'Copy code block')
+      btn.className = 'md-copy-btn'
+      btn.addEventListener('click', (event) => {
+        event.preventDefault()
+        const codeNode = pre.querySelector('code')
+        const text = (codeNode?.textContent ?? pre.textContent ?? '').replace(/\s+$/, '')
+        if (!text) return
+        void navigator.clipboard.writeText(text).then(
+          () => {
+            btn.textContent = 'Copied'
+            window.setTimeout(() => {
+              btn.textContent = 'Copy'
+            }, 1400)
+          },
+          () => {
+            btn.textContent = 'Failed'
+            window.setTimeout(() => {
+              btn.textContent = 'Copy'
+            }, 1400)
+          },
+        )
+      })
+      pre.appendChild(btn)
+    })
+    // Re-run on every render — dangerouslySetInnerHTML wipes child DOM even
+    // when `html` is unchanged (object identity differs), so we need to
+    // re-attach. The `:not([data-copy-attached])` selector keeps it cheap
+    // when the buttons survived.
+  })
+
   return (
     <div
+      ref={rootRef}
       className={cn('markdown-body', className)}
       dangerouslySetInnerHTML={{ __html: html }}
     />

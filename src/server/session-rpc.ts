@@ -900,6 +900,18 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     return session.rewindConversation(toTurnIndex);
   });
 
+  // ── Summarize picker support ──
+  server.on("session.getSummarizeTargets", () => session.getSummarizeTargets());
+  server.on("session.getContextIdsForTurnRange", (params) => {
+    const p = expectObject(params, "session.getContextIdsForTurnRange");
+    const startTurn = optNumber(p, "startTurn");
+    const endTurn = optNumber(p, "endTurn");
+    if (typeof startTurn !== "number" || typeof endTurn !== "number") {
+      throw new Error("session.getContextIdsForTurnRange: 'startTurn' and 'endTurn' must be numbers");
+    }
+    return session.getContextIdsForTurnRange(startTurn, endTurn);
+  });
+
   // ── Subscriptions ──
   // Coalesce log change emissions: TUI fires subscribeLog hundreds of times
   // per turn. We schedule a microtask that emits once with the latest revision.

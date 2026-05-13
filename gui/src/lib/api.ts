@@ -10,9 +10,11 @@ import type {
   GitFileActionInput,
   GitFileDiffInput,
   GitStatus,
+  McpServerInput,
   RpcEvent,
   SetSessionPinnedInput,
   SessionTab,
+  SettingsDefaultsPatch,
   SettingsSnapshot,
   WorkspaceFileEntry,
   WorkspaceHistoryGroup,
@@ -53,6 +55,9 @@ interface FermiApi {
   settings: {
     get(): Promise<SettingsSnapshot>
     setAutoUpdate(enabled: boolean): Promise<SettingsSnapshot>
+    upsertMcpServer(input: McpServerInput): Promise<SettingsSnapshot>
+    deleteMcpServer(name: string): Promise<SettingsSnapshot>
+    updateDefaults(patch: SettingsDefaultsPatch): Promise<SettingsSnapshot>
     openFile(): Promise<void>
   }
   theme: {

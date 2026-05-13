@@ -40,6 +40,11 @@ interface SessionStoreState {
   readonly autoUpdate: boolean
   readonly history: readonly WorkspaceHistoryGroup[]
   readonly initialized: boolean
+  readonly bootstrapped: boolean
+  // Last known set of available models from any live tab. Drafts don't have
+  // a subprocess yet, so we use this as a read-only fallback for their model
+  // picker. Updated whenever refreshModels runs successfully.
+  readonly globalModels: readonly ModelDescriptor[]
 
   init(): Promise<void>
   setTheme(theme: 'dark' | 'light'): void
@@ -87,6 +92,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   autoUpdate: true,
   history: [],
   initialized: false,
+  bootstrapped: false,
+  globalModels: [],
 
   async init() {
     if (get().initialized) return
@@ -140,6 +147,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       void get().refreshStatus(t.tabId)
       void get().refreshModels(t.tabId)
     }
+    set({ bootstrapped: true })
   },
 
   setTheme(theme) {
@@ -392,6 +400,10 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         'session.listAvailableModels',
       )
       patchTabState(set, get, tabId, () => ({ models }))
+      // Cache as global fallback for draft tabs to display in their picker.
+      if (Array.isArray(models) && models.length > 0) {
+        set({ globalModels: models })
+      }
     } catch {
       // ignore
     }

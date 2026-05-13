@@ -206,6 +206,29 @@ export interface SettingsSnapshot {
   readonly permissionMode: string | null
 }
 
+export interface SummarizeTarget {
+  readonly kind: 'turn' | 'summary'
+  readonly turnIndex: number
+  readonly preview: string
+  readonly timestamp: number
+  readonly contextId?: string
+}
+
+export interface McpServerInput {
+  readonly name: string
+  readonly previousName?: string
+  readonly command?: string
+  readonly args?: readonly string[]
+  readonly env?: Record<string, string>
+  readonly url?: string
+}
+
+export interface SettingsDefaultsPatch {
+  readonly defaultModel?: string | null
+  readonly thinkingLevel?: string | null
+  readonly permissionMode?: string | null
+}
+
 export interface ProviderSettingsItem {
   readonly id: string
   readonly kind: 'cloud' | 'local' | 'invalid'

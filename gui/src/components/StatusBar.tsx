@@ -20,7 +20,10 @@ export function StatusBar({ state }: { state: TabState | null }): JSX.Element {
     >
       <div className="mx-auto flex max-w-[840px] items-center gap-2.5">
         <span aria-hidden className="working-spinner" />
-        <span className="truncate text-[14.5px] text-ink-2" title={label}>{label}...</span>
+        <span className="truncate text-[14.5px] text-ink-2" title={label}>{label}…</span>
+        <span className="ml-auto mr-3 hidden text-[11.5px] text-ink-4 sm:inline">
+          Esc to interrupt
+        </span>
       </div>
     </div>
   )

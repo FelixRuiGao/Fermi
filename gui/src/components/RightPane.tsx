@@ -32,7 +32,9 @@ import { useSessionStore } from '@/state/sessionStore.js'
 import { shortenSummary } from '@/lib/path.js'
 import { compactModelLabel } from '@/lib/modelDisplay.js'
 import { DiffView } from '@/components/DiffView.js'
-import type { AgentModelPinInfo, AgentModelPinsStatus, AgentRuntimeSettings, GitFileChange, GitStatus, ModelDescriptor, ModelTierInfo, ModelTierLevel, ModelTierStatus, SessionStatus, SessionTab, WorkspaceFileEntry, WorkspaceTextSearchResult } from '@shared/rpc.js'
+import * as Dialog from '@radix-ui/react-dialog'
+import type { AgentModelPinInfo, AgentModelPinsStatus, AgentRuntimeSettings, GitFileChange, GitStatus, ModelDescriptor, ModelTierInfo, ModelTierLevel, ModelTierStatus, SessionStatus, SessionTab, SummarizeTarget, WorkspaceFileEntry, WorkspaceTextSearchResult } from '@shared/rpc.js'
+import { iconForExtension } from '@/lib/fileIcon.js'
 
 interface PlanCheckpoint {
   text: string
@@ -95,6 +97,7 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
   const [contextLoading, setContextLoading] = useState(false)
   const [contextBusy, setContextBusy] = useState<'summarize' | 'compact' | 'rewind' | null>(null)
   const [pendingRewind, setPendingRewind] = useState<RewindTarget | null>(null)
+  const [summarizeOpen, setSummarizeOpen] = useState(false)
   const state = useSessionStore((s) => s.perTab[tab.tabId])
   const refreshLog = useSessionStore((s) => s.refreshLog)
   const refreshMeta = useSessionStore((s) => s.refreshMeta)
@@ -220,11 +223,27 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
     return () => window.clearInterval(timer)
   }, [activeTab, refreshShells])
 
-  const runContextCommand = async (action: 'summarize' | 'compact'): Promise<void> => {
+  const runCompactCommand = async (): Promise<void> => {
     if (contextBusy || state?.status?.currentTurnRunning) return
-    setContextBusy(action)
+    setContextBusy('compact')
     try {
-      await api.rpc.request(tab.tabId, `session.${action}`, {})
+      await api.rpc.request(tab.tabId, 'session.compact', {})
+      await refreshStatus(tab.tabId)
+      await refreshContext()
+    } finally {
+      setContextBusy(null)
+    }
+  }
+
+  const submitSummarize = async (params: {
+    targetContextIds: string[]
+    focusPrompt?: string
+  }): Promise<void> => {
+    if (contextBusy || state?.status?.currentTurnRunning) return
+    setContextBusy('summarize')
+    try {
+      await api.rpc.request(tab.tabId, 'session.summarize', params)
+      setSummarizeOpen(false)
       await refreshStatus(tab.tabId)
       await refreshContext()
     } finally {
@@ -358,8 +377,8 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
               currentTurnRunning={state?.status?.currentTurnRunning ?? false}
               pendingRewind={pendingRewind}
               onRefresh={refreshContext}
-              onSummarize={() => void runContextCommand('summarize')}
-              onCompact={() => void runContextCommand('compact')}
+              onSummarize={() => setSummarizeOpen(true)}
+              onCompact={() => void runCompactCommand()}
               onSelectRewind={setPendingRewind}
               onCancelRewind={() => setPendingRewind(null)}
               onConfirmRewind={() => void confirmRewind()}
@@ -403,6 +422,16 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element {
           )}
         </div>
       </div>
+      <SummarizeDialog
+        tabId={tab.tabId}
+        open={summarizeOpen}
+        busy={contextBusy === 'summarize'}
+        onOpenChange={(open) => {
+          if (!open && contextBusy === 'summarize') return
+          setSummarizeOpen(open)
+        }}
+        onSubmit={submitSummarize}
+      />
     </aside>
   )
 }
@@ -635,6 +664,245 @@ function ContextActionButton({
         </div>
       </div>
     </button>
+  )
+}
+
+function SummarizeDialog({
+  tabId,
+  open,
+  busy,
+  onOpenChange,
+  onSubmit,
+}: {
+  tabId: string
+  open: boolean
+  busy: boolean
+  onOpenChange: (open: boolean) => void
+  onSubmit: (params: { targetContextIds: string[]; focusPrompt?: string }) => Promise<void>
+}): JSX.Element {
+  const [targets, setTargets] = useState<readonly SummarizeTarget[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [fromIdx, setFromIdx] = useState<number | null>(null)
+  const [toIdx, setToIdx] = useState<number | null>(null)
+  const [focus, setFocus] = useState('')
+  const [computing, setComputing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setLoading(true)
+    setLoadError(null)
+    setError(null)
+    setFromIdx(null)
+    setToIdx(null)
+    setFocus('')
+    void api.rpc.request<SummarizeTarget[]>(tabId, 'session.getSummarizeTargets')
+      .then((items) => {
+        if (cancelled) return
+        const arr = Array.isArray(items) ? items : []
+        setTargets(arr)
+        if (arr.length > 0) {
+          setFromIdx(0)
+          setToIdx(Math.max(0, arr.length - 2))
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, tabId])
+
+  const handleRowClick = (idx: number): void => {
+    if (busy || computing) return
+    if (fromIdx === null || toIdx === null) {
+      setFromIdx(idx)
+      setToIdx(idx)
+      return
+    }
+    if (fromIdx === toIdx) {
+      if (idx === fromIdx) return
+      if (idx > fromIdx) setToIdx(idx)
+      else setFromIdx(idx)
+      return
+    }
+    // Range exists — restart with this row as anchor
+    setFromIdx(idx)
+    setToIdx(idx)
+  }
+
+  const rangeCount = fromIdx !== null && toIdx !== null ? toIdx - fromIdx + 1 : 0
+  const canSubmit = !busy && !computing && !loading && fromIdx !== null && toIdx !== null && targets.length > 0
+
+  const handleSubmit = async (): Promise<void> => {
+    if (!canSubmit || fromIdx === null || toIdx === null) return
+    setComputing(true)
+    setError(null)
+    try {
+      const selected = targets.slice(fromIdx, toIdx + 1)
+      const contextIds: string[] = []
+      const seen = new Set<string>()
+      for (const t of selected) {
+        if (t.kind === 'turn') {
+          const ids = await api.rpc.request<string[]>(tabId, 'session.getContextIdsForTurnRange', {
+            startTurn: t.turnIndex,
+            endTurn: t.turnIndex,
+          })
+          for (const id of ids ?? []) {
+            if (!seen.has(id)) {
+              contextIds.push(id)
+              seen.add(id)
+            }
+          }
+        } else if (t.kind === 'summary' && t.contextId && !seen.has(t.contextId)) {
+          contextIds.push(t.contextId)
+          seen.add(t.contextId)
+        }
+      }
+      if (contextIds.length === 0) {
+        setError('No context groups found in the selected range.')
+        return
+      }
+      const focusPrompt = focus.trim() || undefined
+      await onSubmit({ targetContextIds: contextIds, focusPrompt })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setComputing(false)
+    }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[80vh] w-[580px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-line bg-pane-2 shadow-2xl">
+          <div className="flex h-16 items-center gap-3 border-b border-line-soft px-5">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent">
+              <Sparkles className="h-4 w-4" strokeWidth={1.9} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <Dialog.Title className="truncate text-[17px] font-semibold leading-tight text-ink">
+                Summarize context
+              </Dialog.Title>
+              <Dialog.Description className="mt-0.5 truncate text-[12.5px] leading-tight text-ink-4">
+                Pick the turn range to distill. Click to set start, click again to extend.
+              </Dialog.Description>
+            </div>
+          </div>
+
+          <div className="min-h-[180px] flex-1 overflow-y-auto border-b border-line-soft bg-pane">
+            {loading ? (
+              <div className="flex h-full min-h-[180px] items-center justify-center text-[13px] text-ink-3">
+                Loading turns…
+              </div>
+            ) : loadError ? (
+              <div className="px-5 py-4 text-[13px] text-error">{loadError}</div>
+            ) : targets.length === 0 ? (
+              <div className="px-5 py-6 text-center text-[13px] text-ink-3">
+                No turns available to summarize.
+              </div>
+            ) : (
+              <ul className="flex flex-col py-1.5">
+                {targets.map((t, idx) => {
+                  const inRange = fromIdx !== null && toIdx !== null && idx >= fromIdx && idx <= toIdx
+                  const isFrom = idx === fromIdx
+                  const isTo = idx === toIdx
+                  const isEdge = isFrom || isTo
+                  return (
+                    <li key={`${t.kind}-${t.turnIndex}-${t.contextId ?? idx}`}>
+                      <button
+                        type="button"
+                        onClick={() => handleRowClick(idx)}
+                        disabled={busy || computing}
+                        className={cn(
+                          'flex w-full items-center gap-2.5 px-5 py-2 text-left transition',
+                          'hover:bg-line-soft disabled:cursor-default',
+                          inRange && !isEdge && 'bg-accent/10',
+                          isEdge && 'bg-accent/20',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'mono grid h-5 w-12 shrink-0 place-items-center rounded-md text-[11px] font-semibold',
+                            t.kind === 'summary'
+                              ? 'bg-accent/20 text-accent'
+                              : 'bg-line-soft text-ink-2',
+                          )}
+                        >
+                          {t.kind === 'summary' ? 'SUMRY' : `T${t.turnIndex}`}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">
+                          {t.preview || (t.kind === 'summary' ? '(summary)' : 'Untitled turn')}
+                        </span>
+                        {isFrom && (
+                          <span className="mono shrink-0 rounded bg-accent/30 px-1.5 py-0.5 text-[10.5px] font-semibold text-accent">
+                            FROM
+                          </span>
+                        )}
+                        {isTo && !isFrom && (
+                          <span className="mono shrink-0 rounded bg-accent/30 px-1.5 py-0.5 text-[10.5px] font-semibold text-accent">
+                            TO
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="px-5 py-3">
+            <label className="block text-[12px] font-medium uppercase tracking-wider text-ink-4">
+              Focus prompt (optional)
+            </label>
+            <textarea
+              value={focus}
+              onChange={(event) => setFocus(event.target.value)}
+              rows={2}
+              placeholder="What to emphasize when summarizing — e.g. preserve all file paths"
+              disabled={busy || computing}
+              className="mt-1.5 w-full resize-none rounded-lg border border-line-soft bg-pane px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-4 focus:border-line"
+            />
+            {error && <div className="mt-2 text-[12.5px] text-error">{error}</div>}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 border-t border-line-soft px-5 py-3">
+            <div className="text-[12.5px] text-ink-4">
+              {rangeCount > 0
+                ? `${rangeCount} turn${rangeCount === 1 ? '' : 's'} selected`
+                : 'Select a range above'}
+            </div>
+            <div className="flex gap-2">
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  disabled={busy || computing}
+                  className="rounded-lg px-3 py-1.5 text-[13.5px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
+                >
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                type="button"
+                onClick={() => void handleSubmit()}
+                disabled={!canSubmit}
+                className="rounded-lg bg-ink px-3 py-1.5 text-[13.5px] font-medium text-pane transition hover:opacity-90 disabled:opacity-40"
+              >
+                {busy ? 'Summarizing…' : computing ? 'Preparing…' : 'Summarize'}
+              </button>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -2269,9 +2537,19 @@ function FilesPanel({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Filter files"
-          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-2.5 text-[13.5px] text-ink outline-none transition placeholder:text-ink-3 hover:border-line"
+          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-9 text-[13.5px] text-ink outline-none transition placeholder:text-ink-3 hover:border-line"
           aria-label="Filter files"
         />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            aria-label="Clear filter"
+            className="absolute right-1.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-ink-4 transition hover:bg-line-soft hover:text-ink"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
 
       <div className="mt-3">
@@ -2313,6 +2591,8 @@ function FileListRow({
   file: WorkspaceFileEntry
   onOpen: () => void
 }): JSX.Element {
+  const basename = file.path.split('/').filter(Boolean).pop() ?? file.path
+  const Icon = iconForExtension(basename)
   return (
     <button
       type="button"
@@ -2321,7 +2601,7 @@ function FileListRow({
       title={`Open ${file.path}`}
       aria-label={`Open ${file.path}`}
     >
-      <FileText className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={1.6} />
+      <Icon className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={1.6} />
       <div className="min-w-0 flex-1">
         <div className="mono truncate text-[13px] leading-5 text-ink-2 transition group-hover:text-ink">
           {file.path}
@@ -2385,9 +2665,19 @@ function SearchPanel({ workDir }: { workDir: string }): JSX.Element {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search text"
-          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-2.5 text-[13.5px] text-ink outline-none transition placeholder:text-ink-3 hover:border-line"
+          className="right-pane-filter-input h-9 w-full rounded-lg border border-line-soft bg-pane-2 pl-8 pr-9 text-[13.5px] text-ink outline-none transition placeholder:text-ink-3 hover:border-line"
           aria-label="Search text"
         />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            aria-label="Clear search"
+            className="absolute right-1.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-ink-4 transition hover:bg-line-soft hover:text-ink"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
 
       <div className="mt-3">

@@ -5,10 +5,10 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Square, Paperclip, Zap, ChevronDown, Check, Brain, Image, Shield, History, FolderOpen } from 'lucide-react'
+import { ArrowUp, Square, Paperclip, Zap, ChevronDown, Check, Brain, Image, History, FolderOpen, Search, X } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
-import { compactModelLabel } from '@/lib/modelDisplay.js'
-import { projectName, shortPath } from '@/lib/path.js'
+import { compactModelLabel, providerBrandLabel, stripProviderPrefix } from '@/lib/modelDisplay.js'
+import { projectName } from '@/lib/path.js'
 import { useSessionStore } from '@/state/sessionStore.js'
 import { api } from '@/lib/api.js'
 import type { ModelDescriptor, PermissionMode, SessionTab } from '@shared/rpc.js'
@@ -24,6 +24,11 @@ const PERMISSION_HINTS: Record<PermissionMode, string> = {
   read_only: 'Writes ask first',
   reversible: 'Edits allowed',
   yolo: 'Most actions allowed',
+}
+const PERMISSION_TONE: Record<PermissionMode, 'safe' | 'normal' | 'risky'> = {
+  read_only: 'safe',
+  reversible: 'normal',
+  yolo: 'risky',
 }
 const MAX_PROMPT_HISTORY = 50
 
@@ -45,6 +50,7 @@ export function Composer({
   const historyDraftRef = useRef('')
   const selectModel = useSessionStore((s) => s.selectModel)
   const refreshStatus = useSessionStore((s) => s.refreshStatus)
+  const globalModels = useSessionStore((s) => s.globalModels)
   const isDraft = tab.status === 'draft'
 
   useEffect(() => {
@@ -142,11 +148,25 @@ export function Composer({
   const meta = state?.meta
   const status = state?.status
   const modelName = meta?.modelConfigName ?? tab.selectedModel ?? ''
-  const activeModel = state?.models.find((model) => model.name === modelName)
-  const modelLabel = compactModelLabel(modelName, activeModel?.model)
+  // Drafts have no subprocess to call listAvailableModels — fall back to the
+  // shared cache populated by other live tabs.
+  const visibleModels = state?.models && state.models.length > 0 ? state.models : globalModels
+  const activeModel = visibleModels.find((model) => model.name === modelName)
+  const modelLabelRaw = compactModelLabel(modelName, activeModel?.model)
+  // Strip `provider:` prefix on the picker trigger to mirror the grouped
+  // dropdown — the brand is conveyed by the group header.
+  const modelLabel = activeModel
+    ? stripProviderPrefix(modelLabelRaw, activeModel.provider)
+    : modelLabelRaw
   const tokens = status && status.contextBudget >= 10_000
     ? `${fmt(status.lastInputTokens)} / ${fmt(status.contextBudget)}`
     : null
+  const tokenPct =
+    status && status.contextBudget > 0
+      ? Math.min(100, Math.max(0, (status.lastInputTokens / status.contextBudget) * 100))
+      : 0
+  const tokenTone =
+    tokenPct >= 85 ? 'danger' : tokenPct >= 65 ? 'warning' : 'normal'
 
   return (
     <div data-composer-root className="session-bottom-gutter relative bg-pane pb-3.5 pl-6">
@@ -164,6 +184,11 @@ export function Composer({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              if (e.key === 'Escape' && disabled) {
+                e.preventDefault()
+                void interrupt()
+                return
+              }
               if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
                 e.preventDefault()
                 void send()
@@ -181,7 +206,7 @@ export function Composer({
               }
             }}
             aria-label="Plan, build, ask anything"
-            placeholder="Plan, build, ask anything…"
+            placeholder="Plan, build, ask anything — @path to reference a file"
             rows={1}
             className="composer-input block w-full resize-none bg-transparent px-0.5 py-1 text-[16px] leading-[1.45] text-ink outline-none placeholder:text-ink-3"
             style={{ minHeight: 34, maxHeight: 140, overflowY: 'auto' }}
@@ -198,7 +223,15 @@ export function Composer({
             <WorkspaceContextChip workDir={tab.workDir} />
             <div className="flex-1" />
             {tokens && (
-              <span className="shrink-0 tabular-nums text-[13px] text-ink-3">
+              <span
+                className={cn(
+                  'shrink-0 tabular-nums text-[13px]',
+                  tokenTone === 'danger' && 'text-error',
+                  tokenTone === 'warning' && 'text-warning',
+                  tokenTone === 'normal' && 'text-ink-3',
+                )}
+                title={`Context: ${tokenPct.toFixed(0)}% used`}
+              >
                 {tokens}
               </span>
             )}
@@ -213,7 +246,7 @@ export function Composer({
             <ModelPicker
               current={modelName}
               label={modelLabel}
-              models={state?.models ?? []}
+              models={visibleModels}
               onSelect={(name) => selectModel(tab.tabId, name)}
             />
             {disabled ? (
@@ -221,7 +254,7 @@ export function Composer({
                 type="button"
                 onClick={interrupt}
                 className="grid h-8 w-8 place-items-center rounded text-ink-3 transition hover:bg-line-soft hover:text-ink"
-                title="Interrupt"
+                title="Interrupt (Esc)"
                 aria-label="Interrupt"
               >
                 <Square className="h-3 w-3 fill-current" />
@@ -237,7 +270,7 @@ export function Composer({
                     ? 'bg-ink text-pane hover:opacity-90'
                     : 'text-ink-4',
                 )}
-                title="Send"
+                title="Send (↵)"
                 aria-label="Send"
               >
                 <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} />
@@ -252,16 +285,10 @@ export function Composer({
 
 function WorkspaceContextChip({ workDir }: { workDir: string }): JSX.Element {
   const name = projectName(workDir)
-  const path = shortPath(workDir)
   return (
     <StatusPill label={`Open workspace: ${workDir}`} onClick={() => void api.workspace.openPath(workDir)}>
       <FolderOpen className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
-      <span className="hidden max-w-[120px] truncate whitespace-nowrap sm:inline">{name}</span>
-      {path !== name && (
-        <span className="mono hidden max-w-[150px] truncate whitespace-nowrap text-[12px] font-normal text-ink-4 lg:inline">
-          {path}
-        </span>
-      )}
+      <span className="hidden max-w-[160px] truncate whitespace-nowrap sm:inline">{name}</span>
     </StatusPill>
   )
 }
@@ -302,8 +329,16 @@ function PermissionPicker({
         expanded={open}
         hasPopup="menu"
       >
-        <Shield className="h-3 w-3" strokeWidth={1.8} />
-        <span className="hidden max-w-[86px] truncate whitespace-nowrap sm:inline">
+        <span
+          aria-hidden
+          className={cn(
+            'block h-2 w-2 shrink-0 rounded-full',
+            PERMISSION_TONE[current] === 'safe' && 'bg-success',
+            PERMISSION_TONE[current] === 'normal' && 'bg-accent',
+            PERMISSION_TONE[current] === 'risky' && 'bg-warning',
+          )}
+        />
+        <span className="hidden max-w-[96px] truncate whitespace-nowrap sm:inline">
           {PERMISSION_LABELS[current]}
         </span>
         <ChevronDown className={cn('h-2.5 w-2.5 opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
@@ -336,7 +371,15 @@ function PermissionPicker({
                   {active ? (
                     <Check className="h-3.5 w-3.5 text-success" strokeWidth={2.2} />
                   ) : (
-                    <Shield className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'block h-2 w-2 rounded-full',
+                        PERMISSION_TONE[mode] === 'safe' && 'bg-success',
+                        PERMISSION_TONE[mode] === 'normal' && 'bg-accent',
+                        PERMISSION_TONE[mode] === 'risky' && 'bg-warning',
+                      )}
+                    />
                   )}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -405,7 +448,7 @@ function ModelPicker({
           className="truncate whitespace-nowrap"
           style={{ maxWidth: 'clamp(120px, 24vw, 250px)' }}
         >
-          {label || current || 'no model'}
+          {label || current || 'Choose a model'}
         </span>
         <ChevronDown className={cn('h-2.5 w-2.5 opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
       </StatusPill>
@@ -418,61 +461,98 @@ function ModelPicker({
           style={{ width: 'min(420px, calc(100vw - 32px))' }}
         >
           <div className="border-b border-line-soft px-3 py-2">
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Filter models"
-              placeholder="Filter models"
-              className="model-filter-input w-full rounded-lg border border-line-soft bg-pane px-3 py-2 text-[14px] text-ink outline-none placeholder:text-ink-3"
-            />
+            <div className="flex h-9 items-center gap-2 rounded-lg border border-line-soft bg-pane px-3 transition focus-within:border-line">
+              <Search className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={2} />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="Filter models"
+                placeholder="Filter models"
+                className="model-filter-input flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-ink-3"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  aria-label="Clear filter"
+                  className="grid h-6 w-6 place-items-center rounded text-ink-4 transition hover:bg-line-soft hover:text-ink"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </div>
           <div className="max-h-[360px] overflow-y-auto p-1.5">
             {filtered.length === 0 ? (
-              <div className="px-3 py-6 text-center text-[14px] text-ink-4">No matching models</div>
+              <div className="px-3 py-6 text-center text-[13.5px] leading-[1.5] text-ink-4">
+                {models.length === 0 ? (
+                  <>
+                    Models load when the session starts.
+                    <br />
+                    Send a message to pick from your providers.
+                  </>
+                ) : (
+                  'No matching models'
+                )}
+              </div>
             ) : (
-              filtered.map((model) => {
-                const active = model.name === current
-                const displayName = compactModelLabel(model.name, model.model) || model.name
-                const details = [
-                  model.provider,
-                  model.model && model.model !== displayName ? model.model : null,
-                  fmt(model.contextLength),
-                ].filter(Boolean).join(' · ')
-                const ariaName = displayName === model.name ? displayName : `${displayName} (${model.name})`
-                return (
-                  <button
-                    type="button"
-                    key={model.name}
-                    aria-label={`Select model ${ariaName}`}
-                    aria-current={active ? 'true' : undefined}
-                    onClick={() => {
-                      setOpen(false)
-                      void onSelect(model.name)
-                    }}
+              groupModelsByProvider(filtered, current).map(({ provider, items, hasActive }) => (
+                <div key={provider} className="mb-1 last:mb-0">
+                  <div
                     className={cn(
-                      'flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition',
-                      active ? 'bg-line-soft text-ink' : 'text-ink-2 hover:bg-line-soft/70 hover:text-ink',
+                      'mb-0.5 mt-1 px-3 text-[11px] font-semibold uppercase tracking-[0.06em]',
+                      hasActive ? 'text-accent' : 'text-ink-4',
                     )}
                   >
-                    <span className="grid h-5 w-5 shrink-0 place-items-center">
-                      {active ? (
-                        <Check className="h-3.5 w-3.5 text-success" strokeWidth={2.2} />
-                      ) : (
-                        <Zap className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />
-                      )}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[14px] font-medium">{displayName}</div>
-                      <div className="mono truncate text-[12px] text-ink-3">
-                        {details}
-                      </div>
-                    </div>
-                    {model.supportsThinking && <Brain className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />}
-                    {model.supportsMultimodal && <Image className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />}
-                  </button>
-                )
-              })
+                    {providerBrandLabel(provider)}
+                  </div>
+                  {items.map((model) => {
+                    const active = model.name === current
+                    const rawName = compactModelLabel(model.name, model.model) || model.name
+                    const displayName = stripProviderPrefix(rawName, model.provider)
+                    const details = [
+                      model.model && model.model !== displayName && model.model !== rawName ? model.model : null,
+                      fmt(model.contextLength),
+                    ].filter(Boolean).join(' · ')
+                    const ariaName = displayName === model.name ? displayName : `${displayName} (${model.name})`
+                    return (
+                      <button
+                        type="button"
+                        key={model.name}
+                        aria-label={`Select model ${ariaName}`}
+                        aria-current={active ? 'true' : undefined}
+                        onClick={() => {
+                          setOpen(false)
+                          void onSelect(model.name)
+                        }}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition',
+                          active ? 'bg-line-soft text-ink' : 'text-ink-2 hover:bg-line-soft/70 hover:text-ink',
+                        )}
+                      >
+                        <span className="grid h-5 w-5 shrink-0 place-items-center">
+                          {active ? (
+                            <Check className="h-3.5 w-3.5 text-success" strokeWidth={2.2} />
+                          ) : (
+                            <Zap className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />
+                          )}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[14px] font-medium">{displayName}</div>
+                          {details && (
+                            <div className="mono truncate text-[12px] text-ink-3">
+                              {details}
+                            </div>
+                          )}
+                        </div>
+                        {model.supportsThinking && <Brain className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />}
+                        {model.supportsMultimodal && <Image className="h-3.5 w-3.5 text-ink-3" strokeWidth={1.7} />}
+                      </button>
+                    )
+                  })}
+                </div>
+              ))
             )}
           </div>
         </div>
@@ -507,6 +587,39 @@ function orderModelPickerItems(
     ...matching.slice(0, currentIndex),
     ...matching.slice(currentIndex + 1),
   ]
+}
+
+interface ModelProviderGroup {
+  readonly provider: string
+  readonly items: readonly ModelDescriptor[]
+  readonly hasActive: boolean
+}
+
+function groupModelsByProvider(
+  models: readonly ModelDescriptor[],
+  current: string,
+): readonly ModelProviderGroup[] {
+  // Preserve first-seen order, but float the active model's provider to top.
+  const order: string[] = []
+  const map = new Map<string, ModelDescriptor[]>()
+  for (const m of models) {
+    if (!map.has(m.provider)) {
+      order.push(m.provider)
+      map.set(m.provider, [])
+    }
+    map.get(m.provider)!.push(m)
+  }
+  const groups: ModelProviderGroup[] = order.map((provider) => ({
+    provider,
+    items: map.get(provider) ?? [],
+    hasActive: (map.get(provider) ?? []).some((m) => m.name === current),
+  }))
+  const activeIdx = groups.findIndex((g) => g.hasActive)
+  if (activeIdx > 0) {
+    const [active] = groups.splice(activeIdx, 1)
+    groups.unshift(active!)
+  }
+  return groups
 }
 
 function formatAttachmentReference(filePath: string, workDir: string): string {

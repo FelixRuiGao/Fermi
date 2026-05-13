@@ -13,7 +13,9 @@ import type {
   GitFileChange,
   GitFileDiffInput,
   GitStatus,
+  McpServerInput,
   ProviderSettingsItem,
+  SettingsDefaultsPatch,
   SetSessionPinnedInput,
   SessionHistoryItem,
   SettingsSnapshot,
@@ -181,6 +183,47 @@ function registerIpc(): void {
     return readSettingsSnapshot()
   })
 
+  ipcMain.handle('settings:upsertMcpServer', (_e, input: McpServerInput) => {
+    upsertMcpServer(input)
+    return readSettingsSnapshot()
+  })
+
+  ipcMain.handle('settings:updateDefaults', (_e, patch: SettingsDefaultsPatch) => {
+    const update: Record<string, unknown> = {}
+    if ('defaultModel' in patch) {
+      const v = patch.defaultModel
+      if (v === null || v === undefined || v === '') update.default_model = null
+      else update.default_model = String(v)
+    }
+    if ('thinkingLevel' in patch) {
+      const v = patch.thinkingLevel
+      if (v === null || v === undefined || v === '') update.thinking_level = null
+      else update.thinking_level = String(v)
+    }
+    if ('permissionMode' in patch) {
+      const v = patch.permissionMode
+      if (v === null || v === undefined || v === '') update.permission_mode = null
+      else update.permission_mode = String(v)
+    }
+    // Strip null values so they don't pollute the JSON.
+    const merged = { ...readGlobalSettings() } as Record<string, unknown>
+    for (const [k, v] of Object.entries(update)) {
+      if (v === null) delete merged[k]
+      else merged[k] = v
+    }
+    const file = globalSettingsPath()
+    mkdirSync(path.dirname(file), { recursive: true })
+    const tmp = `${file}.tmp`
+    writeFileSync(tmp, JSON.stringify(merged, null, 2))
+    renameSync(tmp, file)
+    return readSettingsSnapshot()
+  })
+
+  ipcMain.handle('settings:deleteMcpServer', (_e, name: string) => {
+    deleteMcpServer(name)
+    return readSettingsSnapshot()
+  })
+
   ipcMain.handle('settings:openFile', async () => {
     ensureGlobalSettingsFile()
     const err = await shell.openPath(globalSettingsPath())
@@ -219,13 +262,45 @@ function readGlobalSettings(): Record<string, unknown> & { auto_update?: boolean
   }
 }
 
-function writeGlobalSettingsPatch(patch: { auto_update?: boolean }): void {
+function writeGlobalSettingsPatch(patch: Record<string, unknown>): void {
   const file = globalSettingsPath()
   const next = { ...readGlobalSettings(), ...patch }
   mkdirSync(path.dirname(file), { recursive: true })
   const tmp = `${file}.tmp`
   writeFileSync(tmp, JSON.stringify(next, null, 2))
   renameSync(tmp, file)
+}
+
+function upsertMcpServer(input: McpServerInput): void {
+  const name = input.name.trim()
+  if (!name) throw new Error('Server name is required')
+  if (!input.command && !input.url) throw new Error('Either command or url must be provided')
+  const settings = readGlobalSettings()
+  const current = (settings.mcpServers && typeof settings.mcpServers === 'object'
+    ? settings.mcpServers as Record<string, unknown>
+    : {})
+  const next: Record<string, unknown> = { ...current }
+  if (input.previousName && input.previousName !== name) {
+    delete next[input.previousName]
+  }
+  const entry: Record<string, unknown> = {}
+  if (input.command) entry.command = input.command
+  if (input.args && input.args.length > 0) entry.args = input.args
+  if (input.env && Object.keys(input.env).length > 0) entry.env = input.env
+  if (input.url) entry.url = input.url
+  next[name] = entry
+  writeGlobalSettingsPatch({ mcpServers: next })
+}
+
+function deleteMcpServer(name: string): void {
+  const settings = readGlobalSettings()
+  const current = settings.mcpServers && typeof settings.mcpServers === 'object'
+    ? settings.mcpServers as Record<string, unknown>
+    : {}
+  if (!(name in current)) return
+  const next = { ...current }
+  delete next[name]
+  writeGlobalSettingsPatch({ mcpServers: next })
 }
 
 function ensureGlobalSettingsFile(): void {

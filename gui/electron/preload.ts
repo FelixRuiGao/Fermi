@@ -6,7 +6,9 @@ import type {
   GitFileActionInput,
   GitFileDiffInput,
   GitStatus,
+  McpServerInput,
   RpcEvent,
+  SettingsDefaultsPatch,
   SetSessionPinnedInput,
   SessionTab,
   SettingsSnapshot,
@@ -58,6 +60,12 @@ const api = {
     get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
     setAutoUpdate: (enabled: boolean): Promise<SettingsSnapshot> =>
       ipcRenderer.invoke('settings:setAutoUpdate', enabled),
+    upsertMcpServer: (input: McpServerInput): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:upsertMcpServer', input),
+    deleteMcpServer: (name: string): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:deleteMcpServer', name),
+    updateDefaults: (patch: SettingsDefaultsPatch): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:updateDefaults', patch),
     openFile: (): Promise<void> => ipcRenderer.invoke('settings:openFile'),
   },
   theme: {

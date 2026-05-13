@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { Sidebar } from '@/components/Sidebar.js'
 import { SessionPane } from '@/components/SessionPane.js'
 import { EmptyState } from '@/components/EmptyState.js'
@@ -7,16 +7,33 @@ import { useSessionStore } from '@/state/sessionStore.js'
 
 export function App(): JSX.Element {
   const init = useSessionStore((s) => s.init)
+  const bootstrapped = useSessionStore((s) => s.bootstrapped)
   const tabs = useSessionStore((s) => s.tabs)
   const activeTabId = useSessionStore((s) => s.activeTabId)
   const history = useSessionStore((s) => s.history)
   const createDraftTab = useSessionStore((s) => s.createDraftTab)
+  const autoDraftDoneRef = useRef(false)
 
   useEffect(() => {
     void init()
   }, [init])
 
   const activeTab = tabs.find((t) => t.tabId === activeTabId) ?? null
+
+  // Composer-first launch: if there are workspaces in history but no open tabs,
+  // open a draft pointing at the most recent workspace. We wait for history to
+  // load before deciding — refreshHistory is async, so `initialized` flips
+  // true while history is still empty. Once history is populated we mark the
+  // decision done so closing the last tab later doesn't re-draft.
+  useEffect(() => {
+    if (autoDraftDoneRef.current) return
+    if (!bootstrapped) return
+    const firstWorkDir = history[0]?.workDir
+    if (!firstWorkDir) return
+    autoDraftDoneRef.current = true
+    if (tabs.length > 0) return
+    createDraftTab(firstWorkDir)
+  }, [bootstrapped, tabs.length, history, createDraftTab])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {

@@ -123,12 +123,16 @@ export function DiffView({
   isError,
   resultSummary,
   mode = 'unified',
+  hideHeader,
+  flush,
 }: {
   text: string
   workDir?: string
   isError: boolean
   resultSummary?: string
   mode?: 'unified' | 'split'
+  hideHeader?: boolean
+  flush?: boolean
 }): JSX.Element | null {
   const parsed = useMemo(() => parseDiff(text), [text])
   if (!parsed) return null
@@ -149,24 +153,27 @@ export function DiffView({
   return (
     <div
       className={cn(
-        'mt-1.5 overflow-hidden rounded border bg-code-bg',
-        isError ? 'border-error/30' : 'border-line-soft',
+        'overflow-hidden bg-code-bg',
+        flush ? 'border-0' : 'mt-1.5 rounded border',
+        !flush && (isError ? 'border-error/30' : 'border-line-soft'),
       )}
     >
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line-soft/60 bg-pane-2/40">
-        <Icon className={cn('h-3.5 w-3.5', parsed.isNewFile ? 'text-success' : 'text-ink-3')} />
-        <span className="font-mono text-[13.5px] text-ink-2 truncate">{display}</span>
-        <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[14.5px]">
-          {stats.adds > 0 && <span className="text-success">+{stats.adds}</span>}
-          {stats.dels > 0 && <span className="text-error">−{stats.dels}</span>}
-          {parsed.isNewFile && (
-            <span className="rounded-full border border-success/40 bg-success/10 px-1.5 py-px text-[11.5px] text-success">
-              new
-            </span>
-          )}
-        </span>
-      </div>
+      {/* Header (hidden when caller already shows path + stats above) */}
+      {!hideHeader && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line-soft/60 bg-pane-2/40">
+          <Icon className={cn('h-3.5 w-3.5', parsed.isNewFile ? 'text-success' : 'text-ink-3')} />
+          <span className="font-mono text-[13.5px] text-ink-2 truncate">{display}</span>
+          <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[14.5px]">
+            {stats.adds > 0 && <span className="text-success">+{stats.adds}</span>}
+            {stats.dels > 0 && <span className="text-error">−{stats.dels}</span>}
+            {parsed.isNewFile && (
+              <span className="rounded-full border border-success/40 bg-success/10 px-1.5 py-px text-[11.5px] text-success">
+                new
+              </span>
+            )}
+          </span>
+        </div>
+      )}
 
       {/* Body */}
       <div className="max-h-[420px] overflow-auto">

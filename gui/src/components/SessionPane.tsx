@@ -173,26 +173,38 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
   const sessionTitle = (tab.title ?? tab.displayName ?? '').trim()
   const headerTitle = sessionTitle.length > 0 && sessionTitle !== projectLabel ? sessionTitle : projectLabel
   const headerSubtitle = headerTitle === projectLabel ? '' : projectLabel
+  // Empty draft: hero already announces the workspace, so hide the redundant
+  // header title — keep the action buttons reachable on the right.
+  const showHeaderTitle = !(tab.status === 'draft' && (state?.logEntries?.length ?? 0) === 0)
 
   return (
     <div data-session-pane-root className="flex h-full min-w-0 flex-1 flex-col bg-pane">
       {/* Thread header — project name + tool buttons */}
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-soft px-6">
+      <div className={cn(
+        'flex h-12 shrink-0 items-center gap-3 px-6',
+        showHeaderTitle && 'border-b border-line-soft',
+      )}>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-semibold leading-tight text-ink">{headerTitle}</div>
-          {headerSubtitle && (
-            <div className="mt-0.5 truncate text-[12.5px] leading-tight text-ink-4">
-              {headerSubtitle}
-            </div>
+          {showHeaderTitle && (
+            <>
+              <div className="truncate text-[15px] font-semibold leading-tight text-ink">{headerTitle}</div>
+              {headerSubtitle && (
+                <div className="mt-0.5 truncate text-[12.5px] leading-tight text-ink-4">
+                  {headerSubtitle}
+                </div>
+              )}
+            </>
           )}
         </div>
-        <HeaderBtn
-          label={markdownMode === 'rendered' ? 'Show raw markdown' : 'Render markdown'}
-          onClick={toggleMarkdownMode}
-          active={markdownMode === 'raw'}
-        >
-          <Code2 className="h-3.5 w-3.5" strokeWidth={1.7} />
-        </HeaderBtn>
+        {showHeaderTitle && (
+          <HeaderBtn
+            label={markdownMode === 'rendered' ? 'Show raw markdown' : 'Render markdown'}
+            onClick={toggleMarkdownMode}
+            active={markdownMode === 'raw'}
+          >
+            <Code2 className="h-3.5 w-3.5" strokeWidth={1.7} />
+          </HeaderBtn>
+        )}
         <HeaderMenu
           tab={tab}
           onClose={() => void closeTab(tab.tabId)}
@@ -217,15 +229,19 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
       )}
 
       <div ref={transcriptRef} className="session-scroll min-h-0 flex-1 overflow-y-auto bg-pane">
-        <Transcript
-          entries={state?.logEntries ?? []}
-          activeId={state?.activeLogEntryId ?? null}
-          workDir={tab.workDir}
-          markdownMode={markdownMode}
-          emptyLabel={tab.status === 'draft' ? null : 'Ready'}
-          canRewind={tab.status !== 'draft' && !(state?.status?.currentTurnRunning ?? false)}
-          onRequestRewind={requestTranscriptRewind}
-        />
+        {tab.status === 'draft' && (state?.logEntries?.length ?? 0) === 0 ? (
+          <DraftHero project={projectLabel} />
+        ) : (
+          <Transcript
+            entries={state?.logEntries ?? []}
+            activeId={state?.activeLogEntryId ?? null}
+            workDir={tab.workDir}
+            markdownMode={markdownMode}
+            emptyLabel={tab.status === 'draft' ? null : 'Ready'}
+            canRewind={tab.status !== 'draft' && !(state?.status?.currentTurnRunning ?? false)}
+            onRequestRewind={requestTranscriptRewind}
+          />
+        )}
       </div>
       <TranscriptRewindDialog
         target={pendingTranscriptRewind}
@@ -247,6 +263,21 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
   )
 }
 
+function DraftHero({ project }: { project: string }): JSX.Element {
+  return (
+    <div className="flex h-full items-center justify-center px-6 pb-24">
+      <div className="flex max-w-[480px] flex-col items-center gap-2 text-center">
+        <div className="text-[22px] font-medium leading-[1.25] tracking-[-0.01em] text-ink">
+          What should we build in <span className="text-accent">{project}</span>?
+        </div>
+        <div className="text-[13.5px] leading-[1.5] text-ink-4">
+          Drop a message below, or <span className="mono text-ink-3">@</span>-reference files to anchor the context.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function TranscriptRewindDialog({
   target,
   busy,
@@ -262,7 +293,7 @@ function TranscriptRewindDialog({
     <Dialog.Root open={target !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-pane-2 p-4 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-pane-2 p-4 shadow-2xl">
           <Dialog.Title className="flex items-center gap-2 text-[16px] font-semibold text-ink">
             <Undo2 className="h-4 w-4 text-warning" strokeWidth={1.8} />
             Rewind before this message
@@ -394,7 +425,7 @@ function HeaderMenu({
           <DropdownMenu.Content
             align="end"
             sideOffset={6}
-            className="z-50 min-w-[190px] rounded-xl border border-line bg-pane-2 p-1.5 shadow-2xl"
+            className="z-50 min-w-[190px] rounded-2xl border border-line bg-pane-2 p-1.5 shadow-2xl"
           >
             {tab.status !== 'draft' && (
               <>
@@ -595,7 +626,7 @@ function RenameSessionDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-pane-2 p-4 shadow-2xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-pane-2 p-4 shadow-2xl">
           <Dialog.Title className="text-[16px] font-semibold text-ink">
             Rename session
           </Dialog.Title>

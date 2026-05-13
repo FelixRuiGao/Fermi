@@ -292,6 +292,7 @@ textarea:focus-visible {
   border-radius: 12px;
   overflow: hidden;
   background: var(--color-code-bg);
+  position: relative;
 }
 .markdown-body pre > code {
   display: block;
@@ -303,4 +304,33 @@ textarea:focus-visible {
   padding: 0.6rem 0.8rem;
   overflow-x: auto;
   white-space: pre;
+}
+
+/* Per-code-block copy button — sits in the top-right, fades in on hover.
+   Injected from Markdown.tsx post-render so the JSX stays simple. */
+.markdown-body .md-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-line-soft);
+  background: var(--color-pane-2);
+  color: var(--color-ink-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.markdown-body pre:hover .md-copy-btn,
+.markdown-body .md-copy-btn:focus-visible {
+  opacity: 1;
+}
+.markdown-body .md-copy-btn:hover {
+  color: var(--color-ink);
+  border-color: var(--color-line);
 }
