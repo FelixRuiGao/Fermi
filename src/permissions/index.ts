@@ -1,7 +1,7 @@
 export { classifyTool, classifyToolAsync, initBashParser } from "./classify.js";
 export { PermissionRuleStore } from "./rules.js";
 export { PermissionAdvisor } from "./advisor.js";
-export { extractCdTarget, resolveCdContext, resolveCdContextParsed } from "./cd-context.js";
+export { resolveCdContextParsed } from "./cd-context.js";
 export type {
   PermissionMode,
   PermissionClass,

@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Permissions: compound commands with a trailing redirect (e.g. `cd dir && npm install 2>&1`, `pnpm install && pnpm build > build.log`) now offer "Always allow" for the inner command just like the same command without the redirect. Previously the redirect forced a one-time approval.
+
 <!--
 Drop entries here as commits land. At release time:
   1. Rename this heading to the tag, e.g. `## v0.3.2` or `## v0.3.2-alpha.3`.

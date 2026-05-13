@@ -80,3 +80,43 @@ describe("bash permission classification for trackable cp/mv rewind", () => {
     }
   });
 });
+
+describe("redirect over compound commands keeps memoization", () => {
+  it("preserves canonicalPattern for `cd <root> && cmd 2>&1`", async () => {
+    const root = makeFixture();
+    try {
+      const result = await classifyBash(`cd ${root} && npm install 2>&1`, root);
+      expect(result.canMemoize).toBe(true);
+      expect(result.canonicalPattern).toBe("npm install");
+      expect(result.externalCwd).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("matches behavior with and without trailing fd-redirect", async () => {
+    const root = makeFixture();
+    try {
+      const plain = await classifyBash(`cd ${root} && npm install`, root);
+      const piped = await classifyBash(`cd ${root} && npm install 2>&1`, root);
+      expect(piped.canMemoize).toBe(plain.canMemoize);
+      expect(piped.canonicalPattern).toBe(plain.canonicalPattern);
+      expect(piped.permissionClass).toBe(plain.permissionClass);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("attaches file-write redirect to the trailing command in a list", async () => {
+    const root = makeFixture();
+    try {
+      // `echo hi > out.txt` alone is write_potent due to file write; chained
+      // after a safe `cd`, the redirect still has to land on the npm segment
+      // so the overall class isn't downgraded.
+      const result = await classifyBash(`cd ${root} && echo hi > out.txt`, root);
+      expect(result.permissionClass).toBe("write_potent");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

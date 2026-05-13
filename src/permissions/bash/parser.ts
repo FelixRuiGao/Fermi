@@ -194,8 +194,13 @@ function appendCommandSegment(
 }
 
 /**
- * Handle `redirected_statement`: unwrap the inner command/pipeline,
- * and check if the redirect writes to a real file (vs /dev/null).
+ * Handle `redirected_statement`: unwrap the inner command / pipeline / list,
+ * and check if the redirect writes to a real file (vs /dev/null or an fd dup).
+ *
+ * When the inner is a `list` (e.g. `cd x && npm install 2>&1`), recurse so the
+ * `&&` / `||` / `;` chain expands into per-command segments; otherwise a
+ * trailing redirect would force the whole compound into the unsupported path
+ * and disable memoization.
  */
 function handleRedirectedStatement(
   node: TreeNode,
@@ -209,7 +214,7 @@ function handleRedirectedStatement(
     const child = node.child(i);
     if (!child) continue;
 
-    if (child.type === "command" || child.type === "pipeline") {
+    if (child.type === "command" || child.type === "pipeline" || child.type === "list") {
       innerNode = child;
     } else if (child.type === "file_redirect" || child.type === "heredoc_redirect") {
       if (child.type === "heredoc_redirect") {
@@ -225,6 +230,20 @@ function handleRedirectedStatement(
 
   if (!innerNode) {
     return unsupported("unsupported_node", "Redirected statement has no inner command.", node);
+  }
+
+  // Compound inner (`cmd1 && cmd2 > out`): walk the list so each command
+  // becomes its own segment, then attach the file-write flag to the final
+  // segment (bash binds a trailing redirect to the last command).
+  if (innerNode.type === "list") {
+    const startIdx = segments.length;
+    const result = walkSequential(innerNode, state, segments);
+    if (result) return result;
+    if (hasFileWrite && segments.length > startIdx) {
+      const last = segments[segments.length - 1]!;
+      segments[segments.length - 1] = { ...last, hasFileWriteRedirect: true };
+    }
+    return;
   }
 
   const operator = innerNode.type === "pipeline" ? "pipeline" as const : "command" as const;
