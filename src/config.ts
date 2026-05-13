@@ -651,7 +651,10 @@ function makeProjectSlug(projectPath: string): string {
 /** Return the root directory of the installed package (parent of dist/). */
 export function getBundledAssetsDir(): string {
   const thisFile = fileURLToPath(import.meta.url);
-  if (thisFile.includes("$bunfs")) {
+  // Bun --compile mounts bundled resources at a virtual filesystem path:
+  // `/$bunfs/root/...` on POSIX, `B:\~BUN\root\...` on Windows. When we
+  // detect either form, the real on-disk assets sit next to the binary.
+  if (thisFile.includes("$bunfs") || /^B:[\\/]~BUN/i.test(thisFile)) {
     return dirname(process.execPath);
   }
 

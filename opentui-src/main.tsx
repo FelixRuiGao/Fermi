@@ -21,7 +21,16 @@ interface ParsedArgs {
 const SESSION_CLOSE_TIMEOUT_MS = 4000;
 
 async function prewarmCompiledOpenTuiCore(): Promise<void> {
-  if (!fileURLToPath(import.meta.url).includes("$bunfs")) return;
+  const thisFile = fileURLToPath(import.meta.url);
+  // Bun --compile mounts bundled JS at a virtual filesystem path:
+  // `/$bunfs/root/...` on POSIX, `B:\~BUN\root\...` on Windows. Only run
+  // the prewarm in compiled mode — in dev (`bun run dev`) the module
+  // graph evaluates in the natural order and the hack would just slow
+  // startup. Missing the Windows path form is what allowed the
+  // SpanRenderable-extends-TextNodeRenderable TDZ to surface on win32
+  // compiled binaries (see Docs/decisions.md D-Windows).
+  const isCompiled = thisFile.includes("$bunfs") || /^B:[\\/]~BUN/i.test(thisFile);
+  if (!isCompiled) return;
 
   // Bun's compiled bundler can initialize @opentui/react before async
   // @opentui/core re-exports settle. Import the concrete modules first so
