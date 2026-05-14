@@ -628,6 +628,11 @@ export class Session {
   _compactCount = 0;
   private _usedContextIds = new Set<string>();
 
+  // Last time we ran a sync GC at idle (ms epoch). Used to throttle the
+  // turn-end Bun.gc(true) call so back-to-back work boundaries don't burn
+  // CPU on repeated full-heap collections.
+  private _lastIdleGcAt = 0;
+
   // Tool executors
   private _toolExecutors: Record<string, ToolExecutor>;
   private _toolExecutorOverrides: Record<string, ToolExecutor> = {};
@@ -1106,6 +1111,27 @@ export class Session {
     this._currentWorkId = null;
     this._currentWorkStartedAt = 0;
     this.onSaveRequest?.();
+    this._maybeRunIdleGc();
+  }
+
+  /**
+   * Run a synchronous Bun.gc at work boundaries to keep saw-tooth heap
+   * growth in check during long sessions. Throttled to once per 10s so
+   * rapid interrupt/restart cycles don't pile up GC pauses, and only on
+   * "completed" status — interrupted/error paths may be followed by an
+   * immediate restart where pausing is more visible to the user.
+   */
+  private _maybeRunIdleGc(): void {
+    if (this._lastTurnEndStatus !== "completed") return;
+    if (typeof (globalThis as { Bun?: { gc?: (sync: boolean) => void } }).Bun?.gc !== "function") return;
+    const now = Date.now();
+    if (now - this._lastIdleGcAt < 10_000) return;
+    this._lastIdleGcAt = now;
+    try {
+      (globalThis as { Bun: { gc: (sync: boolean) => void } }).Bun.gc(true);
+    } catch {
+      // GC is best-effort; never let a failure surface to the user.
+    }
   }
 
   /**

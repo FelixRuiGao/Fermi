@@ -33,21 +33,16 @@ export function setShikiTheme(mode: ThemeMode): void {
 }
 
 /**
- * Languages to pre-load at init.  Covers the most common file types a coding
- * agent encounters.  Additional languages are loaded on-demand via
- * `ensureLanguage()`.
+ * Languages to pre-load at init.  Kept intentionally small to minimize
+ * startup memory; everything else loads on-demand via `ensureLanguage()`
+ * the first time a code block with that language is rendered.  Languages
+ * not in this list, and not yet loaded, fall through to highlight.js
+ * (see patch-opentui-markdown.ts) until the async load completes.
  */
 const PRELOAD_LANGS = [
   "typescript", "tsx", "javascript", "jsx",
-  "python", "rust", "go", "c", "cpp",
-  "java", "kotlin", "scala", "swift", "dart",
-  "ruby", "elixir", "perl", "php", "lua",
-  "bash", "powershell", "fish",
-  "json", "jsonc", "yaml", "toml", "xml", "html", "css", "scss",
-  "sql", "graphql", "markdown",
-  "dockerfile", "makefile", "diff",
-  "zig", "haskell", "ocaml", "r",
-  "vim", "ini",
+  "python", "bash",
+  "json", "markdown", "diff",
 ];
 
 // ---------------------------------------------------------------------------
