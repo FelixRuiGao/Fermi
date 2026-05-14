@@ -315,7 +315,6 @@ export function OpenTuiApp({
   const planCheckpoints = usePlan(session);
   const [agentsPanelOpen, setAgentsPanelOpen] = useState(false);
   const [todoPanelOpen, setTodoPanelOpen] = useState(false);
-  const [scrolledAway, setScrolledAway] = useState(false);
   const [rootLogRevision, setRootLogRevision] = useState(session.getLogRevision?.() ?? 0);
   const queuedInputs = useMemo(() => {
     if (selectedChildId !== null) return [];
@@ -390,6 +389,16 @@ export function OpenTuiApp({
     }
   }, [activeTabId, tabs]);
 
+  // Resolve which scrollbox keyboard handlers (PageUp/PageDown, scroll-to-bottom
+  // on keystroke) should act on. Detail tabs have their own scrollbox; the main
+  // conversation has its own. Read at call time so we always target the visible
+  // surface.
+  const getActiveScrollBox = useCallback((): ScrollBoxRenderable | null => {
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    const isDetail = activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool";
+    return (isDetail ? detailScrollRef.current : mainScrollRef.current) ?? null;
+  }, [activeTabId, tabs]);
+
   const handleCloseTab = useCallback((tabId: string) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === tabId);
@@ -453,7 +462,12 @@ export function OpenTuiApp({
   const [oauthOverlay, setOauthOverlay] = useState<OAuthOverlayState | null>(null);
   const oauthAbortRef = useRef<AbortController | null>(null);
 
-  const scrollRef = useRef<ScrollBoxRenderable>(null);
+  // Separate scroll refs so the main conversation's ScrollViewport can stay
+  // mounted (and preserve its position) while a detail tab is active.
+  // `activeScrollRef` is what keyboard handlers consult — it follows the
+  // currently visible scrollbox.
+  const mainScrollRef = useRef<ScrollBoxRenderable>(null);
+  const detailScrollRef = useRef<ScrollBoxRenderable>(null);
   const inputRef = useRef<TextareaRenderable | null>(null);
   const promptSecretInputRef = useRef<InputRenderable | null>(null);
   const askInputRef = useRef<InputRenderable | null>(null);
@@ -2393,8 +2407,8 @@ export function OpenTuiApp({
     }
 
     if (event.name === "pageup") {
-      scrollRef.current?.scrollBy(-(scrollRef.current.height / 2));
-      setScrolledAway(true);
+      const sb = getActiveScrollBox();
+      sb?.scrollBy(-(sb.height / 2));
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -2409,14 +2423,8 @@ export function OpenTuiApp({
     }
 
     if (event.name === "pagedown") {
-      scrollRef.current?.scrollBy(scrollRef.current.height / 2);
-      // Check if we're back at the bottom
-      if (scrollRef.current) {
-        const sb = scrollRef.current;
-        if (sb.scrollTop + sb.height >= sb.scrollHeight - 1) {
-          setScrolledAway(false);
-        }
-      }
+      const sb = getActiveScrollBox();
+      sb?.scrollBy(sb.height / 2);
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -2825,13 +2833,10 @@ export function OpenTuiApp({
       return;
     }
 
-    // Any unhandled key will reach the textarea — scroll to bottom so the
-    // user can see what they're typing after scrolling up through history.
-    if (scrollRef.current) {
-      const sb = scrollRef.current;
-      sb.scrollTo(sb.scrollHeight);
-    }
-    setScrolledAway(false);
+    // The composer now lives in a fixed footer outside the scrollbox, so the
+    // user can always see what they're typing. We no longer force-scroll the
+    // transcript to bottom on every keystroke — that would yank them away
+    // from whatever history they were reading.
 
     // Force composer state sync after the key is processed by the textarea.
     // onContentChange may not fire reliably for all edits (paste, delete),
@@ -2932,7 +2937,8 @@ export function OpenTuiApp({
       presentationEntries={effectiveEntries}
       processing={effectiveProcessing}
       markdownMode={markdownMode}
-      scrollRef={scrollRef}
+      mainScrollRef={mainScrollRef}
+      detailScrollRef={detailScrollRef}
       selectedChildId={selectedChildId}
       hasQueuedUserInput={queuedInputs.length > 0}
       onEntryClick={openDetailTab}
@@ -3030,7 +3036,6 @@ export function OpenTuiApp({
       onTodoClick={() => setTodoPanelOpen((p) => !p)}
       agentsPanelOpen={agentsPanelOpen}
       onAgentsPanelClick={() => setAgentsPanelOpen((p) => !p)}
-      scrolledAway={scrolledAway}
       sidebarPlanSection={undefined}
       sidebarContextSection={
         <ContextUsageCard

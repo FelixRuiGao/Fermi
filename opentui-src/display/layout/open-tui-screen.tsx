@@ -59,7 +59,8 @@ export interface OpenTuiScreenProps {
   presentationEntries: readonly PresentationEntry[];
   processing: boolean;
   markdownMode: "rendered" | "raw";
-  scrollRef: React.RefObject<ScrollBoxRenderable | null>;
+  mainScrollRef: React.RefObject<ScrollBoxRenderable | null>;
+  detailScrollRef: React.RefObject<ScrollBoxRenderable | null>;
   selectedChildId: string | null;
   hasQueuedUserInput?: boolean;
   onEntryClick: (entry: PresentationEntry) => void;
@@ -131,8 +132,6 @@ export interface OpenTuiScreenProps {
   onTodoClick?: () => void;
   agentsPanelOpen?: boolean;
   onAgentsPanelClick?: () => void;
-  /** True when user has scrolled away from bottom — hides textarea cursor */
-  scrolledAway?: boolean;
 }
 
 export function OpenTuiScreen({
@@ -150,7 +149,8 @@ export function OpenTuiScreen({
   presentationEntries,
   processing,
   markdownMode,
-  scrollRef,
+  mainScrollRef,
+  detailScrollRef,
   selectedChildId,
   hasQueuedUserInput = false,
   onEntryClick,
@@ -217,7 +217,6 @@ export function OpenTuiScreen({
   onTodoClick,
   agentsPanelOpen,
   onAgentsPanelClick,
-  scrolledAway = false,
 }: OpenTuiScreenProps): React.ReactNode {
   const conversationColumnWidth = terminal.width - 1;
   const conversationContentWidth = Math.max(20, conversationColumnWidth - 6);
@@ -289,7 +288,6 @@ export function OpenTuiScreen({
       onTodoClick={onTodoClick}
       agentsPanelOpen={agentsPanelOpen}
       onAgentsPanelClick={onAgentsPanelClick}
-      scrolledAway={scrolledAway}
     />
   );
 
@@ -384,59 +382,52 @@ export function OpenTuiScreen({
       <box flexDirection="row" flexGrow={1} gap={0}>
         {/* Main content column */}
         <box flexDirection="column" flexGrow={1} gap={0}>
-          {detailEntry && activeTab?.kind === "detail-thinking" ? (
-            /* Detail tabs keep their own scrollbox; InputArea is outside */
-            <DetailThinkingTab entry={detailEntry} colors={theme.colors} scrollRef={scrollRef} />
-          ) : detailEntry && activeTab?.kind === "detail-tool" ? (
-            <DetailToolTab
-              entry={detailEntry}
-              colors={theme.colors}
-              contentWidth={Math.max(20, conversationContentWidth - effectiveSidebarWidth)}
-              scrollRef={scrollRef}
-            />
-          ) : (
-            /* Main conversation: single scrollbox wraps entries + status panel + input */
+          {/*
+            Main conversation view — ALWAYS mounted. Hidden via Yoga
+            Display.None when a detail tab is active so its ScrollViewport
+            keeps its scroll position and the InputArea keeps its composer
+            text across tab switches. Mounting once also avoids re-projecting
+            the whole transcript on every tab transition.
+          */}
+          <box flexDirection="column" flexGrow={1} visible={!isDetailTab}>
             <ScrollViewport
               colors={theme.colors}
-              scrollRef={scrollRef}
+              scrollRef={mainScrollRef}
               stickyScroll={true}
               stickyStart="bottom"
               multiplier={osCapabilities.conversationScrollMultiplier}
             >
-              <box flexDirection="column" gap={0}>
-                <PresentationPanel
-                  items={presentationEntries}
-                  processing={processing}
-                  contentWidth={Math.max(20, conversationContentWidth - effectiveSidebarWidth)}
-                  markdownMode={markdownMode}
-                  colors={theme.colors}
-                  theme={theme}
-                  markdownStyle={theme.markdownStyle}
-                  selectedChildId={selectedChildId}
-                  showLogoInScroll={showLogoInScroll}
-                  branding={theme.branding}
-                  onEntryClick={onEntryClick}
-                  onAgentClick={onAgentClick}
-                />
-
-                {/* Spacer between entries and input section */}
-                <box height={1} />
-
-                {/* Pending queued messages — above the entire input section */}
-                {pendingMessages}
-                {pendingMessages ? <box height={1} /> : null}
-
-                {/* Status panel (agents + todos) */}
-                {statusPanel}
-
-                {/* Input area — inside the scrollbox */}
-                {inputAreaElement}
-
-                {/* Overlays — inside scrollbox, directly below input */}
-                {overlaysBlock}
-              </box>
+              <PresentationPanel
+                items={presentationEntries}
+                processing={processing}
+                contentWidth={Math.max(20, conversationContentWidth - effectiveSidebarWidth)}
+                markdownMode={markdownMode}
+                colors={theme.colors}
+                theme={theme}
+                markdownStyle={theme.markdownStyle}
+                selectedChildId={selectedChildId}
+                showLogoInScroll={showLogoInScroll}
+                branding={theme.branding}
+                onEntryClick={onEntryClick}
+                onAgentClick={onAgentClick}
+              />
             </ScrollViewport>
-          )}
+          </box>
+
+          {/* Detail tabs — own scrollbox. Conditional render is fine here:
+              detail views don't need cross-switch state (they always show the
+              same single entry; nothing to "remember"). */}
+          {detailEntry && activeTab?.kind === "detail-thinking" ? (
+            <DetailThinkingTab entry={detailEntry} colors={theme.colors} scrollRef={detailScrollRef} />
+          ) : null}
+          {detailEntry && activeTab?.kind === "detail-tool" ? (
+            <DetailToolTab
+              entry={detailEntry}
+              colors={theme.colors}
+              contentWidth={Math.max(20, conversationContentWidth - effectiveSidebarWidth)}
+              scrollRef={detailScrollRef}
+            />
+          ) : null}
         </box>
         {/* End main content column */}
 
@@ -454,17 +445,19 @@ export function OpenTuiScreen({
       </box>
       {/* End content row */}
 
-      {/* For detail tabs: InputArea + overlays stay fixed outside the scrollbox */}
-      {isDetailTab ? (
-        <>
-          <box height={1} />
-          {pendingMessages}
-          {pendingMessages ? <box height={1} /> : null}
-          {statusPanel}
-          {inputAreaElement}
-          {overlaysBlock}
-        </>
-      ) : null}
+      {/*
+        Fixed footer — single mount point for input + overlays so they survive
+        tab switches and don't fight over `inputRef`. Lifted out of the main
+        scrollbox so it stays visible while the user is scrolling through
+        history (previously it scrolled off the bottom edge with stickyScroll
+        broken).
+      */}
+      <box height={1} />
+      {pendingMessages}
+      {pendingMessages ? <box height={1} /> : null}
+      {statusPanel}
+      {inputAreaElement}
+      {overlaysBlock}
 
       {/* Agent list modal (absolute positioned, above everything) */}
       <AgentListModal

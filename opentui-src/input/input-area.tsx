@@ -75,8 +75,6 @@ interface InputAreaProps {
   agentsPanelOpen?: boolean;
   /** Toggle the agents panel. */
   onAgentsPanelClick?: () => void;
-  /** True when user has scrolled away — hides textarea cursor. */
-  scrolledAway?: boolean;
 }
 
 function getPhaseSpinnerConfig(phase: ActivityPhase): { frames: readonly string[]; interval: number } {
@@ -148,7 +146,6 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
     onTodoClick,
     agentsPanelOpen = false,
     onAgentsPanelClick,
-    scrolledAway = false,
   } = props;
 
   const placeholder = pendingAsk
