@@ -162,10 +162,18 @@ export async function launchTui(): Promise<void> {
   const resolved = await resolveThemeMode(renderer, runtime.themeModePref);
   let currentThemeMode = resolved.mode;
   let currentThemeModePref = resolved.pref;
+
+  // Query the terminal's actual default foreground (OSC 10) so body text can
+  // match whatever colour the user configured. Null on failure/timeout —
+  // app.tsx falls back to the hardcoded token-table colour in that case.
+  const palette = await renderer.getPalette({ timeout: 250 }).catch(() => null);
+  let currentTerminalFg: string | null = palette?.defaultForeground ?? null;
+
   writeFermiOpenTuiDiag("main.theme", {
     pref: resolved.pref,
     mode: resolved.mode,
     source: resolved.source,
+    terminalFg: currentTerminalFg,
   });
 
   const root = createRoot(renderer);
@@ -254,6 +262,7 @@ export async function launchTui(): Promise<void> {
         onNewSession: restartRuntime,
         themeMode: currentThemeMode,
         themeModePref: currentThemeModePref,
+        terminalDefaultFg: currentTerminalFg,
       }),
     );
   };
@@ -271,14 +280,17 @@ export async function launchTui(): Promise<void> {
 
       const nextRuntime = await bootstrapOpenTuiRuntime(args);
       const nextTheme = await resolveThemeMode(renderer, nextRuntime.themeModePref);
+      const nextPalette = await renderer.getPalette({ timeout: 250 }).catch(() => null);
       runtime = nextRuntime;
       currentThemeMode = nextTheme.mode;
       currentThemeModePref = nextTheme.pref;
+      currentTerminalFg = nextPalette?.defaultForeground ?? null;
       runtimeEpoch += 1;
       writeFermiOpenTuiDiag("main.new.done", {
         epoch: runtimeEpoch,
         themePref: nextTheme.pref,
         themeMode: nextTheme.mode,
+        terminalFg: currentTerminalFg,
       });
       // Unmount the previous React tree before re-rendering. `@opentui/react`'s
       // `createRoot.render()` allocates a fresh container on every call instead

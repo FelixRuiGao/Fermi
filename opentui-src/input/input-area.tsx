@@ -246,7 +246,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
         borderStyle="rounded"
         borderColor={colors.dim}
       >
-        <text fg={colors.accent} attributes={ATTRS_BOLD} content="❯ " flexShrink={0} />
+        <text fg="#d4d4d4" attributes={ATTRS_BOLD} content="❯ " flexShrink={0} />
         <textarea
           ref={(node: any) => {
             (inputRef as any).current = node;
@@ -257,7 +257,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           focusedTextColor={selectedChildId ? colors.muted : colors.text}
           placeholderColor={colors.muted}
           cursorStyle={{ style: "block", blinking: false }}
-          cursorColor={colors.accent}
+          cursorColor="#ffffff"
           flexGrow={1}
           maxHeight={maxInputLines}
           minHeight={1}

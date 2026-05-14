@@ -9,6 +9,9 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- TUI: body text now follows the terminal's configured foreground (OSC 10) in auto theme mode — so dark/light terminal themes give matching text colour without per-theme tuning. Pinned `FERMI_THEME=light|dark`, or OSC-unresponsive terminals, keep the token-table palette as a contrast-safety fallback.
+- TUI: tool results (`list`, `glob`, `grep`, `bash`, `bash_output`, `web_search`, `web_fetch`, `send`, `apply_edits`) now collapse to a single truncated line with a clickable "N more lines, CLICK to open" fold indicator. Errors still expand to 8 lines. Reduces visual noise during long sessions.
+- TUI: input prompt `❯` and textarea cursor changed from accent blue to neutral white — works better across terminal palettes and stops fighting with the brand accent.
 - Permissions: compound commands with a trailing redirect (e.g. `cd dir && npm install 2>&1`, `pnpm install && pnpm build > build.log`) now offer "Always allow" for the inner command just like the same command without the redirect. Previously the redirect forced a one-time approval.
 - GUI: replaced the three separate Models/Skills/Integrations modals with a single unified Settings dialog (left-nav rail + scrollable right content). Six sections: General, Models, Providers, Skills, MCP Servers, Hooks. Opens via the sidebar footer menu or the new `⌘,` shortcut.
 - GUI: real CRUD in Settings now writes through to `~/.fermi/settings.json` — Add/Edit/Delete MCP servers via inline form (name / command / args / env / URL); change Default model / Thinking level / Permission mode from dropdowns. Skills toggles use a right-aligned iOS-style switch.

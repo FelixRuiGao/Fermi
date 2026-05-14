@@ -348,9 +348,11 @@ function buildToolOperation(
     // Errors always show inline result regardless of profile setting
     const showResult = state === "error" || profile.inlineResult !== false;
     if (showResult) {
-      const maxLines = profile.inlineResult !== false
-        ? profile.inlineResult.maxLines
-        : 8; // default for error-only display
+      const maxLines = state === "error"
+        ? 8
+        : profile.inlineResult !== false
+          ? profile.inlineResult.maxLines
+          : 8;
       inlineResult = {
         text: resultEntry.entry.text,
         dim: resultEntry.entry.dim ?? false,

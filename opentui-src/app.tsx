@@ -105,7 +105,7 @@ import {
   serializeComposerText,
   type ComposerTokenVisuals,
 } from "./composer-tokens.js";
-import { createDisplayTheme, type DisplayTheme, type ThemeMode } from "./display/theme/index.js";
+import { createDisplayTheme, type DisplayTheme, type DisplayThemeTokens, type DeepPartial, type ThemeMode } from "./display/theme/index.js";
 import { ContextUsageCard, CodexUsageCard } from "./display/panels/usage-cards.js";
 import { StatusPanel } from "./display/panels/status-panel.js";
 import { usePlan } from "./presentation/use-plan.js";
@@ -136,6 +136,13 @@ export interface OpenTuiAppProps {
   themeMode: ThemeMode;
   /** User's theme preference. "auto" means follow live terminal theme_mode events. */
   themeModePref: "auto" | ThemeMode;
+  /**
+   * Terminal's default foreground (OSC 10 query at startup). Used as body
+   * text colour when the user is in auto mode so the TUI matches their
+   * terminal theme exactly. Null on detection failure → fall back to the
+   * token-table colour.
+   */
+  terminalDefaultFg?: string | null;
 }
 
 const CTRL_C_EXIT_WINDOW_MS = 2000;
@@ -247,18 +254,35 @@ export function OpenTuiApp({
   onNewSession,
   themeMode: initialThemeMode,
   themeModePref: initialThemeModePref,
+  terminalDefaultFg: initialTerminalFg = null,
 }: OpenTuiAppProps): React.ReactNode {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [themeModePref, setThemeModePref] = useState<"auto" | ThemeMode>(initialThemeModePref);
-  const theme = useMemo<DisplayTheme>(() => createDisplayTheme(themeMode), [themeMode]);
+  const [terminalFg, setTerminalFg] = useState<string | null>(initialTerminalFg);
+  const theme = useMemo<DisplayTheme>(() => {
+    // Only apply the terminal-fg override in auto mode. When the user pins a
+    // mode (FERMI_THEME=dark|light or /theme), assume they want the canonical
+    // palette — otherwise a dark-pinned UI on a light terminal would render
+    // unreadable dark text on a dark bg.
+    const override: DeepPartial<DisplayThemeTokens> | undefined =
+      themeModePref === "auto" && terminalFg
+        ? ({ colors: { text: terminalFg } } as DeepPartial<DisplayThemeTokens>)
+        : undefined;
+    return createDisplayTheme(themeMode, override);
+  }, [themeMode, themeModePref, terminalFg]);
 
   // Live-follow terminal theme changes only when the user picked "auto".
   useEffect(() => {
     if (themeModePref !== "auto") return;
     const handler = (mode: ThemeMode | null) => {
       if (mode === "light" || mode === "dark") setThemeMode(mode);
+      // Re-query the terminal palette on every mode flip — the new theme
+      // almost certainly changed foreground too.
+      renderer.getPalette({ timeout: 250 })
+        .then((p) => setTerminalFg(p?.defaultForeground ?? null))
+        .catch(() => {});
     };
     renderer.on("theme_mode", handler);
     return () => {

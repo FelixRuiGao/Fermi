@@ -2,10 +2,12 @@
 
 import React, { useMemo } from "react";
 
+import { RGBA, StyledText, type TextChunk } from "@opentui/core";
 import type { InlineResultData } from "../../presentation/types.js";
 import type { ConversationPalette } from "../conversation-types.js";
 import { buildToolResultArtifacts, type ToolResultLineArtifact } from "../tool-result-artifacts.js";
 import { SelectableRow } from "../../display/primitives/selectable-row.js";
+import { chunkDisplayWidth, createChunk } from "../syntax-highlight-utils.js";
 
 /** Clickable fold indicator with hover highlight. */
 function FoldIndicator(
@@ -31,6 +33,73 @@ interface InlineResultProps {
 const LINE_PREFIX = "";
 const MAX_LINES_PER_HUNK = 20;
 const CONTEXT_LINES = 3;
+const FOLD_TEXT = "... (CLICK to open)";
+const ELLIPSIS = "\u2026";
+
+/** Sum display widths of all chunks in a StyledText. */
+function styledTextWidth(st: StyledText): number {
+  let w = 0;
+  for (const chunk of st.chunks) {
+    w += chunkDisplayWidth(chunk.text);
+  }
+  return w;
+}
+
+/** Truncate a StyledText to fit within maxWidth, appending an ellipsis character. */
+function truncateStyledText(st: StyledText, maxWidth: number, ellipsisFg: RGBA): StyledText {
+  const total = styledTextWidth(st);
+  if (total <= maxWidth) return st;
+
+  const target = maxWidth - 1; // reserve 1 for ellipsis
+  const newChunks: TextChunk[] = [];
+  let used = 0;
+
+  for (const chunk of st.chunks) {
+    const cw = chunkDisplayWidth(chunk.text);
+    if (used + cw <= target) {
+      newChunks.push(chunk);
+      used += cw;
+    } else {
+      const remaining = target - used;
+      if (remaining > 0) {
+        let truncText = "";
+        let truncW = 0;
+        for (const ch of chunk.text) {
+          const charW = chunkDisplayWidth(ch);
+          if (truncW + charW > remaining) break;
+          truncText += ch;
+          truncW += charW;
+        }
+        if (truncText) {
+          newChunks.push({ ...chunk, text: truncText });
+        }
+      }
+      newChunks.push(createChunk(ELLIPSIS, { fg: ellipsisFg }));
+      return new StyledText(newChunks);
+    }
+  }
+
+  // Should not reach here (total > maxWidth but couldn't fit ellipsis — very narrow)
+  newChunks.push(createChunk(ELLIPSIS, { fg: ellipsisFg }));
+  return new StyledText(newChunks);
+}
+
+/** Truncate a plain string to fit within maxWidth, appending "…". */
+function truncateString(s: string, maxWidth: number): string {
+  const total = chunkDisplayWidth(s);
+  if (total <= maxWidth) return s;
+
+  const target = maxWidth - 1;
+  let result = "";
+  let used = 0;
+  for (const ch of s) {
+    const charW = chunkDisplayWidth(ch);
+    if (used + charW > target) break;
+    result += ch;
+    used += charW;
+  }
+  return result + ELLIPSIS;
+}
 
 
 
@@ -180,6 +249,43 @@ function InlineResultInner(
     }
 
     // Non-diff artifacts (plain tool result with metadata, or Create/Overwrite with stripped bg)
+    if (artifacts.length === 0) {
+      return <box flexDirection="column" gap={0} />;
+    }
+
+    if (data.maxLines <= 1) {
+      const first = artifacts[0];
+      const dimFg = RGBA.fromHex(colors.dim);
+      const availableWidth = Math.max(8, contentWidth - 2);
+      const truncated = truncateStyledText(first.content, availableWidth, dimFg);
+      const wasTruncated = truncated !== first.content;
+      const moreCount = artifacts.length - 1;
+      const hasMore = moreCount > 0 || wasTruncated;
+      const foldText = moreCount > 0
+        ? `${LINE_PREFIX}... (${moreCount} more ${moreCount === 1 ? "line" : "lines"}${onOpenDetail ? ", CLICK to open" : ""})`
+        : `${LINE_PREFIX}${FOLD_TEXT}`;
+
+      return (
+        <box flexDirection="column" gap={0}>
+          <box
+            flexDirection="row"
+            width="100%"
+            backgroundColor={first.rowBackgroundColor}
+          >
+            <text fg={colors.dim} content={LINE_PREFIX} />
+            <text content={truncated} wrapMode="none" />
+          </box>
+          {hasMore && (
+            <FoldIndicator
+              text={foldText}
+              colors={colors}
+              onClick={onOpenDetail}
+            />
+          )}
+        </box>
+      );
+    }
+
     const visibleArtifacts = artifacts.slice(0, data.maxLines);
     const artifactHiddenCount = Math.max(0, artifacts.length - data.maxLines);
 
@@ -214,6 +320,35 @@ function InlineResultInner(
   // two-tier dim palette (darker than tool call args).
   const textColor = data.dim ? colors.dim : "#5a6078";
   const lines = data.text.split("\n");
+
+  if (data.maxLines <= 1 && lines.length > 0) {
+    const firstLine = lines[0] || "";
+    const availableWidth = Math.max(8, contentWidth - 2);
+    const truncated = truncateString(firstLine, availableWidth);
+    const wasTruncated = truncated !== firstLine;
+    const moreCount = lines.length - 1;
+    const hasMore = moreCount > 0 || wasTruncated;
+    const foldText = moreCount > 0
+      ? `${LINE_PREFIX}... (${moreCount} more ${moreCount === 1 ? "line" : "lines"}${onOpenDetail ? ", CLICK to open" : ""})`
+      : `${LINE_PREFIX}${FOLD_TEXT}`;
+
+    return (
+      <box flexDirection="column" gap={0}>
+        <box flexDirection="row" width="100%">
+          <text fg={colors.dim} content={LINE_PREFIX} />
+          <text fg={textColor} content={truncated} wrapMode="none" />
+        </box>
+        {hasMore && (
+          <FoldIndicator
+            text={foldText}
+            colors={colors}
+            onClick={onOpenDetail}
+          />
+        )}
+      </box>
+    );
+  }
+
   const visibleLines = lines.slice(0, data.maxLines);
   const hiddenCount = Math.max(0, lines.length - data.maxLines);
 

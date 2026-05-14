@@ -42,13 +42,13 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
     category: "observe",
     displayName: "List",
     text: (args) => shortenPath(str(args.path, ".")),
-    inlineResult: { maxLines: 8 },
+    inlineResult: { maxLines: 1 },
   },
   glob: {
     category: "observe",
     displayName: "Glob",
     text: (args) => str(args.pattern),
-    inlineResult: { maxLines: 8 },
+    inlineResult: { maxLines: 1 },
   },
   grep: {
     category: "observe",
@@ -58,7 +58,7 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
       const p = str(args.path);
       return p ? `"${pattern}" in ${shortenPath(p)}` : `"${pattern}"`;
     },
-    inlineResult: { maxLines: 8 },
+    inlineResult: { maxLines: 1 },
   },
   edit_file: {
     category: "modify",
@@ -92,7 +92,7 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
       const code = meta?.exitCode;
       return typeof code === "number" ? `(exit ${code})` : "";
     },
-    inlineResult: { maxLines: 12 },
+    inlineResult: { maxLines: 1 },
   },
   bash_background: {
     category: "modify",
@@ -104,7 +104,7 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
     category: "modify",
     displayName: "Output",
     text: (args) => str(args.id),
-    inlineResult: { maxLines: 12 },
+    inlineResult: { maxLines: 1 },
   },
   kill_shell: {
     category: "modify",
@@ -120,13 +120,13 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
     category: "observe",
     displayName: "WebSearch",
     text: (args) => `"${str(args.query)}"`,
-    inlineResult: { maxLines: 6 },
+    inlineResult: { maxLines: 1 },
   },
   web_fetch: {
     category: "observe",
     displayName: "Fetch",
     text: (args) => str(args.url),
-    inlineResult: { maxLines: 8 },
+    inlineResult: { maxLines: 1 },
   },
   spawn: {
     category: "orchestrate",
@@ -148,7 +148,7 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
     category: "orchestrate",
     displayName: "Send",
     text: (args) => str(args.to),
-    inlineResult: { maxLines: 4 },
+    inlineResult: { maxLines: 1 },
   },
   ask: {
     category: "orchestrate",
@@ -193,7 +193,7 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
       const ops = args.operations;
       return Array.isArray(ops) ? `${ops.length} ${ops.length === 1 ? "group" : "groups"}` : "";
     },
-    inlineResult: { maxLines: 5 },
+    inlineResult: { maxLines: 1 },
   },
 };
 
