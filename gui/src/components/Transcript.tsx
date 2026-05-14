@@ -525,12 +525,33 @@ function ToolRow({
       {open && result && (
         <div
           className={cn(
-            'mono my-1 rounded border border-line-soft bg-code-bg px-3.5 py-3 text-[13.5px] leading-[1.6] text-ink-2',
-            'max-h-[400px] overflow-auto whitespace-pre',
-            isError && 'border-error/30 text-error',
+            'group/output relative my-1 rounded border border-line-soft bg-code-bg',
+            isError && 'border-error/30',
           )}
         >
-          {truncateResult(resultText)}
+          <div
+            className={cn(
+              'mono px-3.5 py-3 text-[13.5px] leading-[1.6] text-ink-2',
+              'max-h-[400px] overflow-auto whitespace-pre',
+              isError && 'text-error',
+            )}
+          >
+            {truncateResult(resultText)}
+          </div>
+          <button
+            type="button"
+            onClick={async (event) => {
+              event.stopPropagation()
+              try {
+                await navigator.clipboard.writeText(truncateResult(resultText))
+              } catch { /* */ }
+            }}
+            title="Copy output"
+            aria-label="Copy output"
+            className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded-md border border-line-soft bg-pane-2 text-ink-3 opacity-0 transition hover:border-line hover:text-ink group-hover/output:opacity-100"
+          >
+            <Copy className="h-3 w-3" strokeWidth={1.7} />
+          </button>
         </div>
       )}
     </div>

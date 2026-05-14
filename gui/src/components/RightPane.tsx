@@ -442,9 +442,12 @@ function PlanPanel({ plan }: { plan: PlanCheckpoint[] }): JSX.Element {
   if (plan.length === 0) {
     return (
       <div className="px-3.5 py-4">
-        <div className="text-[14px] font-semibold text-ink-2">Goal</div>
-        <div className="mt-1.5 text-[14.5px] leading-[1.55] text-ink-3">
-          No plan checkpoints yet.
+        <div className="text-[14px] font-semibold text-ink-2">Plan</div>
+        <div className="mt-1.5 text-[13.5px] leading-[1.55] text-ink-3">
+          No checkpoints yet.
+        </div>
+        <div className="mt-2 text-[12.5px] leading-[1.5] text-ink-4">
+          The agent writes <span className="mono">plan.md</span> as it works through a task — its checklist appears here.
         </div>
       </div>
     )
@@ -1167,8 +1170,11 @@ function AgentsPanel({
           Sub-agents
         </div>
         {agents.length === 0 ? (
-          <div className="rounded-lg border border-line-soft px-3 py-3 text-[14px] text-ink-3">
-            No sub-agents in this session.
+          <div className="rounded-lg border border-line-soft px-3 py-3">
+            <div className="text-[13.5px] text-ink-3">No sub-agents in this session.</div>
+            <div className="mt-1 text-[12.5px] leading-[1.5] text-ink-4">
+              The agent can <span className="mono">spawn</span> specialists for sub-tasks — they appear here while they run.
+            </div>
           </div>
         ) : (
           <div className="space-y-2">
@@ -2855,8 +2861,15 @@ function ShellsPanel({
       <PanelHeader title="Shells" loading={loading} onRefresh={onRefresh} />
 
       {shells.length === 0 ? (
-        <div className="mt-3 px-0.5 py-3 text-[13.5px] text-ink-3">
-          {loading ? 'Loading shells…' : disabled ? 'No active session.' : 'No shells tracked.'}
+        <div className="mt-3 rounded-lg border border-line-soft px-3 py-3">
+          <div className="text-[13.5px] text-ink-3">
+            {loading ? 'Loading shells…' : disabled ? 'No active session.' : 'No shells tracked.'}
+          </div>
+          {!loading && !disabled && (
+            <div className="mt-1 text-[12.5px] leading-[1.5] text-ink-4">
+              Long-running commands started with <span className="mono">bash_background</span> appear here while alive.
+            </div>
+          )}
         </div>
       ) : (
         <>

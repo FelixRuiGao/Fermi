@@ -18,6 +18,9 @@ Release notes. A missing or empty section fails CI.
 - GUI sidebar: top-level "New session ⌘N" button + `⌘N` keybinding; hover pin overlaps fixed; "Show all N" affordance got a chevron.
 - GUI session backend: new RPCs `session.getSummarizeTargets` / `session.getContextIdsForTurnRange` so the GUI's Summarize dialog can drive the same picker flow the TUI's `/summarize` command uses.
 - GUI session backend: new IPC `settings.upsertMcpServer` / `settings.deleteMcpServer` / `settings.updateDefaults` to support the inline Settings forms above.
+- GUI transcript: expanded tool-call output (bash / read_file / etc.) gained a hover "Copy output" button, matching the markdown code-block pattern.
+- GUI right-pane empty states: Plan, Agents, and Shells panels each gained a one-line explainer ("checkpoints come from plan.md", "sub-agents appear here when spawned", "bash_background processes appear here") so empty panels are self-documenting.
+- GUI right-pane Files: filter input got an X clear button — matches the Settings search inputs.
 
 <!--
 Drop entries here as commits land. At release time:
