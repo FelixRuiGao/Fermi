@@ -19,7 +19,7 @@ const LABEL_RGBA = RGBA.fromHex(LABEL_COLOR);
 const BODY_COLOR = "#5a6078";
 const ATTRS_ITALIC = createTextAttributes({ italic: true });
 
-const THINKING_PREVIEW_LINES = 10;
+const THINKING_PREVIEW_LINES = 3;
 const LABEL_TEXT = "Thinking: ";
 
 function ThinkingEntryInner(
