@@ -279,7 +279,11 @@ export function OpenTuiApp({
     const handler = (mode: ThemeMode | null) => {
       if (mode === "light" || mode === "dark") setThemeMode(mode);
       // Re-query the terminal palette on every mode flip — the new theme
-      // almost certainly changed foreground too.
+      // almost certainly changed foreground too. The renderer caches the
+      // palette across calls (see Renderer.getPalette), so invalidate the
+      // cache first or we get back the old terminal's foreground and the
+      // body text stays the previous mode's colour.
+      renderer.clearPaletteCache();
       renderer.getPalette({ timeout: 250 })
         .then((p) => setTerminalFg(p?.defaultForeground ?? null))
         .catch(() => {});
