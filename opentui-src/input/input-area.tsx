@@ -234,7 +234,10 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
         </box>
       </box>
 
-      {/* Input box with round border */}
+      {/* Input box with round border.
+          paddingRight reserves one cell for the cursor's "next position"
+          past the last character — without it, long lines push the cursor
+          onto the right border before the textarea wraps. */}
       <box
         flexDirection="row"
         width="100%"
@@ -242,6 +245,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
         border={true}
         borderStyle="rounded"
         borderColor={colors.dim}
+        paddingRight={1}
       >
         <text fg="#d4d4d4" attributes={ATTRS_BOLD} content="❯ " flexShrink={0} />
         <textarea

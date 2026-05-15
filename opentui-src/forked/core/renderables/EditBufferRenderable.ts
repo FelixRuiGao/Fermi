@@ -1066,10 +1066,19 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     const cursorX = screenX + visualCursor.visualCol + 1 // +1 for 1-based terminal coords
     const cursorY = screenY + visualCursor.visualRow + 1 // +1 for 1-based terminal coords
 
-    // Hide cursor if it's outside the textarea's own bounds
+    // Hide cursor if it's outside the textarea's own bounds.
+    //
+    // The X check uses `> width` (not `>= width`) on purpose: when the user
+    // types up to the textarea's right edge and the cursor moves to "after
+    // the last char", visualCol equals width, which would draw the cursor
+    // in the cell immediately to the right of the textarea. That cell is
+    // typically reserved by the parent (e.g. an outer box with
+    // paddingRight={1} around a bordered input), so allowing it keeps the
+    // cursor visible instead of clipping it. visualCol > width (further
+    // past the right edge) is still treated as out-of-bounds.
     const cx = cursorX - 1
     const cy = cursorY - 1
-    if (cx < screenX || cx >= screenX + this.width || cy < screenY || cy >= screenY + this.height) {
+    if (cx < screenX || cx > screenX + this.width || cy < screenY || cy >= screenY + this.height) {
       this._ctx.setCursorPosition(cursorX, cursorY, false)
       return
     }
