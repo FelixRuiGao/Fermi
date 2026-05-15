@@ -2,7 +2,7 @@ import { type RenderContext } from "../types.js"
 import { StyledText } from "../lib/styled-text.js"
 import { SyntaxStyle } from "../syntax-style.js"
 import { getTreeSitterClient, treeSitterToStyledText, TreeSitterClient } from "../lib/tree-sitter/index.js"
-import { TextBufferRenderable, type TextBufferOptions } from "./TextBufferRenderable.js"
+import { TextBufferRenderable, type TextBufferMeasureContext, type TextBufferOptions } from "./TextBufferRenderable.js"
 import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
@@ -36,6 +36,7 @@ export interface CodeOptions extends TextBufferOptions {
   conceal?: boolean
   drawUnstyledText?: boolean
   streaming?: boolean
+  reserveHeightWhileStreaming?: boolean
   onHighlight?: OnHighlightCallback
   onChunks?: OnChunksCallback
 }
@@ -52,6 +53,8 @@ export class CodeRenderable extends TextBufferRenderable {
   private _drawUnstyledText: boolean
   private _shouldRenderTextBuffer: boolean = true
   private _streaming: boolean
+  private _reserveHeightWhileStreaming: boolean
+  private _streamingMeasuredHeightFloorsByWidth: Map<number, number> = new Map()
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
   private _onHighlight?: OnHighlightCallback
@@ -63,6 +66,7 @@ export class CodeRenderable extends TextBufferRenderable {
     conceal: true,
     drawUnstyledText: true,
     streaming: false,
+    reserveHeightWhileStreaming: false,
   } satisfies Partial<CodeOptions>
 
   constructor(ctx: RenderContext, options: CodeOptions) {
@@ -75,6 +79,9 @@ export class CodeRenderable extends TextBufferRenderable {
     this._conceal = options.conceal ?? this._contentDefaultOptions.conceal
     this._drawUnstyledText = options.drawUnstyledText ?? this._contentDefaultOptions.drawUnstyledText
     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._reserveHeightWhileStreaming =
+      options.reserveHeightWhileStreaming ??
+      (this._streaming && this._conceal && !this._drawUnstyledText)
     this._onHighlight = options.onHighlight
     this._onChunks = options.onChunks
 
@@ -161,6 +168,24 @@ export class CodeRenderable extends TextBufferRenderable {
       this._hadInitialContent = false
       this._lastHighlights = []
       this._highlightsDirty = true
+      if (!value) {
+        this.resetStreamingMeasuredHeightFloor()
+      }
+    }
+  }
+
+  get reserveHeightWhileStreaming(): boolean {
+    return this._reserveHeightWhileStreaming
+  }
+
+  set reserveHeightWhileStreaming(value: boolean) {
+    if (this._reserveHeightWhileStreaming !== value) {
+      this._reserveHeightWhileStreaming = value
+      if (!value) {
+        this.resetStreamingMeasuredHeightFloor()
+      }
+      this.yogaNode.markDirty()
+      this.requestRender()
     }
   }
 
@@ -210,6 +235,36 @@ export class CodeRenderable extends TextBufferRenderable {
 
     const modified = await this._onChunks(chunks, context)
     return modified ?? chunks
+  }
+
+  private resetStreamingMeasuredHeightFloor(): void {
+    this._streamingMeasuredHeightFloorsByWidth.clear()
+  }
+
+  protected override adjustMeasuredDimensions(
+    measured: { width: number; height: number },
+    context: TextBufferMeasureContext,
+  ): { width: number; height: number } {
+    if (!this._streaming || !this._reserveHeightWhileStreaming) {
+      this.resetStreamingMeasuredHeightFloor()
+      return measured
+    }
+
+    // Yoga may ask for intrinsic width with width=0 before the real wrapped
+    // measurement. That no-wrap pass must not reset the streaming floor, or
+    // concealed markdown markers can still shrink the viewport for one frame.
+    if (context.width <= 0) {
+      return measured
+    }
+
+    const wrapWidth = Math.floor(context.width)
+    const previousFloor = this._streamingMeasuredHeightFloorsByWidth.get(wrapWidth) ?? 0
+    const floor = Math.max(previousFloor, measured.height)
+    this._streamingMeasuredHeightFloorsByWidth.set(wrapWidth, floor)
+    return {
+      width: measured.width,
+      height: floor,
+    }
   }
 
   private ensureVisibleTextBeforeHighlight(): void {

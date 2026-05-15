@@ -515,6 +515,7 @@ export class MarkdownRenderable extends Renderable {
       conceal: this._conceal,
       drawUnstyledText: false,
       streaming: true,
+      reserveHeightWhileStreaming: this._streaming,
       onChunks: this._linkifyMarkdownChunks,
       treeSitterClient: this._treeSitterClient,
       width: "100%",
@@ -547,6 +548,7 @@ export class MarkdownRenderable extends Renderable {
     renderable.bg = this._bg
     renderable.conceal = this._conceal
     renderable.drawUnstyledText = false
+    renderable.reserveHeightWhileStreaming = this._streaming
     renderable.streaming = true
     renderable.marginBottom = marginBottom
   }

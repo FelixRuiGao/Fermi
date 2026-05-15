@@ -22,6 +22,13 @@ export interface TextBufferOptions extends RenderableOptions<TextBufferRenderabl
   truncate?: boolean
 }
 
+export interface TextBufferMeasureContext {
+  width: number
+  widthMode: MeasureMode
+  height: number
+  heightMode: MeasureMode
+}
+
 export abstract class TextBufferRenderable extends Renderable implements LineInfoProvider {
   public selectable: boolean = true
 
@@ -422,6 +429,13 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
     this.emit("line-info-change")
   }
 
+  protected adjustMeasuredDimensions(
+    measured: { width: number; height: number },
+    _context: TextBufferMeasureContext,
+  ): { width: number; height: number } {
+    return measured
+  }
+
   // Undefined = 0,
   // Exactly = 1,
   // AtMost = 2
@@ -452,19 +466,28 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
 
       const measuredWidth = measureResult ? Math.max(1, measureResult.widthColsMax) : 1
       const measuredHeight = measureResult ? Math.max(1, measureResult.lineCount) : 1
+      const adjusted = this.adjustMeasuredDimensions(
+        { width: measuredWidth, height: measuredHeight },
+        {
+          width: effectiveWidth,
+          widthMode,
+          height: effectiveHeight,
+          heightMode,
+        },
+      )
 
       if (widthMode === MeasureMode.AtMost && this._positionType !== "absolute") {
         return {
-          width: Math.min(effectiveWidth, measuredWidth),
-          height: Math.min(effectiveHeight, measuredHeight),
+          width: Math.min(effectiveWidth, adjusted.width),
+          height: Math.min(effectiveHeight, adjusted.height),
         }
       }
 
       // NOTE: Yoga may use these measurements or not.
       // If the yoga node settings and the parent allow this node to grow, it will.
       return {
-        width: measuredWidth,
-        height: measuredHeight,
+        width: adjusted.width,
+        height: adjusted.height,
       }
     }
 

@@ -4,6 +4,8 @@ import { MarkdownRenderable, type MarkdownOptions } from "../Markdown.js"
 import { CodeRenderable } from "../Code.js"
 import { TextRenderable } from "../Text.js"
 import { TextTableRenderable } from "../TextTable.js"
+import { BoxRenderable } from "../Box.js"
+import { ScrollBoxRenderable } from "../ScrollBox.js"
 import { SyntaxStyle } from "../../syntax-style.js"
 import { RGBA } from "../../lib/RGBA.js"
 import { TreeSitterClient } from "../../lib/tree-sitter/index.js"
@@ -2601,4 +2603,65 @@ test("paragraph updates do not flash raw markdown markers", async () => {
   const finalFrame = captureFrame()
   expect(finalFrame).toContain("Second value")
   expect(finalFrame).not.toContain("**Second**")
+})
+
+test("streaming inline conceal does not shrink sticky scroll viewport mid-stream", async () => {
+  const scrollbox = new ScrollBoxRenderable(renderer, {
+    id: "scrollbox",
+    width: 14,
+    height: 6,
+    stickyScroll: true,
+    stickyStart: "bottom",
+  })
+  renderer.root.add(scrollbox)
+
+  const content = new BoxRenderable(renderer, {
+    id: "content",
+    flexDirection: "column",
+    width: "100%",
+  })
+
+  for (let i = 1; i <= 6; i += 1) {
+    content.add(new TextRenderable(renderer, { content: `line${i}`, width: "100%" }))
+  }
+
+  const md = createMarkdownRenderable({
+    id: "markdown",
+    content: "aaa **bold word",
+    syntaxStyle,
+    conceal: true,
+    streaming: true,
+    width: "100%",
+  })
+  content.add(md)
+  content.add(new TextRenderable(renderer, { content: "after", width: "100%" }))
+  scrollbox.add(content)
+
+  await renderMarkdownRenderable(md)
+  expect(md.height).toBe(2)
+
+  md.content = "aaa **bold word**"
+  await renderMarkdownRenderable(md)
+
+  const frame = captureFrame()
+    .split("\n")
+    .map((line) => line.trimEnd())
+
+  expect(md.height).toBe(2)
+  expect(frame[0]).toContain("line4")
+  expect(frame.join("\n")).toContain("aaa bold word")
+  expect(frame.join("\n")).toContain("after")
+  expect(frame.join("\n")).not.toContain("line3")
+
+  md.content = "aaa **bold word** z"
+  await renderMarkdownRenderable(md)
+
+  const nextFrame = captureFrame()
+    .split("\n")
+    .map((line) => line.trimEnd())
+
+  expect(md.height).toBe(2)
+  expect(nextFrame[0]).toContain("line4")
+  expect(nextFrame.join("\n")).toContain("aaa bold word")
+  expect(nextFrame.join("\n")).toContain("z")
 })
