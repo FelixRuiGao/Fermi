@@ -729,6 +729,15 @@ export class StdinParser {
     this.mouseParser.reset()
   }
 
+  // Toggle SGR-Pixels mouse decoding. The renderer calls this once it knows
+  // both that the terminal supports DECSET 1016 and the current cell pixel
+  // size (derived from the \x1b[14t pixel-resolution response and the grid
+  // dimensions). When inactive, mouse coords stay integer cells as before.
+  public setMousePixelMode(active: boolean, cellWidthPx: number, cellHeightPx: number): void {
+    this.ensureAlive()
+    this.mouseParser.setPixelMode(active, cellWidthPx, cellHeightPx)
+  }
+
   public destroy(): void {
     if (this.destroyed) {
       return

@@ -485,11 +485,16 @@ fn checkEnvironmentOverrides(self: *Terminal) void {
     }
 }
 
-// TODO: Allow pixel mouse mode to be enabled,
-// currently does not make sense and is not supported by higher levels
 pub fn setMouseMode(self: *Terminal, tty: anytype, enable: bool, enable_movement: bool) !void {
     if (enable) {
-        if (self.state.mouse and self.state.mouse_movement == enable_movement) return;
+        // Re-run if mouse settings match but pixel-mouse no longer agrees with
+        // the detected capability. Capability responses (?1016 DECRQM) arrive
+        // asynchronously, so the first enableMouse() call usually predates
+        // caps.sgr_pixels turning true; higher levels call enableMouse() again
+        // once caps settle and we must (de)activate SGR-Pixels accordingly.
+        if (self.state.mouse and
+            self.state.mouse_movement == enable_movement and
+            self.state.pixel_mouse == self.caps.sgr_pixels) return;
     } else if (!self.state.mouse) {
         return;
     }
@@ -509,6 +514,13 @@ pub fn setMouseMode(self: *Terminal, tty: anytype, enable: bool, enable_movement
             try tty.writeAll(ansi.ANSI.enableAnyEventTracking);
         }
         try tty.writeAll(ansi.ANSI.enableSGRMouseMode);
+        if (self.caps.sgr_pixels) {
+            try tty.writeAll(ansi.ANSI.enableSgrPixelsMode);
+            self.state.pixel_mouse = true;
+        } else if (self.state.pixel_mouse) {
+            try tty.writeAll(ansi.ANSI.disableSgrPixelsMode);
+            self.state.pixel_mouse = false;
+        }
     } else {
         self.state.mouse = false;
         self.state.pixel_mouse = false;
@@ -516,6 +528,7 @@ pub fn setMouseMode(self: *Terminal, tty: anytype, enable: bool, enable_movement
         try tty.writeAll(ansi.ANSI.disableButtonEventTracking);
         try tty.writeAll(ansi.ANSI.disableMouseTracking);
         try tty.writeAll(ansi.ANSI.disableSGRMouseMode);
+        try tty.writeAll(ansi.ANSI.disableSgrPixelsMode);
     }
 }
 
@@ -594,6 +607,9 @@ pub fn restoreTerminalModes(self: *Terminal, tty: anytype) !void {
             try tty.writeAll(ansi.ANSI.enableAnyEventTracking);
         }
         try tty.writeAll(ansi.ANSI.enableSGRMouseMode);
+        if (self.state.pixel_mouse) {
+            try tty.writeAll(ansi.ANSI.enableSgrPixelsMode);
+        }
     }
 
     // Re-enable focus tracking if active

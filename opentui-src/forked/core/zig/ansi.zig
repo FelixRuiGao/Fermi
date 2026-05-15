@@ -87,6 +87,12 @@ pub const ANSI = struct {
     pub const disableAnyEventTracking = "\x1b[?1003l";
     pub const enableSGRMouseMode = "\x1b[?1006h";
     pub const disableSGRMouseMode = "\x1b[?1006l";
+    // SGR-Pixels mouse mode (DECSET 1016): report mouse position in pixels
+    // instead of cells. Layered on top of ?1006 (same SGR framing) and only
+    // emitted when the terminal advertises 1016 support via DECRQM. Higher
+    // levels divide pixel coords by cell size to recover sub-cell precision.
+    pub const enableSgrPixelsMode = "\x1b[?1016h";
+    pub const disableSgrPixelsMode = "\x1b[?1016l";
     pub const mouseSetPixels = "\x1b[?1002;1003;1004;1016h";
 
     // Terminal capability queries

@@ -1374,8 +1374,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     if (useMouse) {
       this.enableMouse()
+      this.updateMousePixelMode()
     } else {
       this.disableMouse()
+      this.updateMousePixelMode()
     }
   }
 
@@ -2500,6 +2502,41 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib.disableMouse(this.rendererPtr)
   }
 
+  // Tracks whether we have emitted DECSET 1016 (SGR-Pixels) to the terminal,
+  // so the enable/disable sequence is only written on an actual transition.
+  private _sgrPixelsActive = false
+
+  // Recompute SGR-Pixels mouse state, (re)emit the DECSET 1016 toggle to the
+  // terminal on a transition, and push the decode parameters to the stdin
+  // parser. Pixel mode is active only when the terminal advertises DECSET
+  // 1016 (caps.sgr_pixels), mouse is enabled, and we have a pixel resolution
+  // plus a sane grid to derive the per-cell pixel size from. \x1b[14t reports
+  // the text-area size in pixels; dividing by the grid dimensions gives the
+  // cell size. Idempotent — safe to call from resolution, capability, resize
+  // and focus-restore paths.
+  //
+  // 1016 is driven from here rather than from zig's setMouseMode because the
+  // shipped native binary only *queries* 1016 support (?1016$p) and never
+  // enables it; emitting from TS keeps the feature working against the
+  // prebuilt binary. `forceReemit` re-asserts the sequence even without a
+  // state change (used after zig's restoreTerminalModes, which re-emits the
+  // mouse block without 1016).
+  private updateMousePixelMode(forceReemit = false): void {
+    const res = this._resolution
+    const cols = this._terminalWidth
+    const rows = this._terminalHeight
+    const active =
+      this._useMouse && !!this._capabilities?.sgr_pixels && !!res && res.width > 0 && res.height > 0 && cols > 0 && rows > 0
+    const cellWidthPx = active ? res!.width / cols : 0
+    const cellHeightPx = active ? res!.height / rows : 0
+
+    if (active !== this._sgrPixelsActive || (forceReemit && active)) {
+      this.writeOut(active ? "\x1b[?1016h" : "\x1b[?1016l")
+      this._sgrPixelsActive = active
+    }
+    this.stdinParser?.setMousePixelMode(active, cellWidthPx, cellHeightPx)
+  }
+
   public enableKittyKeyboard(flags: number = 0b00011): void {
     this.lib.enableKittyKeyboard(this.rendererPtr, flags)
     this.updateStdinParserProtocolContext({ kittyKeyboardEnabled: true })
@@ -2647,6 +2684,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
     this.emit(CliRenderEvents.CAPABILITIES, this._capabilities)
 
+    // The ?1016 DECRQM reply arrives after the initial mouse setup, so
+    // caps.sgr_pixels typically flips true here — (re)assert pixel mode.
+    this.updateMousePixelMode()
+
     const hadPendingSplitStartupCursorSeed = this.pendingSplitStartupCursorSeed
 
     if (
@@ -2687,6 +2728,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       if (this.shouldRestoreModesOnNextFocus) {
         this.lib.restoreTerminalModes(this.rendererPtr)
         this.shouldRestoreModesOnNextFocus = false
+        // restoreTerminalModes re-emits the mouse block without 1016; the
+        // emulator may also have stripped it while unfocused. Re-assert.
+        this.updateMousePixelMode(true)
       }
       if (this._terminalFocusState !== true) {
         this._terminalFocusState = true
@@ -2793,6 +2837,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         const resolution = parsePixelResolution(sequence)
         if (resolution) {
           this._resolution = resolution
+          this.updateMousePixelMode()
         }
         this.waitingForPixelResolution = false
         this.updateStdinParserProtocolContext({ pixelResolutionQueryActive: false }, true)

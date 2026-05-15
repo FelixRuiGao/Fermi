@@ -69,7 +69,11 @@ export class ScrollBarRenderable extends Renderable {
   }
 
   set scrollPosition(value: number) {
-    const newPosition = Math.round(Math.min(Math.max(0, value), this.scrollSize - this.viewportSize))
+    // Keep scrollPosition as a float so the slider's eighth-cell thumb math
+    // (Slider.getVerticalThumbUnits) sees the precise scroll progress. The
+    // content viewport itself can only be placed at integer cell offsets, so
+    // ScrollBox floors this when assigning translateY/translateX.
+    const newPosition = Math.min(Math.max(0, value), this.scrollSize - this.viewportSize)
     if (newPosition !== this._scrollPosition) {
       this._scrollPosition = newPosition
       this.updateSliderFromScrollState()
@@ -127,7 +131,9 @@ export class ScrollBarRenderable extends Renderable {
       value: this._scrollPosition,
       viewPortSize: stepSize,
       onChange: (value) => {
-        this._scrollPosition = Math.round(value)
+        // Float — see scrollPosition setter; ScrollBox floors when applying
+        // to translateY/translateX so content stays cell-aligned.
+        this._scrollPosition = value
         this._onChange?.(this._scrollPosition)
         this.emit("change", { position: this._scrollPosition })
       },

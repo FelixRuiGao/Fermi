@@ -223,7 +223,11 @@ export class ScrollBoxRenderable extends BoxRenderable {
     const maxScrollTop = Math.max(0, this.scrollHeight - this.viewport.height)
     const maxScrollLeft = Math.max(0, this.scrollWidth - this.viewport.width)
 
-    if (this.scrollTop <= 0) {
+    // scrollTop/scrollLeft are floats now (sub-cell thumb precision), so
+    // "at top" must accept anything in [0, 1) — content rendering floors
+    // the value, so 0.5 still displays line 0. Without `< 1` here a mid-cell
+    // drag would silently break sticky-top.
+    if (this.scrollTop < 1) {
       this._stickyScrollTop = true
       this._stickyScrollBottom = false
       if (
@@ -243,7 +247,7 @@ export class ScrollBoxRenderable extends BoxRenderable {
       this._stickyScrollBottom = false
     }
 
-    if (this.scrollLeft <= 0) {
+    if (this.scrollLeft < 1) {
       this._stickyScrollLeft = true
       this._stickyScrollRight = false
       if (
@@ -386,7 +390,10 @@ export class ScrollBoxRenderable extends BoxRenderable {
       id: `scroll-box-vertical-scrollbar-${this.internalId}`,
       orientation: "vertical",
       onChange: (position) => {
-        this.content.translateY = -position
+        // scrollPosition may carry sub-cell precision so the scrollbar thumb
+        // can render at 1/8-cell resolution. Content placement is cell-only,
+        // so floor here before applying to translateY.
+        this.content.translateY = -Math.floor(position)
         if (!this._isApplyingStickyScroll) {
           // Only mark as manual scroll if we're not at a sticky position and there's meaningful scrollable content
           const maxScrollTop = Math.max(0, this.scrollHeight - this.viewport.height)
@@ -409,7 +416,7 @@ export class ScrollBoxRenderable extends BoxRenderable {
       id: `scroll-box-horizontal-scrollbar-${this.internalId}`,
       orientation: "horizontal",
       onChange: (position) => {
-        this.content.translateX = -position
+        this.content.translateX = -Math.floor(position)
         if (!this._isApplyingStickyScroll) {
           // Only mark as manual scroll if we're not at a sticky position and there's meaningful scrollable content
           const maxScrollLeft = Math.max(0, this.scrollWidth - this.viewport.width)
@@ -590,11 +597,11 @@ export class ScrollBoxRenderable extends BoxRenderable {
 
     switch (this._stickyStart) {
       case "top":
-        return this.scrollTop === 0
+        return this.scrollTop < 1
       case "bottom":
         return this.scrollTop >= maxScrollTop
       case "left":
-        return this.scrollLeft === 0
+        return this.scrollLeft < 1
       case "right":
         return this.scrollLeft >= maxScrollLeft
       default:

@@ -550,3 +550,45 @@ describe("MouseParser protocol precedence", () => {
     expect(e.y).toBe(5)
   })
 })
+
+describe("MouseParser SGR-Pixels mode", () => {
+  let parser: MouseParser
+
+  beforeEach(() => {
+    parser = new MouseParser()
+  })
+
+  test("integer cell decoding by default (pixel mode off)", () => {
+    const e = parser.parseMouseEvent(encodeSGR(0, 10, 5, true))!
+    expect(e.x).toBe(10)
+    expect(e.y).toBe(5)
+  })
+
+  test("pixel coords convert to fractional cell coords", () => {
+    // encodeSGR sends wire = arg+1, decode does (wire-1)/cell, so the decoded
+    // value is exactly arg/cell. cell = 8px wide, 20px tall.
+    parser.setPixelMode(true, 8, 20)
+    const e = parser.parseMouseEvent(encodeSGR(0, 79, 45, true))!
+    expect(e.x).toBeCloseTo(79 / 8, 10) // 9.875
+    expect(e.y).toBeCloseTo(45 / 20, 10) // 2.25
+    // Sub-cell: a one-pixel move stays within the same cell row but advances
+    const e2 = parser.parseMouseEvent(encodeSGR(32, 79, 46, true))!
+    expect(Math.floor(e2.y)).toBe(Math.floor(e.y)) // still row 2
+    expect(e2.y).toBeGreaterThan(e.y) // 2.30 > 2.25
+  })
+
+  test("setPixelMode ignores non-positive cell size (stays integer)", () => {
+    parser.setPixelMode(true, 0, 17)
+    const e = parser.parseMouseEvent(encodeSGR(0, 12, 6, true))!
+    expect(e.x).toBe(12)
+    expect(e.y).toBe(6)
+  })
+
+  test("disabling pixel mode reverts to integer cells", () => {
+    parser.setPixelMode(true, 10, 20)
+    parser.setPixelMode(false, 0, 0)
+    const e = parser.parseMouseEvent(encodeSGR(0, 7, 3, true))!
+    expect(e.x).toBe(7)
+    expect(e.y).toBe(3)
+  })
+})

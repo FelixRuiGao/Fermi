@@ -22,6 +22,22 @@ type ParsedMouseSequence = {
 export class MouseParser {
   private mouseButtonsPressed = new Set<number>()
 
+  // SGR-Pixels (DECSET 1016) state. When the terminal reports mouse position
+  // in pixels and we know the cell pixel size, dividing wire coords by the
+  // cell size yields fractional cell coordinates — this is what makes
+  // scrollbar-thumb dragging move at sub-cell precision instead of snapping
+  // to whole rows. When inactive (terminal lacks 1016, or cell size unknown)
+  // the wire coords are already integer cells and pass through unchanged.
+  private pixelMode = false
+  private cellWidthPx = 0
+  private cellHeightPx = 0
+
+  public setPixelMode(active: boolean, cellWidthPx: number, cellHeightPx: number): void {
+    this.pixelMode = active && cellWidthPx > 0 && cellHeightPx > 0
+    this.cellWidthPx = cellWidthPx
+    this.cellHeightPx = cellHeightPx
+  }
+
   private static readonly SCROLL_DIRECTIONS: Record<number, "up" | "down" | "left" | "right"> = {
     0: "up",
     1: "down",
@@ -179,11 +195,17 @@ export class MouseParser {
       }
     }
 
+    // In SGR-Pixels mode wireX/wireY are 1-based pixel coordinates; convert
+    // to 0-based fractional cell coordinates. Otherwise they are 1-based cell
+    // coordinates and only need the 1→0 base shift.
+    const x = this.pixelMode ? (wireX - 1) / this.cellWidthPx : wireX - 1
+    const y = this.pixelMode ? (wireY - 1) / this.cellHeightPx : wireY - 1
+
     return {
       type,
       button: button === 3 ? 0 : button,
-      x: wireX - 1,
-      y: wireY - 1,
+      x,
+      y,
       modifiers,
       scroll: scrollInfo,
     }
