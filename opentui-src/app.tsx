@@ -3027,14 +3027,9 @@ export function OpenTuiApp({
       pendingMessages={queuedInputs.length > 0 ? (
         <box flexDirection="column" gap={0}>
           {queuedInputs.map((queued) => (
-            <box
-              key={queued.id}
-              flexDirection="row"
-              border={["left"]}
-              borderStyle="heavy"
-              borderColor={theme.colors.accent}
-            >
-              <box paddingLeft={1} paddingRight={1} flexGrow={1}>
+            <box key={queued.id} flexDirection="row">
+              <box width={1} backgroundColor={theme.colors.accent} />
+              <box paddingLeft={1} paddingRight={1} flexGrow={1} backgroundColor={theme.colors.userWash}>
                 <text fg={theme.colors.dim} content={queued.text} wrapMode="word" width="100%" />
               </box>
             </box>

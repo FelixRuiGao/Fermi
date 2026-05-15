@@ -16,6 +16,7 @@ import { DARK_TOKENS } from "./tokens-dark.js";
 export const LIGHT_TOKENS: DisplayThemeTokens = {
   colors: {
     userBg: "#eef0f3cc",        // raised surface w/ 80% alpha for subtle blend
+    userWash: "#0969da33",      // accent @ ~20% — faint scannable wash
     border: "#d0d7de",          // standard divider
     scrollbarThumb: "#1f2328",
     scrollbarTrack: "#afb8c1",

@@ -8,6 +8,7 @@ import type { DisplayThemeTokens } from "./types.js";
 export const DARK_TOKENS: DisplayThemeTokens = {
   colors: {
     userBg: "#2a2632",
+    userWash: "#8ab4f83a",      // accent @ ~23% — faint scannable wash
     border: "#2a2630",
     scrollbarThumb: "#d0d6e0",
     scrollbarTrack: "#454a54",

@@ -12,6 +12,10 @@ export type DeepPartial<T> = {
 
 export interface DisplayThemeColorTokens {
   userBg: string;
+  /** Faint accent wash behind user messages — a scannable anchor while
+   * scrolling without the weight of the old solid surface. Expect an
+   * #RRGGBBAA accent at very low alpha. */
+  userWash: string;
   border: string;
   scrollbarThumb: string;
   scrollbarTrack: string;

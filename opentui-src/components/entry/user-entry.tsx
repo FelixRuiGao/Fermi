@@ -50,13 +50,9 @@ function UserEntryInner(
   return (
     <box>
       <box height={1} />
-      <box
-        flexDirection="row"
-        border={["left"]}
-        borderStyle="heavy"
-        borderColor={colors.accent}
-      >
-        <box paddingLeft={1} paddingRight={1} flexGrow={1}>
+      <box flexDirection="row">
+        <box width={1} backgroundColor={colors.accent} />
+        <box paddingLeft={1} paddingRight={1} flexGrow={1} backgroundColor={colors.userWash}>
           {styledContent
             ? <text content={styledContent} wrapMode="word" width="100%" />
             : <text fg={colors.text} content={text} wrapMode="word" width="100%" />
