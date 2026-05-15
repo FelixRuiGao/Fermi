@@ -728,6 +728,66 @@ This is a paragraph after the table.`
   `)
 })
 
+for (const scenario of [
+  {
+    name: "table",
+    prefix: `| Name |
+|---|
+| Alice |`,
+  },
+  {
+    name: "fenced code block",
+    prefix: "```ts\nconst value = 1\n```",
+  },
+  {
+    name: "blockquote",
+    prefix: "> quoted context",
+  },
+]) {
+  for (const separator of [
+    {
+      name: "with blank lines",
+      markdown: `
+
+---
+
+### UI 双轨
+
+- **OpenTUI**（\`opentui-src/\`）—— 终端界面
+
+---
+
+### 技术栈
+
+TypeScript`,
+    },
+    {
+      name: "without blank lines",
+      markdown: `
+---
+### UI 双轨
+- **OpenTUI**（\`opentui-src/\`）—— 终端界面
+---
+### 技术栈
+TypeScript`,
+    },
+  ]) {
+    test(`thematic break after ${scenario.name} does not start synthetic front matter ${separator.name}`, async () => {
+      const markdown = `${scenario.prefix}${separator.markdown}`
+
+      const rendered = await renderMarkdown(markdown)
+
+      expect(rendered).toContain("UI 双轨")
+      expect(rendered).toContain("- OpenTUI（opentui-src/）—— 终端界面")
+      expect(rendered).toContain("技术栈")
+      expect(rendered).not.toContain("### UI 双轨")
+      expect(rendered).not.toContain("**OpenTUI**")
+      expect(rendered).not.toContain("`opentui-src/`")
+      expect(rendered).not.toContain("### 技术栈")
+    })
+  }
+}
+
 test("selection across markdown table includes table data", async () => {
   const markdown = `Intro line above table.
 

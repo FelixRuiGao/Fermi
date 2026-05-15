@@ -17,6 +17,7 @@ import {
 import type { TreeSitterClient } from "../lib/tree-sitter/index.js"
 import { infoStringToFiletype } from "../lib/tree-sitter/resolve-ft.js"
 import { parseMarkdownIncremental, type ParseState } from "./markdown-parser.js"
+import { createMarkdownSyntheticBlockHighlighter } from "./MarkdownHighlightContext.js"
 import type { OptimizedBuffer } from "../buffer.js"
 import { detectLinks } from "../lib/detect-links.js"
 
@@ -516,6 +517,7 @@ export class MarkdownRenderable extends Renderable {
       drawUnstyledText: false,
       streaming: true,
       reserveHeightWhileStreaming: this._streaming,
+      onHighlight: createMarkdownSyntheticBlockHighlighter(() => this._treeSitterClient),
       onChunks: this._linkifyMarkdownChunks,
       treeSitterClient: this._treeSitterClient,
       width: "100%",

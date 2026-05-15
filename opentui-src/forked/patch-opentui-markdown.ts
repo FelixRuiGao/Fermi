@@ -2,6 +2,7 @@
 import {
   BoxRenderable,
   CodeRenderable,
+  createMarkdownSyntheticBlockHighlighter,
   MarkdownRenderable,
   RGBA,
   StyledText,
@@ -277,6 +278,7 @@ if (isFermiMarkdownPatchDisabled()) {
       conceal: this._conceal,
       drawUnstyledText: false,
       streaming: true,
+      onHighlight: createMarkdownSyntheticBlockHighlighter(() => this._treeSitterClient),
       onChunks: this._linkifyMarkdownChunks as any,
       treeSitterClient: this._treeSitterClient as any,
       width: "100%",
