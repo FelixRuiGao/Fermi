@@ -8,6 +8,7 @@ const COLORS = {
   userBg: "#1f1c26",
   border: "#2a2630",
   separator: "#2a2630",
+  scrollbarThumb: "#d0d6e0",
   scrollbarTrack: "#2a263044",
   text: "#d0d6e0",
   dim: "#636a76",

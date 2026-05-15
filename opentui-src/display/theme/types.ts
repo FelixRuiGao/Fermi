@@ -13,6 +13,7 @@ export type DeepPartial<T> = {
 export interface DisplayThemeColorTokens {
   userBg: string;
   border: string;
+  scrollbarThumb: string;
   scrollbarTrack: string;
   text: string;
   dim: string;

@@ -17,7 +17,8 @@ export const LIGHT_TOKENS: DisplayThemeTokens = {
   colors: {
     userBg: "#eef0f3cc",        // raised surface w/ 80% alpha for subtle blend
     border: "#d0d7de",          // standard divider
-    scrollbarTrack: "#00000055",
+    scrollbarThumb: "#1f2328",
+    scrollbarTrack: "#afb8c1",
     text: "#1f2328",            // primary fg
     dim: "#656d76",             // secondary fg — readable but quieter
     muted: "#afb8c1",           // tertiary fg — close to surface

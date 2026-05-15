@@ -9,7 +9,8 @@ export const DARK_TOKENS: DisplayThemeTokens = {
   colors: {
     userBg: "#2a2632",
     border: "#2a2630",
-    scrollbarTrack: "#ffffff55",
+    scrollbarThumb: "#d0d6e0",
+    scrollbarTrack: "#454a54",
     text: "#d0d6e0",
     dim: "#636a76",
     muted: "#454a54",

@@ -62,8 +62,8 @@ export function ScrollViewport({
       verticalScrollbarOptions={{
         paddingLeft: 1,
         trackOptions: {
-          backgroundColor: "transparent",
-          foregroundColor: colors.scrollbarTrack,
+          backgroundColor: colors.scrollbarTrack,
+          foregroundColor: colors.scrollbarThumb,
         },
       }}
       scrollAcceleration={scrollAccel}
