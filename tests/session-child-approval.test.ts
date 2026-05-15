@@ -201,7 +201,10 @@ describe("child approval routing", () => {
     expect(root._saveChildSession).toHaveBeenCalledWith(handle);
   });
 
-  it("notifies the parent inbox when a child blocks on approval", () => {
+  it("does not notify the parent inbox when a child blocks on approval", () => {
+    // Per-approval system_notice notifications were intentionally removed
+    // (commit 7efb5d1f): a blocked child surfaces via check_status
+    // (lifecycle: blocked), not via noisy inbox messages to the parent.
     const root = makeSessionLike();
     root._agentState = "working";
     const child = makeChildSession();
@@ -210,12 +213,7 @@ describe("child approval routing", () => {
 
     root._finishChildTurn(handle);
 
-    expect(root._inbox).toHaveLength(1);
-    expect(root._inbox[0]).toMatchObject({
-      type: "system_notice",
-      sender: "system",
-      content: expect.stringContaining("waiting for user approval"),
-    });
+    expect(root._inbox).toHaveLength(0);
     expect(handle.lifecycle).toBe("blocked");
     expect(root._hasActiveAgents()).toBe(false);
   });
@@ -344,7 +342,11 @@ describe("child approval routing", () => {
     });
   });
 
-  it("keeps mass-interrupted child completions out of the parent inbox", () => {
+  it("delivers mass-interrupted child completions to the parent inbox", () => {
+    // _deliverMessage was unified to "inbox push only" (commit b7516889):
+    // the cause !== user_mass_interrupt guard was removed. The child's
+    // termination is now delivered as a peer_message and drained as a
+    // hidden <system-message> entry — context for the parent, not TUI noise.
     const root = makeSessionLike();
     root._agentState = "working";
     const child = makeChildSession({ pendingAsk: null, lastTurnEndStatus: "interrupted" });
@@ -357,7 +359,11 @@ describe("child approval routing", () => {
 
     const agentResult = root._log.find((entry: any) => entry.type === "agent_result");
     expect(agentResult).toBeTruthy();
-    expect(root._inbox).toHaveLength(0);
+    expect(root._inbox).toHaveLength(1);
+    expect(root._inbox[0]).toMatchObject({
+      type: "peer_message",
+      sender: "worker-1",
+    });
   });
 
   it("passes the active abort signal into approval-resumed tool execution", async () => {

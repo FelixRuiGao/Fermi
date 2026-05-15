@@ -20,6 +20,7 @@ describe("OpenTUI presentation transform", () => {
         text: "bash mkdir -p /tmp/demo",
         meta: {
           toolName: "bash",
+          toolCallId: "call-old",
           toolArgs: { command: "mkdir -p /tmp/demo" },
           toolExecState: "completed",
           toolStreamState: "closed",
@@ -31,6 +32,7 @@ describe("OpenTUI presentation transform", () => {
         text: "OK",
         meta: {
           toolName: "bash",
+          toolCallId: "call-old",
           isError: false,
         },
       }),
@@ -40,6 +42,7 @@ describe("OpenTUI presentation transform", () => {
         text: "write_file /tmp/demo.txt",
         meta: {
           toolName: "write_file",
+          toolCallId: "call-new",
           toolArgs: { path: "/tmp/demo.txt", content: "hello" },
           toolExecState: "running",
           toolStreamState: "closed",
@@ -95,8 +98,9 @@ describe("OpenTUI presentation transform", () => {
         toolInlineResult: {
           text: "line 1\nline 2",
           dim: false,
-          maxLines: 50,
+          maxLines: 8,
         },
+        toolResultFullText: "line 1\nline 2",
       },
     ]);
   });
@@ -109,6 +113,7 @@ describe("OpenTUI presentation transform", () => {
         text: "ask",
         meta: {
           toolName: "ask",
+          toolCallId: "call-ask",
           toolArgs: {
             questions: [
               {
@@ -143,6 +148,7 @@ describe("OpenTUI presentation transform", () => {
         ].join("\n"),
         meta: {
           toolName: "ask",
+          toolCallId: "call-ask",
           isError: false,
         },
       }),

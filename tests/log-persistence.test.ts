@@ -115,16 +115,16 @@ describe("saveLog + loadLog", () => {
     expect(loaded.entries[1].roundIndex).toBe(3);
   });
 
-  it("preserves summarized/discarded flags", () => {
+  it("preserves discarded flag", () => {
+    // NOTE: per-entry `summarized` / `summarizedBy` flags were removed in the
+    // append-only summary refactor — visibility is now computed dynamically by
+    // the projection layer (backward-scan + coveredContextIds). Only the
+    // `discarded` flag survives on the entry and must round-trip.
     const entries = sampleLog();
-    entries[1].summarized = true;
-    entries[1].summarizedBy = "sum-001";
     entries[2].discarded = true;
 
     saveLog(testDir, sampleMeta(), entries);
     const loaded = loadLog(testDir);
-    expect(loaded.entries[1].summarized).toBe(true);
-    expect(loaded.entries[1].summarizedBy).toBe("sum-001");
     expect(loaded.entries[2].discarded).toBe(true);
   });
 
