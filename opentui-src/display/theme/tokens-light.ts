@@ -39,8 +39,8 @@ export const LIGHT_TOKENS: DisplayThemeTokens = {
   layout: DARK_TOKENS.layout,
   branding: {
     logoLines: DARK_TOKENS.branding.logoLines,
-    // Saturated bounded gradient — all stops have ≥3:1 contrast on white.
-    logoGradient: ["#4f46e5", "#5b3fdc", "#6f3ad0", "#7c3aed", "#9333ea", "#a21caf", "#86198f"],
+    // Single-hue luminance ramp (indigo, bright → dim, top → bottom); all stops ≥3:1 on white.
+    logoGradient: ["#6b63ea", "#5d54e7", "#5249e6", "#4f46e5", "#4439c8", "#3a30ad", "#312892"],
     sidebarWordmark: DARK_TOKENS.branding.sidebarWordmark,
     sidebarGradientIndices: DARK_TOKENS.branding.sidebarGradientIndices,
   },

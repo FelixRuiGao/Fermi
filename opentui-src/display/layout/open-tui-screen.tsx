@@ -10,7 +10,12 @@ import type { CheckboxPickerState } from "../../../src/ui/checkbox-picker.js";
 import type { PresentationEntry } from "../../presentation/types.js";
 import type { ChildSessionSnapshot } from "../../../src/session-tree-types.js";
 import type { ComposerTokenVisuals } from "../../composer-tokens.js";
+import { createTextAttributes } from "@opentui/core";
 import { PresentationPanel } from "../../components/entry/presentation-panel.js";
+import { VERSION } from "../../../src/version.js";
+import { GlowText } from "../glow-text.js";
+
+const ATTRS_BOLD = createTextAttributes({ bold: true });
 import { DetailThinkingTab } from "../../components/entry/detail-thinking-tab.js";
 import { DetailToolTab } from "../../components/entry/detail-tool-tab.js";
 import { InputArea } from "../../input/input-area.js";
@@ -244,6 +249,25 @@ export function OpenTuiScreen({
   const hasUserMessage = presentationEntries.some((e) => e.kind === "user");
   const showLogoInScroll = !hasUserMessage
     && terminal.width >= theme.layout.minTerminalWidthForLogoHeader;
+  // Welcome wordmark vertical placement, keyed to ABSOLUTE terminal
+  // height (not the conversation viewport). The viewport shrinks when a
+  // command/picker panel opens; anchoring to terminal height instead
+  // keeps the logo perfectly still. Sits slightly above optical center
+  // (~40%), clamped so it never collides with the footer/input on
+  // short terminals.
+  // Welcome stage: "Fermi Here." headline + version·cwd + key hints.
+  // 4 lines total (headline, blank, meta, hints), centered at ~40% of
+  // absolute terminal height so it never shifts when panels open.
+  const welcomeCwd = shortenPath(process.cwd());
+  const welcomeMetaLine = `v${VERSION} · ${welcomeCwd}`;
+  const welcomeStageHeight = 4;
+  const welcomeTop = Math.max(
+    1,
+    Math.min(
+      Math.round(terminal.height * 0.4) - Math.floor(welcomeStageHeight / 2),
+      terminal.height - welcomeStageHeight - 6,
+    ),
+  );
 
   // Shared InputArea element — rendered inside scrollbox for main view, outside for detail tabs
   const inputAreaElement = (
@@ -458,6 +482,42 @@ export function OpenTuiScreen({
       {statusPanel}
       {inputAreaElement}
       {overlaysBlock}
+
+      {/*
+        Welcome wordmark — absolutely positioned against terminal height,
+        OUTSIDE the conversation scrollbox. Decoupled from the viewport so
+        opening a slash/command/picker panel (which grows the in-flow
+        footer and shrinks the scrollbox) leaves it perfectly still. Gated
+        off the moment a user message exists so it never paints over a
+        real conversation.
+      */}
+      {showLogoInScroll ? (
+        <box
+          position="absolute"
+          top={welcomeTop}
+          left={0}
+          width={terminal.width}
+          zIndex={5}
+          flexDirection="column"
+          alignItems="center"
+        >
+          <GlowText
+            text="Fermi Here."
+            fromColor="#c0d8fc"
+            toColor="#7a82e8"
+          />
+          <box height={1} />
+          <text fg={theme.colors.dim} content={welcomeMetaLine} />
+          <box flexDirection="row">
+            <text fg={theme.colors.text} attributes={ATTRS_BOLD} content="/ " />
+            <text fg={theme.colors.dim} content="commands · " />
+            <text fg={theme.colors.text} attributes={ATTRS_BOLD} content="@ " />
+            <text fg={theme.colors.dim} content="files · " />
+            <text fg={theme.colors.text} attributes={ATTRS_BOLD} content="/help " />
+            <text fg={theme.colors.dim} content="shortcuts" />
+          </box>
+        </box>
+      ) : null}
 
       {/* Agent list modal (absolute positioned, above everything) */}
       <AgentListModal

@@ -8,13 +8,19 @@ import { PresentationEntryComponent } from "./presentation-entry.js";
 
 const ATTRS_BOLD = createTextAttributes({ bold: true });
 
-function LogoBlock(
-  { lines, gradient }: { lines: readonly string[]; gradient: readonly string[] },
+/**
+ * Brand wordmark. Horizontally centered within its container; the
+ * caller controls vertical placement (welcome screen renders this in
+ * an absolutely-positioned layer keyed to absolute terminal height, so
+ * it never shifts when the conversation viewport resizes).
+ */
+export function LogoBlock(
+  { lines, color }: { lines: readonly string[]; color: string },
 ): React.ReactNode {
   return (
-    <box flexDirection="column" width="100%" paddingBottom={1}>
+    <box flexDirection="column" width="100%" alignItems="center" paddingBottom={1}>
       {lines.map((line, index) => (
-        <text key={`logo-${index}`} fg={gradient[index]} content={line} />
+        <text key={`logo-${index}`} fg={color} content={line} />
       ))}
     </box>
   );
@@ -39,9 +45,15 @@ function PresentationPanelInner(
     onAgentClick,
   }: PresentationPanelProps,
 ): React.ReactNode {
+  // Logo is no longer rendered here: the welcome wordmark lives in an
+  // absolutely-positioned layer in OpenTuiScreen (keyed to terminal
+  // height) so it stays put when the conversation viewport resizes.
+  // `showLogoInScroll` / `branding` are kept on the prop type for the
+  // caller's gating but are intentionally unused in this subtree.
+  void showLogoInScroll;
+  void branding;
   return (
     <box flexDirection="column" gap={0}>
-      {showLogoInScroll ? <LogoBlock lines={branding.logoLines} gradient={branding.logoGradient} /> : null}
       {selectedChildId ? (
         <box flexDirection="column" paddingLeft={2} paddingBottom={1}>
           <text fg={colors.accent} attributes={ATTRS_BOLD} content={`SUB-SESSION ${selectedChildId}`} />
