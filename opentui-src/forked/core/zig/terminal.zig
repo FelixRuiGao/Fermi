@@ -645,7 +645,7 @@ pub fn restoreTerminalModes(self: *Terminal, tty: anytype) !void {
 /// Parsing these is not complete yet
 pub fn processCapabilityResponse(self: *Terminal, response: []const u8) void {
     // DECRPM responses
-    if (std.mem.indexOf(u8, response, "1016;2$y")) |_| {
+    if (std.mem.indexOf(u8, response, "1016;1$y") != null or std.mem.indexOf(u8, response, "1016;2$y") != null) {
         self.caps.sgr_pixels = true;
     }
     if (std.mem.indexOf(u8, response, "2027;2$y")) |_| {

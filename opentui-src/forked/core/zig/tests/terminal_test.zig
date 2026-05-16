@@ -69,6 +69,7 @@ test "parseXtversion - full ghostty response" {
     try testing.expectEqualStrings("ghostty", term.getTerminalName());
     try testing.expectEqualStrings("1.1.3", term.getTerminalVersion());
     try testing.expect(term.term_info.from_xtversion);
+    try testing.expect(term.caps.sgr_pixels);
 }
 
 test "environment variables - should be overridden by xtversion" {

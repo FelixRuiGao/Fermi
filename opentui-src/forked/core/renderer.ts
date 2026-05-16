@@ -2676,8 +2676,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return false
     }
 
+    const hadSgrPixels = this._capabilities?.sgr_pixels ?? false
     this.lib.processCapabilityResponse(this.rendererPtr, sequence)
     this._capabilities = this.lib.getTerminalCapabilities(this.rendererPtr)
+    if (hadSgrPixels || sequence.includes("\x1b[?1016;1$y") || sequence.includes("\x1b[?1016;2$y")) {
+      this._capabilities.sgr_pixels = true
+    }
     if (hasStandardCapabilitySignature) {
       this.forceFullRepaintRequested = true
       this.requestRender()
