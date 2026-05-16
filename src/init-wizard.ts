@@ -221,30 +221,15 @@ function buildWizardModelPickerTree(
   currentSelection?: ModelSelection,
   opts?: {
     allowedProviderIds?: Iterable<string>;
-    includeDoneAction?: boolean;
     includeLocalDiscoverActions?: boolean;
   },
 ): ModelPickerTreeNode[] {
-  const tree = buildModelPickerTree({
+  return buildModelPickerTree({
     session: createWizardPickerSession(configuredProviders, currentSelection),
     allowedProviderIds: opts?.allowedProviderIds,
     includeAddProviderAction: false,
     includeLocalDiscoverActions: opts?.includeLocalDiscoverActions,
   });
-
-  if (opts?.includeDoneAction && currentSelection) {
-    tree.push({
-      kind: "action",
-      id: "__done__",
-      value: "__done__",
-      label: `Done — use ${describeWizardModelSelection(currentSelection)}`,
-      isCurrent: false,
-      credentialState: "not_required",
-      keyMissing: false,
-    });
-  }
-
-  return tree;
 }
 
 async function stepSelectModelTreeValue(
@@ -292,22 +277,44 @@ async function stepPickTierModelFromTree(
   configuredProviders: Map<string, ProviderEntry>,
   tierName: "high" | "medium" | "low",
 ): Promise<ModelSelection | undefined> {
-  const allowedProviderIds = new Set(configuredProviders.keys());
-  if (allowedProviderIds.size === 0) return undefined;
+  while (true) {
+    const tree = buildWizardModelPickerTree(configuredProviders, undefined, {
+      includeLocalDiscoverActions: true,
+    });
+    if (tree.length === 0) return undefined;
 
-  const tree = buildWizardModelPickerTree(configuredProviders, undefined, {
-    allowedProviderIds,
-    includeLocalDiscoverActions: false,
-  });
-  if (tree.length === 0) return undefined;
+    const picked = await stepSelectModelTreeValue(
+      tree,
+      `  ${tierName} tier: Select model`,
+    );
+    if (!picked) return undefined;
 
-  const picked = await stepSelectModelTreeValue(
-    tree,
-    `  ${tierName} tier: Select model`,
-  );
-  if (!picked) return undefined;
+    if (picked.endsWith(":__discover__")) {
+      const providerId = picked.split(":")[0];
+      const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === providerId);
+      if (!preset) continue;
+      console.log();
+      const result = await stepConfigureProvider(preset);
+      if (!result.skipped) {
+        configuredProviders.set(result.providerId, result.providerEntry);
+        if (result.providerEntry.model) {
+          return resolveWizardModelSelection(`${result.providerId}:${result.providerEntry.model}`);
+        }
+      }
+      continue;
+    }
 
-  return resolveWizardModelSelection(picked);
+    const modelSelection = resolveWizardModelSelection(picked);
+    const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === modelSelection.providerId);
+    if (preset && !isProviderConfigured(preset, configuredProviders)) {
+      console.log();
+      const result = await stepConfigureProvider(preset);
+      if (result.skipped) continue;
+      configuredProviders.set(result.providerId, result.providerEntry);
+    }
+
+    return modelSelection;
+  }
 }
 
 function describeTierEntry(entry: ModelTierEntry): string {
@@ -515,22 +522,12 @@ async function stepProviderModelPicker(): Promise<{
   let currentSelection: ModelSelection | undefined;
 
   while (true) {
-    const tree = buildWizardModelPickerTree(providers, currentSelection, {
-      includeDoneAction: currentSelection !== undefined,
+    const tree = buildWizardModelPickerTree(providers, undefined, {
       includeLocalDiscoverActions: true,
     });
-    const picked = await stepSelectModelTreeValue(
-      tree,
-      currentSelection
-        ? `Current: ${describeWizardModelSelection(currentSelection)}`
-        : "Select a model",
-    );
+    const picked = await stepSelectModelTreeValue(tree, "Select a model");
 
     if (!picked) continue;
-    if (picked === "__done__") {
-      if (currentSelection) return { selection: currentSelection, providers };
-      continue;
-    }
 
     if (picked.endsWith(":__discover__")) {
       const providerId = picked.split(":")[0];
@@ -543,11 +540,14 @@ async function stepProviderModelPicker(): Promise<{
       if (!result.skipped) {
         providers.set(result.providerId, result.providerEntry);
         if (result.providerEntry.model) {
-          currentSelection = {
-            configName: `${result.providerId}:${result.providerEntry.model}`,
-            providerId: result.providerId,
-            selectionKey: result.providerEntry.model,
-            modelId: result.providerEntry.model,
+          return {
+            selection: {
+              configName: `${result.providerId}:${result.providerEntry.model}`,
+              providerId: result.providerId,
+              selectionKey: result.providerEntry.model,
+              modelId: result.providerEntry.model,
+            },
+            providers,
           };
         }
       }
@@ -563,7 +563,7 @@ async function stepProviderModelPicker(): Promise<{
       providers.set(result.providerId, result.providerEntry);
     }
 
-    currentSelection = modelSelection;
+    return { selection: modelSelection, providers };
   }
 }
 
@@ -740,13 +740,14 @@ export async function runInitWizard(): Promise<WizardResult> {
       switch (step) {
         case Step.CHECK_EXISTING:
           console.log("\n  Setup cancelled.\n");
-          throw err;
+          process.exit(0);
+          break;
         case Step.SELECT_MODEL:
           if (hasExisting) {
             step = Step.CHECK_EXISTING;
           } else {
             console.log("\n  Setup cancelled.\n");
-            throw err;
+            process.exit(0);
           }
           break;
         case Step.THINKING_LEVEL:
