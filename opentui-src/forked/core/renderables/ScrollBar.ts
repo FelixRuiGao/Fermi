@@ -86,7 +86,6 @@ export class ScrollBarRenderable extends Renderable {
   set viewportSize(value: number) {
     if (value === this.viewportSize) return
     this._viewportSize = value
-    this.slider.viewPortSize = Math.max(1, this._viewportSize)
     this.recalculateVisibility()
     this.updateSliderFromScrollState()
     this.scrollPosition = this.scrollPosition
@@ -244,6 +243,7 @@ export class ScrollBarRenderable extends Renderable {
 
     this.slider.min = 0
     this.slider.max = scrollRange
+    this.slider.viewPortSize = Math.max(1, this._viewportSize)
 
     this.slider.value = Math.min(this._scrollPosition, scrollRange)
   }
