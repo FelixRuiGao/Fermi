@@ -518,6 +518,8 @@ export class TextareaRenderable extends EditBufferRenderable {
       }
 
       this.editBuffer.deleteRange(cursor.row, 0, cursor.row, cursor.col)
+    } else if (cursor.row > 0) {
+      this.editBuffer.deleteCharBackward()
     }
 
     this.contentChanged()
