@@ -104,6 +104,31 @@ describe("CLI startup", () => {
     ]);
   });
 
+  it("relaunches after applying a staged update before launching the TUI", async () => {
+    writeSettings({
+      providers: {
+        openai: { api_key_env: "FERMI_TEST_KEY" },
+      },
+      auto_update: true,
+    });
+    stagedVersion = "9.9.9";
+
+    await main(["node", "fermi", "--verbose"], startupDeps({
+      relaunchAfterUpdate: (argv) => {
+        events.push(`relaunch:${argv.slice(2).join(" ")}`);
+      },
+      launchTui: async () => {
+        events.push("launch");
+      },
+    }));
+
+    expect(events).toEqual([
+      "dotenv",
+      "applyStaged",
+      "relaunch:--verbose",
+    ]);
+  });
+
   it("runs the init wizard once before launch when no providers are configured", async () => {
     writeSettings({ auto_update: true });
 

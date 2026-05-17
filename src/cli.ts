@@ -12,6 +12,7 @@
  */
 
 import { realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -36,6 +37,7 @@ export interface MainDeps {
   loadGlobalSettings?: typeof loadGlobalSettings;
   applyStaged?: typeof applyStaged;
   checkForUpdates?: typeof checkForUpdates;
+  relaunchAfterUpdate?: (argv: string[]) => void;
   runInitWizard?: () => Promise<unknown>;
   runServerMode?: (opts: {
     workDir: string;
@@ -60,6 +62,14 @@ const VALUE_FLAGS = new Set([
   "--model",
   "--agent",
 ]);
+
+function relaunchCurrentBinary(argv: string[]): void {
+  const result = spawnSync(process.execPath, argv.slice(2), {
+    stdio: "inherit",
+    env: process.env,
+  });
+  process.exit(result.status ?? 0);
+}
 
 /**
  * Handle `fermi --resume <id>` before Commander parses argv.
@@ -346,6 +356,16 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
 
   // Apply staged update from a previous background download
   const appliedVersion = (deps.applyStaged ?? applyStaged)(homeDir);
+  if (appliedVersion) {
+    if (deps.relaunchAfterUpdate) {
+      deps.relaunchAfterUpdate(argv);
+      return;
+    }
+    if (!deps.applyStaged) {
+      relaunchCurrentBinary(argv);
+      return;
+    }
+  }
   const effectiveVersion = appliedVersion ?? VERSION;
 
   // Start update check in background (non-blocking) if enabled
