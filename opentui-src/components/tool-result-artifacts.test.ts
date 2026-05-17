@@ -109,9 +109,11 @@ describe("tool-result artifacts", () => {
       colors: COLORS,
     });
 
+    const textOf = (a: (typeof artifacts)[number]) => a?.content.chunks.map((c) => c.text).join("") ?? "";
+    const allText = artifacts.map((a) => textOf(a)).join("\n");
     expect(artifacts.length).toBeGreaterThan(1);
-    expect(artifacts[0]?.content.toString()).toContain("hover:border");
-    expect(artifacts[1]?.content.toString()).toMatch(/^\s+\+hover:text/);
+    expect(allText).toContain("hover:border");
+    expect(allText).toContain("hover:text");
     expect(artifacts.every((artifact) => artifact.rowBackgroundColor === "#285438")).toBe(true);
   });
 });

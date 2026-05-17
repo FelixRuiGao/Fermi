@@ -439,6 +439,8 @@ test("table inside code block should NOT be formatted", async () => {
     |---|---|---|
     | Should | Stay | Raw |
 
+
+
     ┌────┬─────────┐
     │Real│Table    │
     ├────┼─────────┤
@@ -465,8 +467,9 @@ Some text between.
     ├──────┼─┤
     │X     │Y│
     └──────┴─┘
-
     Some text between.
+
+
     ┌────────────┬──┐
     │Table2      │BB│
     ├────────────┼──┤
@@ -718,12 +721,13 @@ This is a paragraph after the table.`
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     This is a paragraph before the table.
+
+
     ┌─────┬───┐
     │Name │Age│
     ├─────┼───┤
     │Alice│30 │
     └─────┴───┘
-
     This is a paragraph after the table."
   `)
 })
@@ -873,9 +877,12 @@ And here is more text after.`
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     Here is some code:
+
+
     function hello() {
       return "world";
     }
+
 
     And here is more text after."
   `)
@@ -897,9 +904,14 @@ fn main() {}
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     First block:
+
+
     print("hello")
 
+
     Second block:
+
+
     fn main() {}"
   `)
 })
@@ -1225,9 +1237,11 @@ Visit [GitHub](https://github.com) for more.
 
     Code Example
 
+
     const md = new MarkdownRenderable(ctx, {
       content: "# Hello",
     })
+
 
     Links
 
@@ -1403,6 +1417,8 @@ console.log(x);`
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     Here is some code:
+
+
     const x = 1;
     console.log(x);"
   `)
@@ -1547,6 +1563,8 @@ const x = 1;
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     Text before
+
+
     const x = 1;"
   `)
 })

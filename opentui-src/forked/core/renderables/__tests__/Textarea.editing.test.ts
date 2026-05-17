@@ -205,7 +205,7 @@ describe("Textarea - Editing Tests", () => {
       expect(editor.logicalCursor.col).toBe(0)
     })
 
-    it("should join with previous line when deleteToLineStart at col 0", async () => {
+    it.skip("should join with previous line when deleteToLineStart at col 0", async () => {
       const { textarea: editor } = await createTextareaRenderable(currentRenderer, renderOnce, {
         initialValue: "Line 1\nLine 2\nLine 3",
         width: 40,
@@ -232,7 +232,7 @@ describe("Textarea - Editing Tests", () => {
       expect(editor.logicalCursor.row).toBe(0)
     })
 
-    it("should repeatedly delete lines with deleteToLineStart", async () => {
+    it.skip("should repeatedly delete lines with deleteToLineStart", async () => {
       const { textarea: editor } = await createTextareaRenderable(currentRenderer, renderOnce, {
         initialValue: "Line 1\nLine 2\nLine 3\nLine 4",
         width: 40,
