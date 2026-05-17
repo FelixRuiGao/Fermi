@@ -256,23 +256,7 @@ export class CommandRegistry {
 // ------------------------------------------------------------------
 
 async function cmdHelp(ctx: CommandContext, _args: string): Promise<void> {
-  const lines: string[] = ["Commands:"];
-  for (const cmd of ctx.commandRegistry.getAll()) {
-    lines.push(`  ${cmd.name}  ${cmd.description}`);
-  }
-
-  lines.push("");
-  lines.push("Shortcuts:");
-  lines.push("  Enter        Send message");
-  lines.push("  Option+Enter Insert newline");
-  lines.push("  Ctrl+N       Insert newline");
-  lines.push("  Ctrl+G       Toggle markdown raw view");
-  lines.push("  Cmd+Delete   Delete to line start (Ghostty/kitty protocol)");
-  lines.push("  Alt+Backspace/Ctrl+W Delete previous word");
-  lines.push("  Ctrl+C       Cancel / Exit");
-  lines.push("  @filename    Attach file");
-
-  ctx.showMessage(lines.join("\n"));
+  ctx.showMessage("__help_panel__");
 }
 
 async function cmdNew(ctx: CommandContext, _args: string): Promise<void> {

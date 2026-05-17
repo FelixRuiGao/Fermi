@@ -37,6 +37,7 @@ import {
   CommandOverlayView,
   CommandPickerView,
   OAuthOverlayView,
+  HelpPanelView,
   PromptSecretView,
   PromptSelectView,
 } from "../overlays/views.js";
@@ -91,6 +92,7 @@ export interface OpenTuiScreenProps {
   promptSecret: PromptSecretState | null;
   promptSecretInputRef: React.RefObject<InputRenderable | null>;
   oauthOverlay: OAuthOverlayState | null;
+  helpPanel: boolean;
   onOverlayItemClick: (index: number) => void;
   onCommandPickerItemClick: (index: number) => void;
   onCheckboxPickerItemClick: (index: number) => void;
@@ -181,6 +183,7 @@ export function OpenTuiScreen({
   promptSecret,
   promptSecretInputRef,
   oauthOverlay,
+  helpPanel,
   onOverlayItemClick,
   onCommandPickerItemClick,
   onCheckboxPickerItemClick,
@@ -375,6 +378,11 @@ export function OpenTuiScreen({
       />
       <OAuthOverlayView
         state={oauthOverlay}
+        theme={theme}
+        contentWidth={pickerContentWidth}
+      />
+      <HelpPanelView
+        visible={helpPanel}
         theme={theme}
         contentWidth={pickerContentWidth}
       />

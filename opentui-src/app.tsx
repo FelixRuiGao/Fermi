@@ -462,6 +462,7 @@ export function OpenTuiApp({
   const [commandPicker, setCommandPicker] = useState<CommandPickerState | null>(null);
   const [checkboxPicker, setCheckboxPicker] = useState<CheckboxPickerState | null>(null);
   const [promptSelect, setPromptSelect] = useState<PromptSelectState | null>(null);
+  const [helpPanel, setHelpPanel] = useState(false);
   const [promptSecret, setPromptSecret] = useState<PromptSecretState | null>(null);
   const [oauthOverlay, setOauthOverlay] = useState<OAuthOverlayState | null>(null);
   const oauthAbortRef = useRef<AbortController | null>(null);
@@ -1472,6 +1473,10 @@ export function OpenTuiApp({
           }
           return;
         }
+        if (message === "__help_panel__") {
+          setHelpPanel((current) => !current);
+          return;
+        }
         if (message === "__sidebar_toggle__") {
           setSidebarMode((current) => {
             const next = current === "auto" ? "open" : current === "open" ? "close" : "auto";
@@ -2109,6 +2114,15 @@ export function OpenTuiApp({
       renderer.clearSelection();
       event.preventDefault();
       event.stopPropagation();
+      return;
+    }
+
+    if (helpPanel) {
+      if (event.name === "escape" || (event.name === "c" && event.ctrl)) {
+        setHelpPanel(false);
+        event.preventDefault();
+        event.stopPropagation();
+      }
       return;
     }
 
@@ -2999,6 +3013,7 @@ export function OpenTuiApp({
       promptSecret={promptSecret}
       promptSecretInputRef={promptSecretInputRef}
       oauthOverlay={oauthOverlay}
+      helpPanel={helpPanel}
       onOverlayItemClick={clickOverlayItem}
       onCommandPickerItemClick={clickCommandPickerItem}
       onCheckboxPickerItemClick={clickCheckboxPickerItem}

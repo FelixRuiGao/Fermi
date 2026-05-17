@@ -417,3 +417,44 @@ export function OAuthOverlayView(
     </OverlayFrame>
   );
 }
+
+// ------------------------------------------------------------------
+// Help panel
+// ------------------------------------------------------------------
+
+const HELP_SHORTCUTS: Array<{ key: string; action: string }> = [
+  { key: "Enter", action: "Send message" },
+  { key: "Option+Enter", action: "Insert newline" },
+  { key: "Ctrl+N", action: "Insert newline" },
+  { key: "Ctrl+G", action: "Toggle markdown raw view" },
+  { key: "Cmd+Delete", action: "Delete to line start" },
+  { key: "Alt+Backspace", action: "Delete previous word" },
+  { key: "Ctrl+C", action: "Cancel / Exit" },
+  { key: "↑ / ↓", action: "Browse prompt history" },
+  { key: "@filename", action: "Attach file" },
+];
+
+export function HelpPanelView(
+  { visible, theme, contentWidth }: { visible: boolean; theme: DisplayTheme; contentWidth: number },
+): React.ReactNode {
+  if (!visible) return null;
+
+  const keyColWidth = Math.max(...HELP_SHORTCUTS.map((s) => s.key.length)) + 2;
+
+  return (
+    <OverlayFrame theme={theme} height={HELP_SHORTCUTS.length + 2}>
+      <text fg={theme.colors.accent} content="Shortcuts" />
+      {HELP_SHORTCUTS.map((shortcut, index) => (
+        <text
+          key={`help-${index}`}
+          fg={theme.colors.text}
+          content={truncateToWidth(
+            `  ${shortcut.key.padEnd(keyColWidth)}${shortcut.action}`,
+            contentWidth,
+          )}
+        />
+      ))}
+      <text fg={theme.colors.dim} content="Esc dismiss" />
+    </OverlayFrame>
+  );
+}
