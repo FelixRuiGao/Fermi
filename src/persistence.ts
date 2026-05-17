@@ -547,8 +547,13 @@ export interface FermiSettings {
   mcp_servers?: Record<string, MCPServerSettingsEntry>;
 
   // -- Updates --
-  /** Enable background update checks on startup. Default: true. */
-  auto_update?: boolean;
+  /**
+   * Background update behavior. Default: true.
+   * - true: patch/minor auto-download + staged; major notify only
+   * - "notify": all versions notify only, never auto-download
+   * - false: disable update checks entirely
+   */
+  auto_update?: boolean | "notify";
 }
 
 /**

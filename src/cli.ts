@@ -24,7 +24,7 @@ import {
 } from "./persistence.js";
 import { loadDotenv } from "./dotenv.js";
 import { getFermiHomeDir } from "./home-path.js";
-import { checkForUpdates, applyStaged } from "./update-check.js";
+import { checkForUpdates, applyStaged, setUpdateStateGetter } from "./update-check.js";
 import { VERSION } from "./version.js";
 import { hasAnyManagedCredential } from "./managed-provider-credentials.js";
 import { findSessionById } from "./session-resume.js";
@@ -311,10 +311,16 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
   program
     .command("update")
     .description("Check for and install the latest version")
-    .action(async () => {
+    .option("--check", "Check for updates without installing")
+    .action(async (opts: { check?: boolean }) => {
       ranSubcommand = true;
-      const { runUpdate } = await import("./update-check.js");
-      await runUpdate(VERSION);
+      if (opts.check) {
+        const { runUpdateCheck } = await import("./update-check.js");
+        await runUpdateCheck(VERSION);
+      } else {
+        const { runUpdate } = await import("./update-check.js");
+        await runUpdate(VERSION);
+      }
     });
 
   // Default action — prevents Commander from showing help and exiting
@@ -340,16 +346,15 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
 
   // Apply staged update from a previous background download
   const appliedVersion = (deps.applyStaged ?? applyStaged)(homeDir);
-  if (appliedVersion) {
-    console.log(`  Updated to ${appliedVersion}.\n`);
-  }
+  const effectiveVersion = appliedVersion ?? VERSION;
 
   // Start update check in background (non-blocking) if enabled
   const loadSettings = deps.loadGlobalSettings ?? loadGlobalSettings;
-  const autoUpdateEnabled = loadSettings(homeDir).auto_update !== false;
-  const getUpdateNotice = autoUpdateEnabled
-    ? (deps.checkForUpdates ?? checkForUpdates)(VERSION, homeDir)
-    : () => null;
+  const autoUpdateSetting = loadSettings(homeDir).auto_update ?? true;
+  if (autoUpdateSetting !== false) {
+    const getter = (deps.checkForUpdates ?? checkForUpdates)(effectiveVersion, homeDir, autoUpdateSetting);
+    setUpdateStateGetter(getter);
+  }
 
   // Logging
   if (opts.verbose) {
@@ -359,10 +364,6 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
 
   const globalSettings = await ensureProvidersConfigured(homeDir, deps);
   await warnIfCopilotCredentialsMissing(globalSettings, deps.hasGitHubTokens);
-
-  // Show update notice (if background check found a newer version)
-  const updateNotice = getUpdateNotice();
-  if (updateNotice) console.log(`  ${updateNotice}\n`);
 
   await (deps.launchTui ?? launchTuiFromDefaultEntry)();
 }

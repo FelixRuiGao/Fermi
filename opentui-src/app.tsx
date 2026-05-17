@@ -20,6 +20,7 @@ import { scanCandidates } from "../src/file-attach.js";
 import { classifyPastedText, TurnPasteCounter } from "../src/ui/input/paste.js";
 import { readClipboardImage } from "../src/clipboard-image.js";
 import { processImage, type ProcessedImage } from "../src/image-compress.js";
+import { getUpdateState } from "../src/update-check.js";
 import type { InlineImageInput } from "../src/ui/contracts.js";
 import type {
   PendingAskUi,
@@ -1150,12 +1151,43 @@ export function OpenTuiApp({
     }
   }, [session.primaryAgent?.modelConfig?.provider, requestOAuthLogin]);
 
-  const showHint = useCallback((message: string) => {
+  const showHint = useCallback((message: string, durationMs = 2500) => {
     setHint(message);
     setTimeout(() => {
       setHint((current) => (current === message ? null : current));
-    }, 2500);
+    }, durationMs);
   }, []);
+
+  // Poll for background update state and show hint when actionable.
+  useEffect(() => {
+    let stopped = false;
+    const tick = () => {
+      if (stopped) return;
+      const state = getUpdateState();
+      switch (state.phase) {
+        case "downloading":
+          showHint(`Downloading v${state.latestVersion}...`, 3000);
+          break;
+        case "staged":
+          showHint(`✓ v${state.latestVersion} ready (restart to apply)`, 6000);
+          stopped = true;
+          clearInterval(poll);
+          break;
+        case "available":
+          showHint(`v${state.latestVersion} available — run \`fermi update\``, 6000);
+          stopped = true;
+          clearInterval(poll);
+          break;
+        case "failed":
+        case "disabled":
+          stopped = true;
+          clearInterval(poll);
+          break;
+      }
+    };
+    const poll = setInterval(tick, 2000);
+    return () => { stopped = true; clearInterval(poll); };
+  }, [showHint]);
 
   const performExit = useCallback(async () => {
     autoSave();

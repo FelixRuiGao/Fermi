@@ -68,6 +68,12 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          for f in fermi-*.tar.gz; do
+            shasum -a 256 "$f" > "$f.sha256"
+          done
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -89,7 +95,7 @@ jobs:
             *-alpha*|*-beta*|*-rc*) prerelease_flag="--prerelease" ;;
           esac
           gh release create "$tag" \
-            artifacts/fermi-*.tar.gz \
+            artifacts/fermi-* \
             --title "$tag" \
             --notes-file NOTES.md \
             $prerelease_flag

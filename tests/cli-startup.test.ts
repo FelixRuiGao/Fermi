@@ -9,7 +9,7 @@ import { VERSION } from "../src/version.js";
 let tempHome = "";
 let events: string[] = [];
 let stagedVersion: string | null = null;
-let updateNotice: string | null = null;
+
 let settings: Record<string, unknown> = {};
 let hasGitHubTokens = true;
 let serverCalls: unknown[] = [];
@@ -34,10 +34,7 @@ function startupDeps(extra: MainDeps = {}): MainDeps {
     },
     checkForUpdates: () => {
       events.push("checkForUpdates");
-      return () => {
-        events.push("getUpdateNotice");
-        return updateNotice;
-      };
+      return () => ({ phase: "idle" as const, currentVersion: "0.0.0" });
     },
     runInitWizard: async () => {
       events.push(`init:${process.env["FERMI_TEST_KEY"] ?? "missing"}`);
@@ -62,7 +59,7 @@ describe("CLI startup", () => {
     tempHome = mkdtempSync(join(tmpdir(), "fermi-cli-home-"));
     events = [];
     stagedVersion = null;
-    updateNotice = null;
+
     settings = {};
     hasGitHubTokens = true;
     serverCalls = [];
@@ -90,7 +87,7 @@ describe("CLI startup", () => {
       auto_update: true,
     });
     stagedVersion = "9.9.9";
-    updateNotice = "Update available";
+
 
     await main(["node", "fermi"], startupDeps({
       launchTui: async () => {
@@ -102,7 +99,7 @@ describe("CLI startup", () => {
       "dotenv",
       "applyStaged",
       "checkForUpdates",
-      "getUpdateNotice",
+
       "launch",
     ]);
   });
@@ -121,7 +118,7 @@ describe("CLI startup", () => {
       "applyStaged",
       "checkForUpdates",
       "init:loaded",
-      "getUpdateNotice",
+
       "launch",
     ]);
   });
