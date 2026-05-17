@@ -1,0 +1,53 @@
+# Skill Attributions
+
+This file ships inside the Fermi binary (it lives in `skills/`, which the build
+copies wholesale; the skill loader ignores non-directory entries so this file is
+never loaded as a skill).
+
+All SKILL.md instruction text in this directory is **original work written for
+Fermi**. Workflow ideas were informed by surveying open coding agents and skill
+hubs, but no third-party prompt/instruction text was copied.
+
+Skills that invoke external open-source libraries or tools at runtime credit them
+below. Inclusion here is attribution only; each dependency is the user's to
+install (see the skill's "Requirements" section) and remains under its own
+license.
+
+## Runtime libraries referenced by script-bearing skills
+
+These libraries are **not bundled**. The skill instructs the agent to use them
+and the user installs them on demand (each skill has a "Requirements" section).
+Listed here for transparency; each remains under its own license. Licenses
+verified against PyPI metadata 2026-05-17.
+
+| Skill | Library / tool | License | Bundled? | Purpose |
+|-------|----------------|---------|----------|---------|
+| pdf | pypdf | BSD-3-Clause | no (user-installed) | merge/split/rotate/encrypt/metadata |
+| pdf | pdfplumber | MIT | no (optional) | text/table extraction |
+| pdf | Pillow | MIT-CMU (HPND) | no (optional) | image extraction/render |
+| pdf | ocrmypdf | MPL-2.0 | no (optional, only if user already has it) | OCR scanned PDFs |
+| docx | python-docx | MIT | no (user-installed) | read/create/edit Word |
+| xlsx | openpyxl | MIT | no (user-installed) | read/create/edit Excel |
+| xlsx | pandas | BSD-3-Clause | no (optional) | bulk tabular analysis |
+| pptx | python-pptx | MIT | no (user-installed) | create/edit slides |
+| csv-data | pandas | BSD-3-Clause | no (optional; stdlib csv default) | tabular transform/clean |
+| json-data | jq | MIT | no (user tool, invoked) | JSON query/transform |
+| data-viz | matplotlib | Matplotlib (BSD-style/PSF) | no (user-installed) | charts/plots |
+| data-viz | pandas | BSD-3-Clause | no (optional) | tabular input |
+| web-scrape | httpx / requests | BSD-3 / Apache-2.0 | no (user-installed) | HTTP fetch |
+| web-scrape | beautifulsoup4 / selectolax | MIT | no (optional) | HTML parsing |
+| mock-data | faker / factory_boy / gofakeit | MIT | no (user-installed) | synthetic data |
+
+> A tiny helper script ships only with `pdf` (`skills/pdf/scripts/pdftool.py`) —
+> it is **original code written for Fermi** that calls pypdf; it is not derived
+> from pypdf or any third-party source. MPL-2.0 tools (ocrmypdf) are only
+> *invoked if the user already has them*, never bundled or required.
+
+## Idea sources (surveyed, not copied)
+
+Open coding agents and curated hubs were surveyed at the capability level only
+(what skills users commonly need) — no text reused:
+Claude Code, OpenAI Codex CLI, Sourcegraph Amp, Factory Droid, opencode, Crush,
+Cline, Kilo Code, Gemini CLI, Cursor, Aider; and curated lists
+awesome-claude-code, awesome-cursorrules, github/awesome-copilot, and the public
+Agent Skills spec at agentskills.io.

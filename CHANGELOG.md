@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Built-in skills: added 94 new bundled skills covering common coding-agent workflows — git/PR/release (`commit`, `pr-description`, `code-review`, `changelog`, `release-prep`, `fix-ci`, `address-comments`, `git-bisect`, `branch-cleanup`), debugging & testing (`debug`, `test-gen`, `coverage-gap`, `flaky-test`, `verify`, …), code quality (`refactor`, `simplify`, `comment-rot`, `silent-failure`, `perf-audit`), security (`security-audit`, `secrets-scan`, `dependency-audit`, `license-check`), infra & codegen (`dockerfile`, `ci-setup`, `regex`, `sql`, `api-client`, `accessibility`, `i18n`, `codemod`, …), docs (`readme`, `docstrings`, `adr`, `mermaid`, `doc-coauthor`, `onboard`, …), document & data processing (`pdf`, `docx`, `xlsx`, `pptx`, `csv-data`, `json-data`), web/data (`web-scrape`, `summarize-doc`, `http-debug`, `log-analysis`, `data-viz`, …), language/ops (`type-coverage`, `error-handling`, `logging`, `migration`, `feature-flag`, `concurrency-review`, `git-conflict`, `monorepo`, …), frontend (`frontend-design`, `component`, `e2e-test`, `css-debug`, `responsive`), planning discipline (`spec-from-issue`, `test-plan`, `assumptions`, `scope-check`, `release-notes`), and infra/cloud (`terraform`, `k8s-manifest`, `commit-split`, `devcontainer`). Invoke any with `/<name>` or let the model pick by description. Document/data skills install their Python libraries on demand and degrade gracefully (with an install hint) if unavailable.
+
 ## v0.3.2
 
 - Init wizard: Ctrl+C on the first step now exits cleanly instead of printing a stack trace.
