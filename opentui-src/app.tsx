@@ -1450,8 +1450,11 @@ export function OpenTuiApp({
           return;
         }
         if (message === "__open_agent_list__") {
-          setAgentListSelectedIndex(0);
-          setAgentListOpen(true);
+          setAgentsPanelOpen((p) => !p);
+          return;
+        }
+        if (message === "__toggle_todo_panel__") {
+          setTodoPanelOpen((p) => !p);
           return;
         }
         if (message.startsWith("__sidebar_mode__:")) {
@@ -2720,18 +2723,13 @@ export function OpenTuiApp({
       return;
     }
 
+    // Ctrl+G: toggle markdown raw/rendered
     if (event.name === "g" && event.ctrl) {
-      openAgentList();
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    // Ctrl+O: toggle todo panel expand/collapse
-    if (event.name === "o" && event.ctrl) {
-      if (planCheckpoints.length > 0) {
-        setTodoPanelOpen((prev) => !prev);
-      }
+      setMarkdownMode((current) => {
+        const next = current === "rendered" ? "raw" : "rendered";
+        showHint(next === "raw" ? "Markdown raw: ON" : "Markdown raw: OFF");
+        return next;
+      });
       event.preventDefault();
       event.stopPropagation();
       return;

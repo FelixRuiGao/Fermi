@@ -425,11 +425,13 @@ export function OAuthOverlayView(
 const HELP_SHORTCUTS: Array<{ key: string; action: string }> = [
   { key: "Enter", action: "Send message" },
   { key: "Option+Enter", action: "Insert newline" },
-  { key: "Ctrl+N", action: "Insert newline" },
-  { key: "Ctrl+G", action: "Toggle markdown raw view" },
-  { key: "Cmd+Delete", action: "Delete to line start" },
-  { key: "Alt+Backspace", action: "Delete previous word" },
   { key: "Ctrl+C", action: "Cancel / Exit" },
+  { key: "Ctrl+G", action: "Toggle markdown raw view" },
+  { key: "Ctrl+Q", action: "Cycle permission mode" },
+  { key: "Ctrl+V", action: "Paste image" },
+  { key: "Ctrl+X", action: "Kill all sub-agents" },
+  { key: "Ctrl+K", action: "Kill all background shells" },
+  { key: "PageUp/Down", action: "Scroll half page" },
   { key: "↑ / ↓", action: "Browse prompt history" },
   { key: "@filename", action: "Attach file" },
 ];

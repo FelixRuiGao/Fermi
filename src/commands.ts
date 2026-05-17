@@ -1656,7 +1656,8 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/codex", description: "OpenAI ChatGPT login", handler: cmdCodex, options: codexOptions });
   registry.register({ name: "/copilot", description: "GitHub Copilot login", handler: cmdCopilot, options: copilotOptions });
   registry.register({ name: "/raw", description: "Toggle markdown raw/rendered mode", handler: cmdRaw, aliases: ["/md"] });
-  registry.register({ name: "/agents", description: "Show agent list", handler: cmdAgents });
+  registry.register({ name: "/agents", description: "Toggle agents panel", handler: cmdAgents });
+  registry.register({ name: "/todos", description: "Toggle todo panel", handler: cmdTodos });
   registry.register({ name: "/permission", description: "Set permission mode", handler: cmdPermission, options: permissionOptions });
   registry.register({ name: "/rewind", description: "Rewind to a previous turn", handler: cmdRewind, options: rewindOptions, aliases: ["/undo"] });
   registry.register({ name: "/hooks", description: "Show registered hooks", handler: cmdHooks });
@@ -2027,12 +2028,19 @@ async function cmdRaw(ctx: CommandContext): Promise<void> {
 }
 
 // ------------------------------------------------------------------
-// /agents command — open agent list modal
+// /agents command — toggle agents panel
 // ------------------------------------------------------------------
 
 async function cmdAgents(ctx: CommandContext): Promise<void> {
-  // The TUI intercepts this status message to open the agent list.
   ctx.showMessage("__open_agent_list__");
+}
+
+// ------------------------------------------------------------------
+// /todos command — toggle todo panel
+// ------------------------------------------------------------------
+
+async function cmdTodos(ctx: CommandContext): Promise<void> {
+  ctx.showMessage("__toggle_todo_panel__");
 }
 
 // ------------------------------------------------------------------
