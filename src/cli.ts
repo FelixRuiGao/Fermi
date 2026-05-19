@@ -64,7 +64,10 @@ const VALUE_FLAGS = new Set([
 ]);
 
 function relaunchCurrentBinary(argv: string[]): void {
-  const result = spawnSync(process.execPath, argv.slice(2), {
+  const relaunchArgs = argv.length > 0 && argv[0] === process.execPath
+    ? argv.slice(1)
+    : argv.slice(2);
+  const result = spawnSync(process.execPath, relaunchArgs, {
     stdio: "inherit",
     env: process.env,
   });
@@ -355,8 +358,11 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
   parseConfigOverridesOrExit(opts.config ?? []);
 
   // Apply staged update from a previous background download
-  const appliedVersion = (deps.applyStaged ?? applyStaged)(homeDir);
-  if (appliedVersion) {
+  const applyResult = (deps.applyStaged ?? applyStaged)(homeDir, { argv });
+  if (applyResult.kind === "handoff") {
+    return;
+  }
+  if (applyResult.kind === "applied") {
     if (deps.relaunchAfterUpdate) {
       deps.relaunchAfterUpdate(argv);
       return;
@@ -366,7 +372,9 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
       return;
     }
   }
-  const effectiveVersion = appliedVersion ?? VERSION;
+  const effectiveVersion = applyResult.kind === "applied"
+    ? (applyResult.version ?? VERSION)
+    : VERSION;
 
   // Start update check in background (non-blocking) if enabled
   const loadSettings = deps.loadGlobalSettings ?? loadGlobalSettings;

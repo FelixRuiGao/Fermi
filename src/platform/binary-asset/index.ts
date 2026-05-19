@@ -6,34 +6,39 @@
  */
 
 import type { BinaryAssetProvider } from "../types.js";
-import { currentPlatform } from "../detect.js";
+import { currentPlatform, type SupportedPlatform } from "../detect.js";
 
-function archLabel(): string {
-  return process.arch === "x64" ? "x64" : process.arch;
+function archLabel(arch: string = process.arch): string {
+  return arch === "x64" ? "x64" : arch;
 }
 
-const DARWIN_ASSET: BinaryAssetProvider = {
-  tarballName: `fermi-darwin-${archLabel()}.tar.gz`,
-  executableName: "fermi",
-  needsQuarantineRemoval: true,
-};
-
-const LINUX_ASSET: BinaryAssetProvider = {
-  tarballName: `fermi-linux-${archLabel()}.tar.gz`,
-  executableName: "fermi",
-  needsQuarantineRemoval: false,
-};
-
-const WIN32_ASSET: BinaryAssetProvider = {
-  tarballName: `fermi-win32-${archLabel()}.tar.gz`,
-  executableName: "fermi.exe",
-  needsQuarantineRemoval: false,
-};
+export function binaryAssetForPlatform(
+  platform: SupportedPlatform,
+  arch: string = process.arch,
+): BinaryAssetProvider {
+  const suffix = archLabel(arch);
+  switch (platform) {
+    case "darwin":
+      return {
+        tarballName: `fermi-darwin-${suffix}.tar.gz`,
+        executableName: "fermi",
+        needsQuarantineRemoval: true,
+      };
+    case "linux":
+      return {
+        tarballName: `fermi-linux-${suffix}.tar.gz`,
+        executableName: "fermi",
+        needsQuarantineRemoval: false,
+      };
+    case "win32":
+      return {
+        tarballName: `fermi-win32-${suffix}.tar.gz`,
+        executableName: "fermi.exe",
+        needsQuarantineRemoval: false,
+      };
+  }
+}
 
 export function selectBinaryAsset(): BinaryAssetProvider {
-  switch (currentPlatform()) {
-    case "darwin": return DARWIN_ASSET;
-    case "linux":  return LINUX_ASSET;
-    case "win32":  return WIN32_ASSET;
-  }
+  return binaryAssetForPlatform(currentPlatform());
 }

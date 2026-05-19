@@ -1,8 +1,53 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { checkForUpdates, compareVersions, compareVersionOrder, getReleaseType } from "../src/update-check.js";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+
+import { binaryAssetForPlatform } from "../src/platform/binary-asset/index.js";
+import { currentPlatform } from "../src/platform/detect.js";
+import {
+  applyStaged,
+  checkForUpdates,
+  compareVersions,
+  compareVersionOrder,
+  getReleaseType,
+  runUpdate,
+} from "../src/update-check.js";
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function buildReleaseTarball(entries: Record<string, string>): Uint8Array {
+  const tempDir = mkdtempSync(join(tmpdir(), "fermi-release-src-"));
+  const tarDir = mkdtempSync(join(tmpdir(), "fermi-release-out-"));
+  const tarPath = join(tarDir, "release.tar.gz");
+  try {
+    for (const [relativePath, contents] of Object.entries(entries)) {
+      const fullPath = join(tempDir, relativePath);
+      mkdirSync(dirname(fullPath), { recursive: true });
+      writeFileSync(fullPath, contents);
+    }
+
+    const result = Bun.spawnSync(["tar", "-czf", tarPath, "-C", tempDir, "."], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    return new Uint8Array(readFileSync(tarPath));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(tarDir, { recursive: true, force: true });
+  }
+}
 
 describe("compareVersions", () => {
   it("detects newer patch version", () => {
@@ -95,6 +140,81 @@ describe("getReleaseType", () => {
   });
 });
 
+describe("applyStaged", () => {
+  let tempHome: string;
+  let tempFermiHome: string;
+  let tempInstallDir: string;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "fermi-update-apply-"));
+    tempFermiHome = join(tempHome, ".fermi");
+    tempInstallDir = mkdtempSync(join(tmpdir(), "fermi-install-"));
+  });
+
+  afterEach(() => {
+    mock.restore();
+    rmSync(tempHome, { recursive: true, force: true });
+    rmSync(tempInstallDir, { recursive: true, force: true });
+  });
+
+  it("applies staged files inline on POSIX platforms", () => {
+    const execPath = join(tempInstallDir, "fermi");
+    const staged = join(tempFermiHome, "staged");
+    writeFileSync(execPath, "old-binary");
+    mkdirSync(join(staged, "skills"), { recursive: true });
+    writeFileSync(join(staged, "fermi"), "new-binary");
+    writeFileSync(join(staged, "skills", "tool.txt"), "new-skill");
+
+    const result = applyStaged(tempFermiHome, {
+      platform: "linux",
+      execPath,
+    });
+
+    expect(result).toEqual({ kind: "applied", version: null });
+    expect(readFileSync(execPath, "utf-8")).toBe("new-binary");
+    expect(readFileSync(join(tempInstallDir, "skills", "tool.txt"), "utf-8")).toBe("new-skill");
+    expect(existsSync(staged)).toBe(false);
+  });
+
+  it("hands Windows staged updates off to the helper instead of replacing inline", () => {
+    const execPath = join(tempInstallDir, "fermi.exe");
+    const staged = join(tempFermiHome, "staged");
+    writeFileSync(execPath, "old-binary");
+    mkdirSync(staged, { recursive: true });
+    writeFileSync(join(staged, "fermi.exe"), "new-binary");
+
+    let handoffRequest: {
+      execPath: string;
+      parentPid: number;
+      relaunchArgs: string[];
+      installDir: string;
+      staged: string;
+      home: string;
+    } | null = null;
+
+    const result = applyStaged(tempFermiHome, {
+      platform: "win32",
+      execPath,
+      pid: 4321,
+      argv: [execPath, "--verbose"],
+      launchWindowsHandoff: (request) => {
+        handoffRequest = request;
+      },
+    });
+
+    expect(result).toEqual({ kind: "handoff" });
+    expect(readFileSync(execPath, "utf-8")).toBe("old-binary");
+    expect(handoffRequest).toEqual({
+      home: tempFermiHome,
+      installDir: tempInstallDir,
+      staged,
+      execPath,
+      parentPid: 4321,
+      relaunchArgs: ["--verbose"],
+    });
+  });
+});
+
 describe("checkForUpdates", () => {
   const originalFetch = globalThis.fetch;
   let tempHome: string;
@@ -165,5 +285,87 @@ describe("checkForUpdates", () => {
 
     expect(getState().phase).toBe("available");
     expect(getState().latestVersion).toBe("0.2.0");
+  });
+});
+
+describe("runUpdate", () => {
+  const originalFetch = globalThis.fetch;
+  const originalExecPath = process.execPath;
+  let tempHome: string;
+  let tempFermiHome: string;
+  let tempInstallDir: string;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "fermi-run-update-"));
+    tempFermiHome = join(tempHome, ".fermi");
+    tempInstallDir = mkdtempSync(join(tmpdir(), "fermi-install-"));
+  });
+
+  afterEach(() => {
+    mock.restore();
+    Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+    if (originalFetch) {
+      globalThis.fetch = originalFetch;
+    } else {
+      delete (globalThis as { fetch?: typeof fetch }).fetch;
+    }
+    rmSync(tempHome, { recursive: true, force: true });
+    rmSync(tempInstallDir, { recursive: true, force: true });
+  });
+
+  it("downloads and stages the update without installing it inline", async () => {
+    const platform = currentPlatform();
+    const asset = binaryAssetForPlatform(platform);
+    const execPath = join(tempInstallDir, asset.executableName);
+    writeFileSync(execPath, "old-binary");
+    Object.defineProperty(process, "execPath", { value: execPath, configurable: true });
+
+    const tarballBytes = buildReleaseTarball({
+      [asset.executableName]: "new-binary",
+      "skills/tool.txt": "new-skill",
+    });
+    const checksum = createHash("sha256").update(tarballBytes).digest("hex");
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/releases/latest")) {
+        return {
+          ok: true,
+          json: async () => ({
+            tag_name: "v9.9.9",
+            assets: [{
+              name: asset.tarballName,
+              browser_download_url: "https://example.com/release.tar.gz",
+            }],
+          }),
+        };
+      }
+      if (url === "https://example.com/release.tar.gz") {
+        return {
+          ok: true,
+          body: {},
+          arrayBuffer: async () => toArrayBuffer(tarballBytes),
+        };
+      }
+      if (url === "https://example.com/release.tar.gz.sha256") {
+        return {
+          ok: true,
+          text: async () => `${checksum}  release.tar.gz`,
+        };
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runUpdate("0.1.0", tempFermiHome);
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(readFileSync(execPath, "utf-8")).toBe("old-binary");
+    expect(readFileSync(join(tempFermiHome, "staged", asset.executableName), "utf-8")).toBe("new-binary");
+    expect(readFileSync(join(tempFermiHome, "staged", "skills", "tool.txt"), "utf-8")).toBe("new-skill");
+    expect(readFileSync(join(tempFermiHome, ".update-check.json"), "utf-8")).toContain("\"latestVersion\":\"9.9.9\"");
   });
 });

@@ -9,9 +9,10 @@
  *   2. TUI shows a hint: "v0.3.0 ready — restart to apply"
  *   3. On next startup, applyStaged() moves staged files into the install dir
  *
- * `fermi update` does the same download synchronously and asks the user to restart.
+ * `fermi update` uses the same staging path and asks the user to restart.
  */
 
+import { spawn } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -28,11 +29,14 @@ import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
 import { binaryAsset } from "./platform/index.js";
+import { binaryAssetForPlatform } from "./platform/binary-asset/index.js";
+import { currentPlatform, type SupportedPlatform } from "./platform/detect.js";
 import { getFermiHomeDir } from "./home-path.js";
 
 const GITHUB_REPO = "FelixRuiGao/Fermi";
 const CACHE_FILE = ".update-check.json";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const WINDOWS_UPDATE_HELPER_RELATIVE_PATH = join("updater", "apply-staged.ps1");
 
 interface UpdateCache {
   lastCheck: number;
@@ -43,6 +47,28 @@ interface GitHubRelease {
   tag_name?: string;
   assets?: { name?: string; browser_download_url?: string }[];
 }
+
+interface WindowsApplyHandoffRequest {
+  home: string;
+  installDir: string;
+  staged: string;
+  execPath: string;
+  parentPid: number;
+  relaunchArgs: string[];
+}
+
+interface ApplyStagedOptions {
+  platform?: SupportedPlatform;
+  execPath?: string;
+  pid?: number;
+  argv?: string[];
+  launchWindowsHandoff?: (request: WindowsApplyHandoffRequest) => void;
+}
+
+export type ApplyStagedResult =
+  | { kind: "none" }
+  | { kind: "applied"; version: string | null }
+  | { kind: "handoff" };
 
 function homeDir(override?: string): string {
   return override ?? getFermiHomeDir();
@@ -146,8 +172,57 @@ function assetName(): string {
 
 const BINARY_NAMES = new Set(["fermi", "fermi.exe"]);
 
-function isProductionInstall(): boolean {
-  return BINARY_NAMES.has(basename(process.execPath));
+function executableNameForPlatform(platform: SupportedPlatform): string {
+  return binaryAssetForPlatform(platform).executableName;
+}
+
+function isProductionInstall(
+  platform: SupportedPlatform = currentPlatform(),
+  execPath: string = process.execPath,
+): boolean {
+  const expected = executableNameForPlatform(platform);
+  return basename(execPath).toLowerCase() === expected.toLowerCase();
+}
+
+function relaunchArgsFromArgv(argv: string[], execPath: string): string[] {
+  if (argv.length > 0 && argv[0] === execPath) return argv.slice(1);
+  return argv.slice(2);
+}
+
+function launchWindowsApplyHandoff(request: WindowsApplyHandoffRequest): void {
+  const helperSource = join(request.installDir, WINDOWS_UPDATE_HELPER_RELATIVE_PATH);
+  if (!existsSync(helperSource)) {
+    throw new Error("Windows update helper is missing from the install directory");
+  }
+
+  mkdirSync(request.home, { recursive: true });
+  const helperRuntime = join(request.home, "apply-staged-helper.ps1");
+  const argsFile = join(request.home, ".update-restart-args.json");
+  cpSync(helperSource, helperRuntime);
+  writeFileSync(argsFile, JSON.stringify(request.relaunchArgs));
+
+  const child = spawn("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    helperRuntime,
+    "-ParentPid",
+    String(request.parentPid),
+    "-InstallDir",
+    request.installDir,
+    "-StagedDir",
+    request.staged,
+    "-ExePath",
+    request.execPath,
+    "-ArgsFile",
+    argsFile,
+  ], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
 }
 
 async function fetchChecksumFile(downloadUrl: string): Promise<string | null> {
@@ -252,19 +327,24 @@ function installStagedEntries(staged: string, installDir: string): void {
 /**
  * Apply a staged update on startup. Moves files from ~/.fermi/staged/ into
  * the install directory (~/.fermi/bin/).
- * Returns the new version string if an update was applied, or null.
  */
-export function applyStaged(homeDirOverride?: string): string | null {
+export function applyStaged(
+  homeDirOverride?: string,
+  options: ApplyStagedOptions = {},
+): ApplyStagedResult {
   const home = homeDir(homeDirOverride);
-  if (!isProductionInstall()) return null;
+  const platform = options.platform ?? currentPlatform();
+  const execPath = options.execPath ?? process.execPath;
+  const launchHandoff = options.launchWindowsHandoff ?? launchWindowsApplyHandoff;
+  if (!isProductionInstall(platform, execPath)) return { kind: "none" };
 
   const staged = stagedDir(home);
-  if (!existsSync(staged)) return null;
+  if (!existsSync(staged)) return { kind: "none" };
 
   const entries = readdirSync(staged);
   if (entries.length === 0) {
     rmSync(staged, { recursive: true, force: true });
-    return null;
+    return { kind: "none" };
   }
 
   const cache = readCache(home);
@@ -273,7 +353,7 @@ export function applyStaged(homeDirOverride?: string): string | null {
   // Disk version check: skip if another instance already applied
   if (version) {
     try {
-      const binaryPath = join(dirname(process.execPath), "fermi");
+      const binaryPath = join(dirname(execPath), executableNameForPlatform(platform));
       const result = Bun.spawnSync([binaryPath, "--version"], {
         stdout: "pipe",
         stderr: "ignore",
@@ -282,15 +362,27 @@ export function applyStaged(homeDirOverride?: string): string | null {
       const diskVersion = result.stdout.toString().trim();
       if (diskVersion && compareVersionOrder(diskVersion, version) >= 0) {
         rmSync(staged, { recursive: true, force: true });
-        return null;
+        return { kind: "none" };
       }
     } catch { /* proceed with apply */ }
   }
 
-  const installDir = dirname(process.execPath);
+  const installDir = dirname(execPath);
+  if (platform === "win32") {
+    launchHandoff({
+      home,
+      installDir,
+      staged,
+      execPath,
+      parentPid: options.pid ?? process.pid,
+      relaunchArgs: relaunchArgsFromArgv(options.argv ?? process.argv, execPath),
+    });
+    return { kind: "handoff" };
+  }
+
   installStagedEntries(staged, installDir);
   rmSync(staged, { recursive: true, force: true });
-  return version;
+  return { kind: "applied", version };
 }
 
 /**
@@ -376,14 +468,15 @@ export async function runUpdateCheck(currentVersion: string): Promise<void> {
 }
 
 /**
- * Full update: download, verify, and install.
+ * Full update: download, verify, and stage for the next restart.
  */
 export async function runUpdate(currentVersion: string, homeDirOverride?: string): Promise<void> {
   const home = homeDir(homeDirOverride);
+  const platform = currentPlatform();
 
-  if (!isProductionInstall()) {
+  if (!isProductionInstall(platform)) {
     console.log("Cannot update: not running from a production install.");
-    console.log(`Expected: ${join(home, "bin", "fermi")}`);
+    console.log(`Expected: ${join(home, "bin", executableNameForPlatform(platform))}`);
     console.log(`Actual:   ${process.execPath}`);
     return;
   }
@@ -412,13 +505,8 @@ export async function runUpdate(currentVersion: string, homeDirOverride?: string
   console.log("[2/3] Verifying checksum...");
   // Checksum was already verified inside downloadAndStage if .sha256 was available.
 
-  console.log("[3/3] Installing...");
-  const installDir = dirname(process.execPath);
-  const staged = stagedDir(home);
-  installStagedEntries(staged, installDir);
-  rmSync(staged, { recursive: true, force: true });
-
-  console.log(`✓ Updated to v${release.version}. Restart fermi to use the new version.`);
+  console.log("[3/3] Staging update...");
+  console.log(`✓ v${release.version} ready. Restart fermi to apply the update.`);
 }
 
 // ------------------------------------------------------------------

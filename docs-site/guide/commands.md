@@ -17,6 +17,7 @@ Slash commands are typed directly in the input during a session. They control co
 | `/new` | | Start a new session |
 | `/fork` | | Fork current session into a new branch |
 | `/rename` | | Rename current session |
+| `/autoupdate` | | Toggle background update checks |
 | `/skills` | | Enable/disable skills (checkbox picker) |
 | `/mcp` | | Show MCP server status and tools |
 | `/agents` | | Show active agent list |
@@ -89,6 +90,17 @@ Set the permission mode for tool execution:
 | `read_only` | Only read tools auto-allowed; all writes require approval |
 | `reversible` | Read + reversible writes auto-allowed |
 | `yolo` | Everything auto-allowed except catastrophic operations |
+
+### `/autoupdate`
+
+Toggle background update checks:
+
+```text
+/autoupdate on
+/autoupdate off
+```
+
+When enabled, Fermi checks GitHub Releases in the background, stages patch/minor updates automatically, and applies them on the next restart.
 
 ### `/hooks`
 

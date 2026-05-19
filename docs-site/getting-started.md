@@ -4,12 +4,20 @@ Get Fermi running in under a minute. Three commands — install, configure, laun
 
 ![Fermi TUI — sub-agent spawning, build verification, and live context stats](/session.png)
 
-**Platform:** macOS (Apple Silicon).
+**Platform:** macOS (Apple Silicon) / Linux (x86_64) / Windows (x64).
 
 ## Install
 
+### macOS (Apple Silicon) / Linux (x86_64)
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.sh | sh
+```
+
+### Windows (x64)
+
+```powershell
+irm https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.ps1 | iex
 ```
 
 Single self-contained binary — no Bun, Node, or other runtime required. The installer extracts to `~/.fermi/bin/` and adds it to your PATH.
@@ -81,7 +89,8 @@ See [Context Management](/guide/context) for details.
 ```text
 fermi                       # Start with auto-detected config
 fermi init                  # Run setup wizard
-fermi update                # Check GitHub Releases and install the latest version
+fermi update                # Check GitHub Releases and stage the latest version
+fermi update --check        # Check for updates without staging
 fermi --resume <id>         # Resume a specific session by ID
 fermi -c key=value          # Override a setting for this session
 fermi oauth                 # Log in to OpenAI via OAuth
@@ -97,7 +106,7 @@ fermi --version             # Show version
 
 Fermi checks GitHub Releases for new versions in the background (at most once every 24 hours). When a new version is available it downloads to `~/.fermi/staged/`, and the next time you launch `fermi` the new binary is applied automatically.
 
-- `fermi update` — check and install the latest version manually; restart to use it
+- `fermi update` — check and stage the latest version manually; restart to apply it
 - `/autoupdate` — toggle background update checks (on/off, persists in global settings)
 
 ## Safety

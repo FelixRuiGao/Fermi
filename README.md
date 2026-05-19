@@ -20,7 +20,7 @@
 
 Fermi is a terminal AI coding agent designed for multi-hour sessions. The agent inspects its own context window, decides what is still valuable, and surgically compresses the rest — down to a single tool call result. Sessions run for hours; decisions, file paths, and unresolved issues stay intact.
 
-> **Platform:** macOS (Apple Silicon). **License:** MIT.
+> **Platform:** macOS (Apple Silicon) · Linux (x86_64) · Windows (x64). **License:** MIT.
 
 ## Install
 
@@ -38,14 +38,14 @@ irm https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.ps1
 
 ---
 
-Single binary, no runtime required. The installer puts `fermi` in `~/.fermi/bin/` and adds it to your PATH. Open a new terminal, then:
+Single binary, no runtime required. The installer puts `fermi` (`fermi.exe` on Windows) in `~/.fermi/bin/` and adds it to your PATH. Open a new terminal, then:
 
 ```bash
 fermi init   # setup wizard — pick providers, models, API keys
 fermi        # start a session
 ```
 
-Updates: `fermi update` or `fermi update --check` to check without installing.
+Updates: `fermi update` stages the latest release for the next restart. `fermi update --check` checks without staging.
 
 ## Context Management
 
@@ -123,7 +123,7 @@ Cloud or local, your choice. Switch at runtime with `/model`. `fermi init` handl
 
 ## Limitations
 
-- **macOS + Apple Silicon only** — no Windows or Linux support
+- **Supported release builds:** macOS (Apple Silicon), Linux (x86_64), Windows (x64)
 - **No sandbox** — shell commands and file edits execute directly (use `/permission` to control)
 - **Third-party coding plans** (Kimi-Code, GLM-Code) use provider-side whitelists and may reject requests
 

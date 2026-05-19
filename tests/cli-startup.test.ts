@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { main, type MainDeps } from "../src/cli.js";
+import type { ApplyStagedResult } from "../src/update-check.js";
 import { VERSION } from "../src/version.js";
 
 let tempHome = "";
 let events: string[] = [];
-let stagedVersion: string | null = null;
+let stagedResult: ApplyStagedResult = { kind: "none" };
 
 let settings: Record<string, unknown> = {};
 let hasGitHubTokens = true;
@@ -30,7 +31,7 @@ function startupDeps(extra: MainDeps = {}): MainDeps {
     loadGlobalSettings: () => settings,
     applyStaged: () => {
       events.push("applyStaged");
-      return stagedVersion;
+      return stagedResult;
     },
     checkForUpdates: () => {
       events.push("checkForUpdates");
@@ -58,7 +59,7 @@ describe("CLI startup", () => {
   beforeEach(() => {
     tempHome = mkdtempSync(join(tmpdir(), "fermi-cli-home-"));
     events = [];
-    stagedVersion = null;
+    stagedResult = { kind: "none" };
 
     settings = {};
     hasGitHubTokens = true;
@@ -86,7 +87,7 @@ describe("CLI startup", () => {
       },
       auto_update: true,
     });
-    stagedVersion = "9.9.9";
+    stagedResult = { kind: "applied", version: "9.9.9" };
 
 
     await main(["node", "fermi"], startupDeps({
@@ -111,7 +112,7 @@ describe("CLI startup", () => {
       },
       auto_update: true,
     });
-    stagedVersion = "9.9.9";
+    stagedResult = { kind: "applied", version: "9.9.9" };
 
     await main(["node", "fermi", "--verbose"], startupDeps({
       relaunchAfterUpdate: (argv) => {
@@ -126,6 +127,30 @@ describe("CLI startup", () => {
       "dotenv",
       "applyStaged",
       "relaunch:--verbose",
+    ]);
+  });
+
+  it("stops startup after handing off a Windows staged update", async () => {
+    writeSettings({
+      providers: {
+        openai: { api_key_env: "FERMI_TEST_KEY" },
+      },
+      auto_update: true,
+    });
+    stagedResult = { kind: "handoff" };
+
+    await main(["node", "fermi"], startupDeps({
+      relaunchAfterUpdate: () => {
+        events.push("relaunch");
+      },
+      launchTui: async () => {
+        events.push("launch");
+      },
+    }));
+
+    expect(events).toEqual([
+      "dotenv",
+      "applyStaged",
     ]);
   });
 
