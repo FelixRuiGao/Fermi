@@ -89,6 +89,13 @@ export interface CommandContext {
   /** Reset TUI state (cancel workers, clear spinners, etc.). */
   resetUiState: () => void;
 
+  /**
+   * Force the next render to be a full repaint (TUI provides the impl).
+   * Used after session restore so the physical terminal is re-asserted from
+   * scratch instead of incrementally diffed against a possibly-drifted state.
+   */
+  requestFullRepaint?: () => void;
+
   /** Replace the active UI runtime with a freshly bootstrapped session. */
   restartRuntimeForNewSession?: () => Promise<void>;
 
@@ -426,6 +433,14 @@ async function cmdResume(ctx: CommandContext, args: string): Promise<void> {
   for (const w of result.warnings) ctx.showMessage(w);
   if (!result.ok && result.error) {
     ctx.showMessage(result.error);
+  }
+  if (result.ok) {
+    // Session restore replaces the entire transcript. The renderer's buffer is
+    // rebuilt, but the physical terminal is left as-is; an incremental diff
+    // won't repair that drift (it compares new-buffer vs new-buffer). Force a
+    // full repaint to re-assert ground truth — the same recovery a terminal
+    // resize performs.
+    ctx.requestFullRepaint?.();
   }
 }
 

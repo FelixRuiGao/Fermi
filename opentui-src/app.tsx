@@ -1497,6 +1497,9 @@ export function OpenTuiApp({
         setPendingAsk(null);
         setAskError(null);
       },
+      requestFullRepaint: () => {
+        renderer?.requestFullRepaint?.();
+      },
       restartRuntimeForNewSession: onNewSession,
       exit: performExit,
       onTurnRequested: (content: string) => {

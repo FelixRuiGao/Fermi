@@ -1260,6 +1260,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }
 
+  // Force the next render to be a full repaint instead of an incremental diff.
+  // Use after a major state replacement (e.g. session restore) where the
+  // physical terminal may have drifted from the renderer's buffer: a full
+  // repaint re-asserts ground truth, the same way processResize() recovers.
+  // Mirrors the internal capability-transition path (forceFullRepaintRequested
+  // + requestRender).
+  public requestFullRepaint(): void {
+    this.forceFullRepaintRequested = true
+    this.requestRender()
+  }
+
   private async activateFrame() {
     if (!this.updateScheduled) {
       this.resolveIdleIfNeeded()
