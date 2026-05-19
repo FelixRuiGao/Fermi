@@ -31,12 +31,6 @@ verified against PyPI metadata 2026-05-17.
 | xlsx | pandas | BSD-3-Clause | no (optional) | bulk tabular analysis |
 | pptx | python-pptx | MIT | no (user-installed) | create/edit slides |
 | csv-data | pandas | BSD-3-Clause | no (optional; stdlib csv default) | tabular transform/clean |
-| json-data | jq | MIT | no (user tool, invoked) | JSON query/transform |
-| data-viz | matplotlib | Matplotlib (BSD-style/PSF) | no (user-installed) | charts/plots |
-| data-viz | pandas | BSD-3-Clause | no (optional) | tabular input |
-| web-scrape | httpx / requests | BSD-3 / Apache-2.0 | no (user-installed) | HTTP fetch |
-| web-scrape | beautifulsoup4 / selectolax | MIT | no (optional) | HTML parsing |
-| mock-data | faker / factory_boy / gofakeit | MIT | no (user-installed) | synthetic data |
 
 > A tiny helper script ships only with `pdf` (`skills/pdf/scripts/pdftool.py`) —
 > it is **original code written for Fermi** that calls pypdf; it is not derived
