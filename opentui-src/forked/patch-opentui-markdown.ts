@@ -37,6 +37,10 @@ const INNER_TEXT = Symbol.for("fermi.codeblock.text");
 const LABEL_REF = Symbol.for("fermi.codeblock.label");
 const COPY_REF = Symbol.for("fermi.codeblock.copy");
 const CODE_CONTENT = Symbol.for("fermi.codeblock.rawcontent");
+const COALESCED_MARGIN_TOP = Symbol.for("fermi.opentui.markdown.coalesced.marginTop");
+const TRAILING_MARKDOWN_BLOCK_BREAKS_RE = /(?:\r?\n){2,}$/;
+const TRAILING_MARKDOWN_BLOCK_NEWLINES_RE = /(?:\r?\n)+$/;
+const ANY_MARKDOWN_BLOCK_BREAK_RE = /(?:\r?\n){2,}/;
 
 // Runtime-mutable theme bound by `applyMarkdownTheme`. The patched render
 // closures read these on every call, so swapping the theme reflects on the
@@ -196,8 +200,13 @@ type MarkdownRenderablePatched = InstanceType<typeof MarkdownRenderable> & {
   _treeSitterClient?: unknown;
   _linkifyMarkdownChunks?: unknown;
   getStyle?: (group: string) => { fg?: ColorInput } | undefined;
-  createMarkdownBlockToken: (raw: string) => MarkedToken;
+  createMarkdownBlockToken: (raw: string, marginTop?: number) => MarkedToken;
   shouldRenderSeparately: (token: MarkedToken) => boolean;
+  normalizeMarkdownBlockRaw: (raw: string) => string;
+};
+
+type CoalescedLayoutToken = MarkedToken & {
+  [COALESCED_MARGIN_TOP]?: number;
 };
 
 type WrappedBox = InstanceType<typeof BoxRenderable> & {
@@ -208,6 +217,14 @@ type WrappedBox = InstanceType<typeof BoxRenderable> & {
 };
 
 const proto = MarkdownRenderable.prototype as MarkdownRenderablePatched & Record<PropertyKey, unknown>;
+
+function setCoalescedMarginTop(token: MarkedToken, marginTop: number): void {
+  (token as CoalescedLayoutToken)[COALESCED_MARGIN_TOP] = marginTop;
+}
+
+function normalizeInterTokenSpace(raw: string): string {
+  return ANY_MARKDOWN_BLOCK_BREAK_RE.test(raw) ? "\n\n" : raw;
+}
 
 if (isFermiMarkdownPatchDisabled()) {
   writeFermiOpenTuiDiag("markdown.patch", {
@@ -232,28 +249,52 @@ if (isFermiMarkdownPatchDisabled()) {
   proto.buildRenderableTokens = function buildRenderableTokensPatched(tokens: MarkedToken[]): MarkedToken[] {
     const renderTokens: MarkedToken[] = [];
     let markdownRaw = "";
+    let markdownMarginTop = 0;
+    let pendingGapBeforeNext = "";
 
-    const flushMarkdownRaw = (): void => {
-      if (markdownRaw.length === 0) return;
+    const getNextMarginTop = (gapBeforeNext: string): number => {
+      const prev = renderTokens[renderTokens.length - 1];
+      if (!prev) return 0;
+      return this.shouldRenderSeparately(prev) || TRAILING_MARKDOWN_BLOCK_BREAKS_RE.test(prev.raw + gapBeforeNext)
+        ? 1
+        : 0;
+    };
+
+    const flushMarkdownRaw = (): string => {
+      if (markdownRaw.length === 0) return "";
       const normalizedRaw = this.normalizeMarkdownBlockRaw(markdownRaw);
-      if (normalizedRaw.length > 0) {
-        renderTokens.push(this.createMarkdownBlockToken(normalizedRaw));
+      const trailingGap = TRAILING_MARKDOWN_BLOCK_BREAKS_RE.test(normalizedRaw) ? "\n\n" : "";
+      const trimmedRaw = normalizedRaw.replace(TRAILING_MARKDOWN_BLOCK_NEWLINES_RE, "");
+      if (trimmedRaw.length > 0) {
+        renderTokens.push(this.createMarkdownBlockToken(trimmedRaw, markdownMarginTop));
       }
       markdownRaw = "";
+      markdownMarginTop = 0;
+      return trailingGap;
     };
 
     for (const token of tokens) {
       if (token.type === "space") {
-        markdownRaw += token.raw;
+        if (markdownRaw.length > 0) {
+          markdownRaw += normalizeInterTokenSpace(token.raw);
+        } else {
+          pendingGapBeforeNext += token.raw;
+        }
         continue;
       }
 
       if (this.shouldRenderSeparately(token)) {
-        flushMarkdownRaw();
+        const trailingGap = flushMarkdownRaw();
+        setCoalescedMarginTop(token, getNextMarginTop(trailingGap || pendingGapBeforeNext));
         renderTokens.push(token);
+        pendingGapBeforeNext = "";
         continue;
       }
 
+      if (markdownRaw.length === 0) {
+        markdownMarginTop = getNextMarginTop(pendingGapBeforeNext);
+        pendingGapBeforeNext = "";
+      }
       markdownRaw += token.raw;
     }
 

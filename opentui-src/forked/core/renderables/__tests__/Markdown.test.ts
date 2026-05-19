@@ -439,8 +439,6 @@ test("table inside code block should NOT be formatted", async () => {
     |---|---|---|
     | Should | Stay | Raw |
 
-
-
     ┌────┬─────────┐
     │Real│Table    │
     ├────┼─────────┤
@@ -467,8 +465,8 @@ Some text between.
     ├──────┼─┤
     │X     │Y│
     └──────┴─┘
-    Some text between.
 
+    Some text between.
 
     ┌────────────┬──┐
     │Table2      │BB│
@@ -722,12 +720,12 @@ This is a paragraph after the table.`
     "
     This is a paragraph before the table.
 
-
     ┌─────┬───┐
     │Name │Age│
     ├─────┼───┤
     │Alice│30 │
     └─────┴───┘
+
     This is a paragraph after the table."
   `)
 })
@@ -878,11 +876,9 @@ And here is more text after.`
     "
     Here is some code:
 
-
     function hello() {
       return "world";
     }
-
 
     And here is more text after."
   `)
@@ -905,12 +901,9 @@ fn main() {}
     "
     First block:
 
-
     print("hello")
 
-
     Second block:
-
 
     fn main() {}"
   `)
@@ -1237,11 +1230,9 @@ Visit [GitHub](https://github.com) for more.
 
     Code Example
 
-
     const md = new MarkdownRenderable(ctx, {
       content: "# Hello",
     })
-
 
     Links
 
@@ -1418,7 +1409,6 @@ console.log(x);`
     "
     Here is some code:
 
-
     const x = 1;
     console.log(x);"
   `)
@@ -1564,7 +1554,6 @@ const x = 1;
     "
     Text before
 
-
     const x = 1;"
   `)
 })
@@ -1579,6 +1568,65 @@ test("table at end with trailing blank lines", async () => {
 
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
+    ┌─┬─┐
+    │A│B│
+    ├─┼─┤
+    │1│2│
+    └─┴─┘"
+  `)
+})
+
+test("coalesced mode keeps spacing between tables and following headings", async () => {
+  const markdown = `| A | B |
+|---|---|
+| 1 | 2 |
+
+### Heading`
+
+  expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
+    "
+    ┌─┬─┐
+    │A│B│
+    ├─┼─┤
+    │1│2│
+    └─┴─┘
+
+    Heading"
+  `)
+})
+
+test("coalesced mode collapses repeated blank rows after tables", async () => {
+  const markdown = `| A | B |
+|---|---|
+| 1 | 2 |
+
+
+
+### Heading`
+
+  expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
+    "
+    ┌─┬─┐
+    │A│B│
+    ├─┼─┤
+    │1│2│
+    └─┴─┘
+
+    Heading"
+  `)
+})
+
+test("coalesced mode does not duplicate spacing before tables", async () => {
+  const markdown = `Intro
+
+| A | B |
+|---|---|
+| 1 | 2 |`
+
+  expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
+    "
+    Intro
+
     ┌─┬─┐
     │A│B│
     ├─┼─┤
@@ -1732,6 +1780,26 @@ test("incremental update reuses unchanged blocks when appending", async () => {
   // First block should be reused (same object reference)
   const firstBlockAfter = md._blockStates[0]?.renderable
   expect(firstBlockAfter).toBe(firstBlockBefore)
+})
+
+test("streaming coalesced paragraph updates reuse the current markdown renderable", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-streaming-coalesced-paragraph",
+    content: "The current paragraph is growing",
+    syntaxStyle,
+    streaming: true,
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  const blockBefore = md._blockStates[0]?.renderable
+
+  md.content = "The current paragraph is growing without rebuilding"
+  await renderMarkdownRenderable(md)
+
+  const blockAfter = md._blockStates[0]?.renderable
+  expect(blockAfter).toBe(blockBefore)
 })
 
 test("streaming mode keeps trailing tokens unstable", async () => {
