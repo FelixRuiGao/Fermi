@@ -155,3 +155,133 @@ test("patched markdown renderer keeps coalesced spacing after tables", async () 
     await treeSitterClient.destroy()
   }
 })
+
+test("patched markdown renderer respects non-streaming markdown height floors", async () => {
+  await import("./patch-opentui-markdown.js")
+
+  const {
+    MarkdownRenderable,
+    RGBA,
+    SyntaxStyle,
+    TreeSitterClient,
+  } = await import("@opentui/core")
+  const { createTestRenderer } = await import("./core/testing/test-renderer.js")
+
+  const dataPath = join(tmpdir(), "tree-sitter-patched-markdown-height-floor-test-data")
+  await mkdir(dataPath, { recursive: true })
+
+  const treeSitterClient = new TreeSitterClient({ dataPath })
+  await treeSitterClient.initialize()
+
+  const testRenderer = await createTestRenderer({ width: 80, height: 30 })
+  const { renderer, renderOnce } = testRenderer
+
+  try {
+    const syntaxStyle = SyntaxStyle.fromStyles({
+      default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+    })
+
+    const md = new MarkdownRenderable(renderer, {
+      id: "patched-markdown-height-floor",
+      content: "Paragraph",
+      syntaxStyle,
+      treeSitterClient,
+      streaming: false,
+      conceal: true,
+    })
+
+    renderer.root.add(md)
+    await renderOnce()
+
+    const renderable = md._blockStates[0]?.renderable as { reserveHeightWhileStreaming?: boolean } | undefined
+    expect(renderable?.reserveHeightWhileStreaming).toBe(false)
+  } finally {
+    renderer.destroy()
+    await treeSitterClient.destroy()
+  }
+})
+
+test("patched top-level markdown renderer avoids stale spacing when a streaming table forms", async () => {
+  await import("./patch-opentui-markdown.js")
+
+  const {
+    CodeRenderable,
+    MarkdownRenderable,
+    RGBA,
+    SyntaxStyle,
+    TreeSitterClient,
+  } = await import("@opentui/core")
+  const { createTestRenderer } = await import("./core/testing/test-renderer.js")
+
+  const dataPath = join(tmpdir(), "tree-sitter-patched-markdown-top-level-streaming-table-test-data")
+  await mkdir(dataPath, { recursive: true })
+
+  const treeSitterClient = new TreeSitterClient({ dataPath })
+  await treeSitterClient.initialize()
+
+  const testRenderer = await createTestRenderer({ width: 80, height: 30 })
+  const { renderer, renderOnce, captureCharFrame } = testRenderer
+
+  try {
+    const syntaxStyle = SyntaxStyle.fromStyles({
+      default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+    })
+
+    const md = new MarkdownRenderable(renderer, {
+      id: "patched-markdown-top-level-streaming-table",
+      content: "### 总结\n\n| A | B |\n| 1 | 2 |",
+      syntaxStyle,
+      treeSitterClient,
+      streaming: true,
+      internalBlockMode: "top-level",
+      conceal: true,
+      tableOptions: {
+        widthMode: "content",
+        borders: true,
+        outerBorder: true,
+      },
+    })
+
+    renderer.root.add(md)
+
+    const hasPendingMarkdownHighlights = (): boolean =>
+      md
+        .getChildren()
+        .some((child: unknown) =>
+          child instanceof CodeRenderable &&
+          child.filetype === "markdown" &&
+          child.isHighlighting
+        )
+
+    await renderOnce()
+    const startedAt = Date.now()
+    while (hasPendingMarkdownHighlights() && Date.now() - startedAt < 2000) {
+      await Bun.sleep(10)
+      await renderOnce()
+    }
+    await renderOnce()
+
+    const headingBefore = md._blockStates[0]?.renderable
+
+    md.content = "### 总结\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+    await renderOnce()
+
+    expect(md._blockStates.map((state) => state.token.type)).toEqual(["heading", "table"])
+    expect(md._blockStates[0]?.renderable).toBe(headingBefore)
+    expect(md._blockStates[0]?.renderable.height).toBe(1)
+
+    const lines = captureCharFrame()
+      .split("\n")
+      .map((line) => line.trimEnd())
+
+    const heading = lines.findIndex((line) => line.trim() === "总结")
+    const tableTop = lines.findIndex((line) => line.includes("┌"))
+
+    expect(heading).toBeGreaterThanOrEqual(0)
+    expect(tableTop).toBe(heading + 2)
+    expect(lines.some((line) => line.includes("| A | B |"))).toBe(false)
+  } finally {
+    renderer.destroy()
+    await treeSitterClient.destroy()
+  }
+})

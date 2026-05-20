@@ -46,6 +46,7 @@ export function AssistantEntry({
           streaming={streaming}
           conceal={true}
           concealCode={false}
+          internalBlockMode="top-level"
           width="100%"
           tableOptions={{
             widthMode: "content",

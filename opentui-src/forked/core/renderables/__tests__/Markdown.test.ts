@@ -1759,6 +1759,85 @@ test("internalBlockMode=top-level preserves spacing after tight fenced code bloc
   `)
 })
 
+test("internalBlockMode=top-level reuses markdown renderables while streaming text grows", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-streaming-reuse",
+    content: "# Hel",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  const blockBefore = md._blockStates[0]?.renderable
+
+  md.content = "# Hello"
+  await renderMarkdownRenderable(md)
+
+  const blockAfter = md._blockStates[0]?.renderable
+  expect(blockAfter).toBe(blockBefore)
+  expect(blockBefore?.isDestroyed).toBe(false)
+})
+
+test("internalBlockMode=top-level does not leave stale heading height when a streaming table forms", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-streaming-table",
+    content: "### 总结\n\n| A | B |\n| 1 | 2 |",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+    tableOptions: { widthMode: "content", borders: true, outerBorder: true },
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  const headingBefore = md._blockStates[0]?.renderable
+
+  md.content = "### 总结\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+  await renderOnce()
+
+  expect(md._blockStates.map((state) => state.token.type)).toEqual(["heading", "table"])
+  expect(md._blockStates[0]?.renderable).toBe(headingBefore)
+  expect(md._blockStates[0]?.renderable.height).toBe(1)
+
+  const lines = captureFrame()
+    .split("\n")
+    .map((line) => line.trimEnd())
+
+  const heading = lines.findIndex((line) => line.trim() === "总结")
+  const tableTop = lines.findIndex((line) => line.includes("┌"))
+
+  expect(heading).toBeGreaterThanOrEqual(0)
+  expect(tableTop).toBe(heading + 2)
+  expect(lines.some((line) => line.includes("| A | B |"))).toBe(false)
+})
+
+test("internalBlockMode=top-level reuses table renderables while streaming rows grow", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-streaming-table-reuse",
+    content: "| A | B |\n|---|---|\n| 1 | 2 |",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+    tableOptions: { widthMode: "content", borders: true, outerBorder: true },
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  const tableBefore = md._blockStates[0]?.renderable
+
+  md.content = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+  await renderMarkdownRenderable(md)
+
+  const tableAfter = md._blockStates[0]?.renderable
+  expect(tableAfter).toBe(tableBefore)
+  expect(captureFrame()).toContain("3")
+})
+
 test("incremental update reuses unchanged blocks when appending", async () => {
   const md = createMarkdownRenderable({
     id: "markdown",

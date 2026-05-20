@@ -32,7 +32,7 @@ export function setUseShikiHighlighter(value: boolean): void {
   useShikiHighlighter = value;
 }
 
-const PATCH_FLAG = Symbol.for("fermi.opentui.markdown.patch.v4");
+const PATCH_FLAG = Symbol.for("fermi.opentui.markdown.patch.v5");
 const INNER_TEXT = Symbol.for("fermi.codeblock.text");
 const LABEL_REF = Symbol.for("fermi.codeblock.label");
 const COPY_REF = Symbol.for("fermi.codeblock.copy");
@@ -235,7 +235,7 @@ if (isFermiMarkdownPatchDisabled()) {
   proto[PATCH_FLAG] = true;
   writeFermiOpenTuiDiag("markdown.patch", {
     applied: true,
-    version: "v4",
+    version: "v5",
   });
 
   proto.getInterBlockMargin = function getInterBlockMarginPatched(): number {
@@ -319,6 +319,7 @@ if (isFermiMarkdownPatchDisabled()) {
       conceal: this._conceal,
       drawUnstyledText: false,
       streaming: true,
+      reserveHeightWhileStreaming: this._streaming,
       onHighlight: createMarkdownSyntheticBlockHighlighter(() => this._treeSitterClient),
       onChunks: this._linkifyMarkdownChunks as any,
       treeSitterClient: this._treeSitterClient as any,
@@ -448,6 +449,7 @@ if (isFermiMarkdownPatchDisabled()) {
     renderable.syntaxStyle = this._syntaxStyle as any;
     renderable.conceal = this._conceal;
     renderable.drawUnstyledText = false;
+    renderable.reserveHeightWhileStreaming = this._streaming;
     renderable.streaming = true;
     renderable.fg = undefined;
     renderable.marginBottom = marginBottom;

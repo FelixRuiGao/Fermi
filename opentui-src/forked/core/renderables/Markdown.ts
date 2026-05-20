@@ -116,7 +116,8 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
   /**
    * Internal only.
    * - "coalesced": combine ordinary markdown into larger render blocks.
-   * - "top-level": preserve top-level markdown blocks as separate render blocks.
+   * - "top-level": preserve top-level markdown blocks as separate render blocks
+   *   while reusing same-kind default renderables across content updates.
    */
   internalBlockMode?: "coalesced" | "top-level"
 }
@@ -1076,6 +1077,84 @@ export class MarkdownRenderable extends Renderable {
     return next ?? this.createTopLevelDefaultRenderable(block, index)
   }
 
+  private updateTopLevelDefaultRenderable(
+    state: BlockState,
+    block: MarkdownRenderBlock,
+    index: number,
+    forceTableRefresh: boolean,
+  ): boolean {
+    const { token, marginTop } = block
+
+    if (token.type === "code") {
+      if (state.token.type !== "code") {
+        return false
+      }
+
+      this.applyCodeBlockRenderable(state.renderable as CodeRenderable, token as Tokens.Code, 0)
+      this.applyMargins(state.renderable, marginTop, 0)
+      this.syncTopLevelBlockState(state, block)
+      return true
+    }
+
+    if (token.type === "table") {
+      if (state.token.type !== "table") {
+        return false
+      }
+
+      const tableToken = token as Tokens.Table
+      const { cache, changed } = this.buildTableContentCache(tableToken, state.tableContentCache, forceTableRefresh)
+
+      if (!cache) {
+        if (state.renderable instanceof CodeRenderable) {
+          this.applyMarkdownCodeRenderable(state.renderable, tableToken.raw, 0)
+          this.applyMargins(state.renderable, marginTop, 0)
+          this.syncTopLevelBlockState(state, block, undefined)
+          return true
+        }
+
+        state.renderable.destroyRecursively()
+        const fallbackRenderable = this.createMarkdownCodeRenderable(tableToken.raw, `${this.id}-block-${index}`)
+        fallbackRenderable.marginTop = marginTop
+        this.add(fallbackRenderable)
+        state.renderable = fallbackRenderable
+        this.syncTopLevelBlockState(state, block, undefined)
+        return true
+      }
+
+      if (state.renderable instanceof TextTableRenderable) {
+        if (changed) {
+          state.renderable.content = cache.content
+        }
+        this.applyTableRenderableOptions(state.renderable, this.resolveTableRenderableOptions())
+        this.applyMargins(state.renderable, marginTop, 0)
+        this.syncTopLevelBlockState(state, block, cache)
+        return true
+      }
+
+      state.renderable.destroyRecursively()
+      const tableRenderable = this.createTextTableRenderable(cache.content, `${this.id}-block-${index}`)
+      tableRenderable.marginTop = marginTop
+      this.add(tableRenderable)
+      state.renderable = tableRenderable
+      this.syncTopLevelBlockState(state, block, cache)
+      return true
+    }
+
+    if (state.token.type === "code" || state.token.type === "table" || !(state.renderable instanceof CodeRenderable)) {
+      return false
+    }
+
+    const markdownRaw = this.getTopLevelBlockRaw(token)
+    if (!markdownRaw) {
+      return false
+    }
+
+    this.applyMarkdownCodeRenderable(state.renderable, markdownRaw, 0)
+    this.applyMargins(state.renderable, marginTop, 0)
+    this.syncTopLevelBlockState(state, block, undefined)
+    return true
+  }
+
   private createDefaultRenderable(token: MarkedToken, index: number, hasNextToken: boolean = false): Renderable | null {
     const id = `${this.id}-block-${index}`
     const marginBottom = this.getInterBlockMargin(token, hasNextToken)
@@ -1183,6 +1262,15 @@ export class MarkdownRenderable extends Renderable {
     for (let i = 0; i < blocks.length; i += 1) {
       const block = blocks[i]
       const existing = this._blockStates[blockIndex]
+
+      if (
+        existing &&
+        !this._renderNode &&
+        this.updateTopLevelDefaultRenderable(existing, block, blockIndex, forceTableRefresh)
+      ) {
+        blockIndex++
+        continue
+      }
 
       if (existing && existing.token === block.token && !forceTableRefresh) {
         if (existing.marginTop !== block.marginTop) {

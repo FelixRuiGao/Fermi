@@ -288,7 +288,7 @@ test("ScrollbackSurface captures inline first-line offset at creation", async ()
   expect(text.height).toBe(2)
 })
 
-test("ScrollbackSurface preserves inline first-line offset when the first markdown block is replaced", async () => {
+test("ScrollbackSurface preserves inline first-line offset when the first markdown block is updated", async () => {
   const { renderer } = await createSplitFooterRenderer({
     width: 10,
     height: 6,
@@ -339,9 +339,9 @@ test("ScrollbackSurface preserves inline first-line offset when the first markdo
   md.content = "# abcdef"
   await surface.settle()
 
-  const replacementRenderable = md._blockStates[0]!.renderable
-  expect(replacementRenderable).not.toBe(initialRenderable)
-  expect(replacementRenderable.height).toBe(2)
+  const updatedRenderable = md._blockStates[0]!.renderable
+  expect(updatedRenderable).toBe(initialRenderable)
+  expect(updatedRenderable.height).toBe(2)
 })
 
 test("ScrollbackSurface.commitRows rejects stale geometry after resize", async () => {
