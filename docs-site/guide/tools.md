@@ -34,8 +34,8 @@ Fermi provides 13 built-in tools and 8 orchestration tools. Additional tools com
 
 | Tool | Description |
 |------|-------------|
-| `web_search` | Search the web. Uses provider-native search when available, otherwise falls back to a web search tool. |
-| `web_fetch` | Fetch and read the content of a URL. |
+| `web_search` | Search the web. Uses provider-native search when available; client-side fallback returns numbered URL results with highlights and metadata where available. |
+| `web_fetch` | Fetch and read the content of a URL. Uses Jina Reader first, then a local Readability/Turndown fallback for HTML pages, and returns readable page content. |
 
 ## Orchestration Tools (8)
 

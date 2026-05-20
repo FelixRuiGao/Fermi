@@ -577,7 +577,7 @@ export type InternalMessage = Record<string, unknown>;
 
 export interface ApiProjectionOptions {
   /**
-   * Dynamically assembled system prompt (re-assembled each API call).
+   * Current system prompt supplied by Session, usually from its prompt cache.
    * If not provided, the system_prompt log entry's content is used as fallback.
    */
   systemPrompt?: string;

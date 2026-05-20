@@ -93,7 +93,7 @@ function resolveTierDefaultPrompt(_spec: Record<string, unknown>): string | null
 
 /**
  * Recipe for dynamic system prompt reassembly.
- * Stored on Agent so Session can re-run the assembly pipeline at each API call.
+ * Stored on Agent so Session can rebuild the cached prompt on reload.
  */
 export interface PromptRecipe {
   templateDir: string;
@@ -119,9 +119,8 @@ export interface PromptRecipe {
 /**
  * Assemble a system prompt from a template recipe.
  *
- * This is the core assembly pipeline, extracted so it can be re-run
- * at each API call for dynamic prompt updates (new skills, prompt edits,
- * software updates, etc.).
+ * This is the core assembly pipeline, extracted so Session can rebuild the
+ * cached prompt when templates, AGENTS.md, skills, or config are reloaded.
  */
 export function assembleSystemPrompt(recipe: PromptRecipe): string {
   const { templateDir, spec } = recipe;

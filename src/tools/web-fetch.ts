@@ -6,6 +6,10 @@
  *  2. Fall back to the local fetch/extract path on rate-limit or network failure
  */
 
+import { isIP } from "node:net";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
+import TurndownService from "turndown";
 import type { ToolDef } from "../providers/base.js";
 import { truncateMiddle } from "./shared.js";
 
@@ -17,6 +21,7 @@ const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_MAX_CONTENT_LENGTH = 5 * 1024 * 1024; // 5 MB raw HTML
 const OUTPUT_MAX_CHARS = 100_000;
 const JINA_READER_PREFIX = "https://r.jina.ai/";
+const LOCAL_MAX_REDIRECTS = 10;
 
 // ------------------------------------------------------------------
 // Tool definition
@@ -52,73 +57,106 @@ export const WEB_FETCH: ToolDef = {
 // HTML to readable text converter
 // ------------------------------------------------------------------
 
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+});
+
+function cleanupText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function removeNoisyElements(document: Document): void {
+  for (const selector of ["script", "style", "noscript", "nav", "header", "footer", "aside"]) {
+    for (const node of Array.from(document.querySelectorAll(selector))) {
+      node.remove();
+    }
+  }
+}
+
 /**
- * Convert HTML to a readable markdown-like text format.
- * Handles common elements: headings, paragraphs, links, lists, code blocks.
- * Strips scripts, styles, and remaining tags.
+ * Convert HTML to readable markdown using a low-maintenance library chain:
+ * Readability extracts the main article when possible, and Turndown converts
+ * the remaining HTML to markdown. If extraction fails, fall back to body HTML.
  */
-function htmlToText(html: string): string {
-  let text = html;
+function htmlToMarkdown(html: string): string {
+  const { document } = parseHTML(html);
+  removeNoisyElements(document);
+  const explicitMain = document.querySelector("article, main")?.innerHTML;
+  const article = new Readability(document, { keepClasses: false }).parse();
+  const source = explicitMain || article?.content || document.body?.innerHTML || html;
+  return cleanupText(turndown.turndown(source));
+}
 
-  // Remove script, style, and noscript blocks
-  text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
-  text = text.replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, "");
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 192 && b === 0) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
 
-  // Remove HTML comments
-  text = text.replace(/<!--[\s\S]*?-->/g, "");
+function isPrivateIpv6(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "::" ||
+    host === "::1" ||
+    host.startsWith("fc") ||
+    host.startsWith("fd") ||
+    host.startsWith("fe80:") ||
+    host.startsWith("::ffff:127.") ||
+    host.startsWith("::ffff:10.") ||
+    host.startsWith("::ffff:192.168.") ||
+    /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
 
-  // Convert headings
-  text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi, "\n# $1\n");
-  text = text.replace(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi, "\n## $1\n");
-  text = text.replace(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi, "\n### $1\n");
-  text = text.replace(/<h4\b[^>]*>([\s\S]*?)<\/h4>/gi, "\n#### $1\n");
-  text = text.replace(/<h5\b[^>]*>([\s\S]*?)<\/h5>/gi, "\n##### $1\n");
-  text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6>/gi, "\n###### $1\n");
+function validateFetchUrl(parsed: URL): string | null {
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `Only http and https URLs are supported. Got: ${parsed.protocol}`;
+  }
 
-  // Convert links: <a href="url">text</a> → [text](url)
-  text = text.replace(/<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
+  if (parsed.username || parsed.password) {
+    return "URLs with embedded credentials (user:pass@host) are not allowed.";
+  }
 
-  // Convert code blocks: <pre><code> → ```
-  text = text.replace(/<pre\b[^>]*>\s*<code\b[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, "\n```\n$1\n```\n");
-  text = text.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, "\n```\n$1\n```\n");
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname === "local"
+  ) {
+    return `Refusing to fetch local hostname: ${parsed.hostname}`;
+  }
 
-  // Convert inline code
-  text = text.replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
+  const ipKind = isIP(hostname);
+  if (ipKind === 4 && isPrivateIpv4(hostname)) {
+    return `Refusing to fetch private IP address: ${parsed.hostname}`;
+  }
+  if (ipKind === 6 && isPrivateIpv6(hostname)) {
+    return `Refusing to fetch private IP address: ${parsed.hostname}`;
+  }
 
-  // Convert bold and italic
-  text = text.replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, "**$1**");
-  text = text.replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, "*$1*");
-
-  // Convert list items
-  text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
-
-  // Convert paragraphs and divs to double newlines
-  text = text.replace(/<\/p>/gi, "\n\n");
-  text = text.replace(/<\/div>/gi, "\n");
-  text = text.replace(/<br\s*\/?>/gi, "\n");
-  text = text.replace(/<hr\s*\/?>/gi, "\n---\n");
-
-  // Remove remaining tags
-  text = text.replace(/<[^>]+>/g, "");
-
-  // Decode common HTML entities
-  text = text.replace(/&amp;/g, "&");
-  text = text.replace(/&lt;/g, "<");
-  text = text.replace(/&gt;/g, ">");
-  text = text.replace(/&quot;/g, '"');
-  text = text.replace(/&#39;/g, "'");
-  text = text.replace(/&nbsp;/g, " ");
-  text = text.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)));
-
-  // Clean up whitespace
-  text = text.replace(/[ \t]+/g, " ");           // collapse horizontal whitespace
-  text = text.replace(/\n[ \t]+/g, "\n");         // trim leading whitespace on lines
-  text = text.replace(/[ \t]+\n/g, "\n");         // trim trailing whitespace on lines
-  text = text.replace(/\n{3,}/g, "\n\n");         // collapse excessive newlines
-  text = text.trim();
-
-  return text;
+  return null;
 }
 
 // ------------------------------------------------------------------
@@ -137,13 +175,9 @@ export async function toolWebFetch(
     return `ERROR: Invalid URL: ${url}`;
   }
 
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return `ERROR: Only http and https URLs are supported. Got: ${parsed.protocol}`;
-  }
-
-  // Reject embedded credentials
-  if (parsed.username || parsed.password) {
-    return "ERROR: URLs with embedded credentials (user:pass@host) are not allowed.";
+  const validationError = validateFetchUrl(parsed);
+  if (validationError) {
+    return `ERROR: ${validationError}`;
   }
 
   const normalizedUrl = parsed.toString();
@@ -185,13 +219,17 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   let externalAborted = false;
+  let timedOut = false;
 
   // If the caller already cancelled, short-circuit.
   if (externalSignal?.aborted) {
     throw { kind: "interrupted", message: "web_fetch was interrupted before the request started." } satisfies FetchFailure;
   }
 
-  const timer = setTimeout(() => controller.abort(new Error("fetch-timeout")), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("fetch-timeout"));
+  }, FETCH_TIMEOUT_MS);
   const onExternalAbort = () => {
     externalAborted = true;
     controller.abort(new Error("external-abort"));
@@ -210,7 +248,7 @@ async function fetchWithTimeout(
         message: "web_fetch was interrupted while fetching.",
       } satisfies FetchFailure;
     }
-    if (e instanceof Error && e.name === "AbortError") {
+    if (timedOut || (e instanceof Error && e.name === "AbortError")) {
       throw {
         kind: "timeout",
         message: `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s.`,
@@ -225,21 +263,9 @@ async function fetchWithTimeout(
 
 function buildOutput(
   url: string,
-  contentType: string,
-  backend: "jina" | "local",
-  prompt: string | undefined,
   body: string,
 ): string {
-  const header = [
-    `URL: ${url}`,
-    `Content-Type: ${contentType || "unknown"}`,
-    `Backend: ${backend}`,
-  ];
-  if (prompt) {
-    header.push(`Looking for: ${prompt}`);
-  }
-  header.push("");
-  return header.join("\n") + body;
+  return `# Content from ${url}\n\n${body}`;
 }
 
 function normalizeOutput(output: string): string {
@@ -247,6 +273,22 @@ function normalizeOutput(output: string): string {
   // and conclusions / FAQ / next-steps at the bottom — keeping both is
   // strictly more useful than tail-dropped output.
   return truncateMiddle(output.trim(), OUTPUT_MAX_CHARS);
+}
+
+function stripJinaMetadata(text: string): string {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const markers = [
+    "\nMarkdown Content:\n",
+    "\nContent:\n",
+  ];
+  for (const marker of markers) {
+    const idx = normalized.indexOf(marker);
+    if (idx >= 0) {
+      const body = normalized.slice(idx + marker.length).trim();
+      if (body) return body;
+    }
+  }
+  return normalized;
 }
 
 async function fetchViaJina(
@@ -275,18 +317,57 @@ async function fetchViaJina(
     return `ERROR: HTTP ${response.status} ${response.statusText} for ${url}`;
   }
 
-  const body = normalizeOutput(await response.text());
+  const body = normalizeOutput(stripJinaMetadata(await response.text()));
   if (!body) {
     return null;
   }
 
-  return buildOutput(
-    url,
-    response.headers.get("content-type") ?? "text/plain",
-    "jina",
-    prompt,
-    body,
-  );
+  return buildOutput(url, body);
+}
+
+async function fetchLocallyWithRedirects(
+  url: string,
+  externalSignal?: AbortSignal,
+): Promise<{ response: Response; finalUrl: string }> {
+  let current = url;
+  for (let redirectCount = 0; redirectCount <= LOCAL_MAX_REDIRECTS; redirectCount++) {
+    const response = await fetchWithTimeout(current, {
+      headers: {
+        "User-Agent": "Fermi/1.0 (web_fetch tool)",
+        Accept: "text/html, application/json, text/plain, */*",
+      },
+      redirect: "manual",
+    }, externalSignal);
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return { response, finalUrl: current };
+    }
+
+    const location = response.headers.get("location");
+    if (!location) return { response, finalUrl: current };
+
+    let next: URL;
+    try {
+      next = new URL(location, current);
+    } catch {
+      return { response, finalUrl: current };
+    }
+
+    const validationError = validateFetchUrl(next);
+    if (validationError) {
+      throw {
+        kind: "error",
+        message: `Redirect target rejected: ${validationError}`,
+      } satisfies FetchFailure;
+    }
+
+    current = next.toString();
+  }
+
+  throw {
+    kind: "error",
+    message: `Too many redirects (limit ${LOCAL_MAX_REDIRECTS}).`,
+  } satisfies FetchFailure;
 }
 
 async function fetchLocally(
@@ -295,24 +376,22 @@ async function fetchLocally(
   externalSignal?: AbortSignal,
 ): Promise<string> {
   let response: Response;
+  let finalUrl = url;
   try {
-    response = await fetchWithTimeout(url, {
-      headers: {
-        "User-Agent": "Fermi/1.0 (web_fetch tool)",
-        Accept: "text/html, application/json, text/plain, */*",
-      },
-      redirect: "follow",
-    }, externalSignal);
+    const fetched = await fetchLocallyWithRedirects(url, externalSignal);
+    response = fetched.response;
+    finalUrl = fetched.finalUrl;
   } catch (e) {
     if (isFetchFailure(e)) {
       if (e.kind === "interrupted") return `ERROR: ${e.message}`;
       if (e.kind === "timeout") return `ERROR: ${e.message}`;
+      return `ERROR: ${e.message}`;
     }
     return `ERROR: Fetch failed: ${e instanceof Error ? e.message : String(e)}`;
   }
 
   if (!response.ok) {
-    return `ERROR: HTTP ${response.status} ${response.statusText} for ${url}`;
+    return `ERROR: HTTP ${response.status} ${response.statusText} for ${finalUrl}`;
   }
 
   const contentLength = response.headers.get("content-length");
@@ -337,7 +416,7 @@ async function fetchLocally(
 
   let output: string;
   if (isHTML) {
-    output = htmlToText(body);
+    output = htmlToMarkdown(body);
   } else if (isJSON) {
     try {
       output = JSON.stringify(JSON.parse(body), null, 2);
@@ -348,5 +427,5 @@ async function fetchLocally(
     output = body;
   }
 
-  return buildOutput(url, contentType, "local", prompt, normalizeOutput(output));
+  return buildOutput(finalUrl, normalizeOutput(output));
 }

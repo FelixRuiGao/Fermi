@@ -3314,9 +3314,8 @@ export class Session {
   }
 
   /**
-   * Refresh skills from disk. Called automatically before each API call
-   * so that newly installed, removed, or modified skills take effect
-   * without a manual reload step.
+   * Refresh skills from disk. Called during prompt/tool reload so installed,
+   * removed, or modified skills update the dynamic skill tool definition.
    */
   private _refreshSkills(): void {
     if (this._skillRoots.length === 0) return;

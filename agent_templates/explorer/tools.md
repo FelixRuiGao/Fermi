@@ -61,15 +61,15 @@ Use `time` when a task depends on the current date/time or timezone.
 
 `web_search(query)`
 
-Search the web for current information. Returns titles, URLs, and snippets.
+Search the web for current information. Returns numbered results with titles, URLs, highlights, and available metadata.
 
 ## `web_fetch`
 
 `web_fetch(url, prompt?)`
 
-Fetch content from a URL and return it as readable text. HTML pages are converted to markdown-like format.
+Fetch content from a URL and return it as readable text. Uses Jina Reader first, then falls back to local extraction; successful fetches return page content in readable markdown-like form.
 
-- Only http/https URLs.
+- Only http/https URLs. Localhost, private IPs, embedded credentials, and local hostnames are rejected.
 - Use `web_search` to discover URLs; use `web_fetch` to read specific pages.
 - Results may be truncated for very large pages (~100K char limit).
 
