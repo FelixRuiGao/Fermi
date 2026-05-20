@@ -123,6 +123,7 @@ import {
 import { clamp, computePickerMaxVisible } from "./display/layout/metrics.js";
 import { OpenTuiScreen } from "./display/layout/open-tui-screen.js";
 import { resolveModelNameColor } from "./display/utils/model.js";
+import { getDeleteToVisualLineStartAction } from "./input/delete-to-visual-line-start.js";
 import { appendPromptHistory, navigatePromptHistory } from "./input/prompt-history.js";
 
 export interface OpenTuiAppProps {
@@ -1981,14 +1982,13 @@ export function OpenTuiApp({
 
     const cursor = composer.editorView.getCursor();
     const visualStart = composer.editorView.getVisualSOL();
-    if (
-      visualStart.logicalRow === cursor.row &&
-      visualStart.logicalCol === cursor.col
-    ) {
+    const action = getDeleteToVisualLineStartAction(cursor, visualStart);
+
+    if (action === "noop") {
       return;
     }
 
-    if (visualStart.logicalRow === cursor.row && visualStart.logicalCol === 0) {
+    if (action === "delete-to-line-start") {
       composer.deleteToLineStart();
       syncComposerState();
       return;
