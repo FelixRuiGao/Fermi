@@ -124,7 +124,7 @@ import { clamp, computePickerMaxVisible } from "./display/layout/metrics.js";
 import { OpenTuiScreen } from "./display/layout/open-tui-screen.js";
 import { resolveModelNameColor } from "./display/utils/model.js";
 import { getDeleteToVisualLineStartAction } from "./input/delete-to-visual-line-start.js";
-import { appendPromptHistory, navigatePromptHistory } from "./input/prompt-history.js";
+import { appendPromptHistory, getPromptHistoryNavigationDirection, navigatePromptHistory } from "./input/prompt-history.js";
 
 export interface OpenTuiAppProps {
   session: TuiSession;
@@ -484,24 +484,10 @@ export function OpenTuiApp({
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const suppressComposerSyncRef = useRef(false);
-  // Prompt-history browsing mode. While `historyBrowsingRef.current` is true,
-  // ↑/↓ navigate history regardless of cursor position. Exits when composer
-  // text or cursor diverges from `historyAnchorRef`, detected in
-  // `syncComposerState`. Exit only flips the boolean — it never touches the
-  // underlying nav index/liveDraft, so the user's position in history is
-  // preserved across ←/→, edits, mouse clicks, and out-of-bounds attempts.
-  // Re-entering at a boundary continues from that preserved index (per 方案 2:
-  // edits to a recalled entry are dropped on the next nav, original liveDraft
-  // is restored on full ↓-back to draft slot). The navigator is reset only by
-  // `appendPromptHistory` on submit.
-  //
-  // `applyingRecallRef` suppresses the divergence check during recall.
-  // `composer.setText()` synchronously emits `content-changed` + resets the
-  // native cursor to 0 mid-call; without suppression, ↓ recall (anchor.cursor
-  // = end) would see cursor=0 and prematurely exit.
-  const historyBrowsingRef = useRef(false);
-  const historyAnchorRef = useRef<{ text: string; cursor: number }>({ text: "", cursor: 0 });
-  const applyingRecallRef = useRef(false);
+  // Prompt-history position and live-draft preservation live in
+  // input/prompt-history.ts. The app-level key handler only decides whether an
+  // ↑/↓ key is at the absolute composer boundary or should be normal cursor
+  // movement within the current recalled/draft text.
   const pasteCounterRef = useRef(new TurnPasteCounter());
   const imageCounterRef = useRef(0);
   const draftImagesRef = useRef(new Map<string, ProcessedImage & { id: string; index: number }>());
@@ -946,12 +932,6 @@ export function OpenTuiApp({
     lastInputValueRef.current = visibleValue;
     setDraftValue(visibleValue);
     updateInputOverlayRef.current(visibleValue, cursorOffset);
-    if (historyBrowsingRef.current && !applyingRecallRef.current) {
-      const anchor = historyAnchorRef.current;
-      if (visibleValue !== anchor.text || cursorOffset !== anchor.cursor) {
-        historyBrowsingRef.current = false;
-      }
-    }
   }, []);
 
   const setComposerText = useCallback((value: string, cursorToEnd = true) => {
@@ -2806,56 +2786,34 @@ export function OpenTuiApp({
       return;
     }
 
-    // Prompt history navigation. Two ways to trigger:
-    //   - "browsing mode" is active (entered via a prior recall) → ↑/↓ navigate
-    //     regardless of cursor position. This makes ↓ keep walking forward
-    //     through history after the cursor has been auto-placed at the end of
-    //     a recalled entry, instead of being blocked by the boundary check.
-    //   - Cursor is at the absolute start (↑) or end (↓) of the composer →
-    //     same as before; recall and enter mode.
-    // When recall hits the bounds in mode, we exit and fall through to the
-    // normal up/down branches below.
+    // Prompt history navigation is a boundary fallback: normal visual-line
+    // movement wins until the cursor is at the absolute start/end. The
+    // navigator itself still preserves index/liveDraft, so edits to recalled
+    // entries keep the current history position but are dropped on the next
+    // history navigation.
     const applyRecall = (recalled: string, cursor: number): void => {
-      historyAnchorRef.current = { text: recalled, cursor };
-      historyBrowsingRef.current = true;
-      applyingRecallRef.current = true;
-      try {
-        composer.extmarks.clear();
-        composer.setText(recalled);
-        composer.cursorOffset = cursor;
-      } finally {
-        applyingRecallRef.current = false;
-      }
+      composer.extmarks.clear();
+      composer.setText(recalled);
+      composer.cursorOffset = cursor;
       syncComposerState();
     };
 
-    if (event.name === "up" && !selectedChildId) {
-      const inMode = historyBrowsingRef.current;
-      const atStart = composer.cursorOffset === 0;
-      if (inMode || atStart) {
-        const recalled = navigatePromptHistory(-1, composer.plainText);
-        if (recalled !== undefined) {
-          applyRecall(recalled, 0);
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        historyBrowsingRef.current = false;
-      }
-    }
-
-    if (event.name === "down" && !selectedChildId) {
-      const inMode = historyBrowsingRef.current;
-      const atEnd = composer.cursorOffset === displayWidthWithNewlines(composer.plainText);
-      if (inMode || atEnd) {
-        const recalled = navigatePromptHistory(1, composer.plainText);
-        if (recalled !== undefined) {
-          applyRecall(recalled, displayWidthWithNewlines(recalled));
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        historyBrowsingRef.current = false;
+    const promptHistoryDirection = event.name === "up" || event.name === "down"
+      ? getPromptHistoryNavigationDirection({
+        keyName: event.name,
+        selectedChildId,
+        cursorOffset: composer.cursorOffset,
+        textDisplayWidth: event.name === "down" ? displayWidthWithNewlines(composer.plainText) : 0,
+      })
+      : undefined;
+    if (promptHistoryDirection !== undefined) {
+      const recalled = navigatePromptHistory(promptHistoryDirection, composer.plainText);
+      if (recalled !== undefined) {
+        const cursor = promptHistoryDirection === -1 ? 0 : displayWidthWithNewlines(recalled);
+        applyRecall(recalled, cursor);
+        event.preventDefault();
+        event.stopPropagation();
+        return;
       }
     }
 

@@ -21,6 +21,18 @@ interface PromptHistoryState {
   liveDraft: string;
 }
 
+export function getPromptHistoryNavigationDirection(input: {
+  keyName: string;
+  cursorOffset: number;
+  textDisplayWidth: number;
+  selectedChildId?: string | null;
+}): 1 | -1 | undefined {
+  if (input.selectedChildId) return undefined;
+  if (input.keyName === "up" && input.cursorOffset === 0) return -1;
+  if (input.keyName === "down" && input.cursorOffset === input.textDisplayWidth) return 1;
+  return undefined;
+}
+
 const state: PromptHistoryState = {
   loaded: false,
   homeDirOverride: null,

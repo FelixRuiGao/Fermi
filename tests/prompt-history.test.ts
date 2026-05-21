@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   __resetPromptHistoryForTesting,
   appendPromptHistory,
+  getPromptHistoryNavigationDirection,
   navigatePromptHistory,
 } from "../opentui-src/input/prompt-history.js";
 
@@ -92,6 +93,57 @@ describe("prompt-history", () => {
       expect(lines.length).toBe(200);
       expect(JSON.parse(lines[0]).input).toBe("p50");
       expect(JSON.parse(lines[199]).input).toBe("p249");
+    });
+  });
+
+  describe("key boundary routing", () => {
+    it("only routes ↑ to history at the absolute start", () => {
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "up",
+        cursorOffset: 0,
+        textDisplayWidth: 8,
+      })).toBe(-1);
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "up",
+        cursorOffset: 1,
+        textDisplayWidth: 8,
+      })).toBe(undefined);
+    });
+
+    it("only routes ↓ to history at the absolute end", () => {
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "down",
+        cursorOffset: 8,
+        textDisplayWidth: 8,
+      })).toBe(1);
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "down",
+        cursorOffset: 7,
+        textDisplayWidth: 8,
+      })).toBe(undefined);
+    });
+
+    it("does not route history while a child tab is selected", () => {
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "up",
+        cursorOffset: 0,
+        textDisplayWidth: 8,
+        selectedChildId: "child-1",
+      })).toBe(undefined);
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "down",
+        cursorOffset: 8,
+        textDisplayWidth: 8,
+        selectedChildId: "child-1",
+      })).toBe(undefined);
+    });
+
+    it("ignores non-arrow keys", () => {
+      expect(getPromptHistoryNavigationDirection({
+        keyName: "left",
+        cursorOffset: 0,
+        textDisplayWidth: 0,
+      })).toBe(undefined);
     });
   });
 
