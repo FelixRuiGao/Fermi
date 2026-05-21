@@ -30,6 +30,15 @@ import {
   type SendMessageOptions,
   type ToolDef,
 } from "./base.js";
+import {
+  buildAnthropicPlainThinkingPayload,
+  createThinkingArtifact,
+  effectiveThinkingEncryption,
+  isAnthropicEncryptedPayload,
+  resolveMessageThinkingArtifact,
+  selectThinkingTransmission,
+  type ThinkingArtifact,
+} from "../thinking-artifact.js";
 
 export abstract class BaseAnthropicProvider extends BaseProvider {
   override readonly requiresAlternatingRoles = true;
@@ -67,6 +76,11 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
   /** Whether `config.extra.betas` should be forwarded as request kwargs. Anthropic-only. */
   protected _supportsBetas(): boolean {
     return false;
+  }
+
+  /** Additional config.extra keys this provider wants forwarded verbatim. */
+  protected _allowedExtraConfigKeys(): readonly string[] {
+    return [];
   }
 
   /**
@@ -169,11 +183,16 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
       ) {
         const m = msg as Record<string, unknown>;
         const content: Record<string, unknown>[] = [];
-        const reasoningBlocks = m["_reasoning_state"];
-        if (reasoningBlocks && Array.isArray(reasoningBlocks)) {
-          for (const rb of reasoningBlocks) {
+        const transmission = selectThinkingTransmission(
+          resolveMessageThinkingArtifact(m),
+          effectiveThinkingEncryption(this._config),
+        );
+        if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
+          for (const rb of transmission.payload) {
             content.push(this._sanitizeReasoningBlock(rb as Record<string, unknown>));
           }
+        } else if (transmission?.kind === "plain") {
+          content.push(...buildAnthropicPlainThinkingPayload(transmission.plainReplayText));
         }
         const text = (m["text"] as string) || (m["content"] as string) || "";
         if (text) {
@@ -192,11 +211,16 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
       } else if (msg.role === "assistant") {
         const m = msg as Record<string, unknown>;
         const content: Record<string, unknown>[] = [];
-        const reasoningBlocks = m["_reasoning_state"];
-        if (reasoningBlocks && Array.isArray(reasoningBlocks)) {
-          for (const rb of reasoningBlocks) {
+        const transmission = selectThinkingTransmission(
+          resolveMessageThinkingArtifact(m),
+          effectiveThinkingEncryption(this._config),
+        );
+        if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
+          for (const rb of transmission.payload) {
             content.push(this._sanitizeReasoningBlock(rb as Record<string, unknown>));
           }
+        } else if (transmission?.kind === "plain") {
+          content.push(...buildAnthropicPlainThinkingPayload(transmission.plainReplayText));
         }
         const text =
           (m["content"] as string) || (m["text"] as string) || "";
@@ -290,6 +314,21 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
     return block;
   }
 
+  protected _buildThinkingArtifact(
+    plainReplayText: string,
+    reasoningBlocks: unknown,
+  ): ThinkingArtifact | null {
+    const targetEncryption = effectiveThinkingEncryption(this._config);
+    const replayText = plainReplayText.trim();
+    if (!replayText && (reasoningBlocks === undefined || reasoningBlocks === null)) {
+      return null;
+    }
+    if (targetEncryption === "anthropic" && isAnthropicEncryptedPayload(reasoningBlocks)) {
+      return createThinkingArtifact("anthropic", replayText, reasoningBlocks);
+    }
+    return createThinkingArtifact("none", replayText);
+  }
+
   // ------------------------------------------------------------------
   // Response parsing
   // ------------------------------------------------------------------
@@ -356,13 +395,21 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
       cacheRead,
     );
 
+    const storedReasoningState = effectiveThinkingEncryption(this._config) === "anthropic"
+      ? (reasoningBlocks.length > 0 ? reasoningBlocks : null)
+      : (thinkingParts.length > 0 ? thinkingParts.join("") : null);
+
     return new ProviderResponse({
       text: textParts.join(""),
       toolCalls,
       usage,
       raw: resp,
       reasoningContent: thinkingParts.length > 0 ? thinkingParts.join("") : "",
-      reasoningState: reasoningBlocks.length > 0 ? reasoningBlocks : null,
+      reasoningState: storedReasoningState,
+      thinkingArtifact: this._buildThinkingArtifact(
+        thinkingParts.length > 0 ? thinkingParts.join("") : "",
+        reasoningBlocks.length > 0 ? reasoningBlocks : null,
+      ),
       citations,
     });
   }
@@ -414,13 +461,22 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
 
   /**
    * Merge `config.extra` into request kwargs.  Drops `betas` unless the
-   * subclass opts in via _supportsBetas() — open-source vendors silently
-   * ignore (or in rare cases reject) the `anthropic-beta` field.
+   * subclass opts in via _supportsBetas(). Everything else must be explicitly
+   * whitelisted by the subclass to avoid leaking old Chat/Responses-only
+   * fields (`extra_body`, `reasoning_effort`, `web_search_options`, `top_p`,
+   * etc.) into Anthropic Messages requests.
    */
   private _forwardExtraConfig(kwargs: Record<string, unknown>): void {
     if (!this._config.extra) return;
+    const allowed = new Set(this._allowedExtraConfigKeys());
     for (const [k, v] of Object.entries(this._config.extra)) {
-      if (k === "betas" && !this._supportsBetas()) continue;
+      if (k === "betas") {
+        if (this._supportsBetas()) {
+          kwargs[k] = v;
+        }
+        continue;
+      }
+      if (!allowed.has(k)) continue;
       kwargs[k] = v;
     }
   }
@@ -571,13 +627,19 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
       streamCacheRead,
     );
 
+    const reasoningText = thinkingParts.length > 0 ? thinkingParts.join("") : "";
+    const storedReasoningState = effectiveThinkingEncryption(this._config) === "anthropic"
+      ? (reasoningBlocks.length > 0 ? reasoningBlocks : null)
+      : (reasoningText || null);
+
     return new ProviderResponse({
       text: textParts.join(""),
       toolCalls: [],
       usage,
       raw: response,
-      reasoningContent: thinkingParts.length > 0 ? thinkingParts.join("") : "",
-      reasoningState: reasoningBlocks.length > 0 ? reasoningBlocks : null,
+      reasoningContent: reasoningText,
+      reasoningState: storedReasoningState,
+      thinkingArtifact: this._buildThinkingArtifact(reasoningText, reasoningBlocks.length > 0 ? reasoningBlocks : null),
       citations,
     });
   }

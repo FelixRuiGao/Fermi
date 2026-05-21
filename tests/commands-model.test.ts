@@ -305,7 +305,7 @@ describe("/model command", () => {
         }),
       );
       expect(switchModel).toHaveBeenCalledWith("runtime-glm-code-glm-5");
-      expect(resetForNewSession).toHaveBeenCalledTimes(1);
+      expect(resetForNewSession).not.toHaveBeenCalled();
     } finally {
       rmSync(tempHome, { recursive: true, force: true });
     }
@@ -507,7 +507,7 @@ describe("/model command", () => {
       }),
     );
     expect(switchModel).toHaveBeenCalledWith("runtime-anthropic-claude-sonnet-4-6-1m");
-    expect(resetForNewSession).toHaveBeenCalledTimes(1);
+    expect(resetForNewSession).not.toHaveBeenCalled();
   });
 
   it("reuses provider key from existing model when switching to another model in same provider", async () => {
@@ -566,7 +566,7 @@ describe("/model command", () => {
       }),
     );
     expect(switchModel).toHaveBeenCalledWith("runtime-openai-gpt-5-2-codex");
-    expect(resetForNewSession).toHaveBeenCalledTimes(1);
+    expect(resetForNewSession).not.toHaveBeenCalled();
   });
 
   it("maps OpenRouter Anthropic aliases to the official 1M preset config", async () => {
@@ -619,6 +619,6 @@ describe("/model command", () => {
       }),
     );
     expect(switchModel).toHaveBeenCalledWith("runtime-openrouter-anthropic-claude-sonnet-4-6");
-    expect(resetForNewSession).toHaveBeenCalledTimes(1);
+    expect(resetForNewSession).not.toHaveBeenCalled();
   });
 });

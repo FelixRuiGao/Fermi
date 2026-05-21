@@ -10,6 +10,8 @@
 // Enums
 // ------------------------------------------------------------------
 
+import type { ThinkingArtifact } from "./thinking-artifact.js";
+
 export type LogEntryType =
   | "system_prompt"
   | "work_start"
@@ -397,10 +399,12 @@ export function createReasoning(
   content: unknown,
   reasoningState?: unknown,
   contextId?: string,
+  thinkingArtifact?: ThinkingArtifact | null,
 ): LogEntry {
   const meta: Record<string, unknown> = {};
   if (reasoningState !== undefined) meta.reasoningState = reasoningState;
   if (contextId !== undefined) meta.contextId = contextId;
+  if (thinkingArtifact) meta.thinkingArtifact = thinkingArtifact;
   return baseEntry(id, "reasoning", turnIndex, {
     roundIndex,
     tuiVisible: true,

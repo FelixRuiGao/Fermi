@@ -10,6 +10,7 @@ import type { ConversationEntry, ConversationEntryKind } from "./ui/contracts.js
 import { mergeConsecutiveSameRole } from "./context-rendering.js";
 import { truncateSummarizeContextContent } from "./summarize-context.js";
 import { buildActiveContextView, flattenActiveContextEntries } from "./active-context.js";
+import { inferThinkingArtifact, normalizeThinkingArtifact } from "./thinking-artifact.js";
 
 // ------------------------------------------------------------------
 // Summary visibility (append-only backward scan)
@@ -868,9 +869,29 @@ function buildAssistantMessage(
   // Extract reasoning
   const reasoning = roundEntries.find((e) => e.type === "reasoning");
   if (reasoning) {
-    msg.reasoning_content = reasoning.content;
-    if (reasoning.meta.reasoningState !== undefined) {
-      msg._reasoning_state = reasoning.meta.reasoningState;
+    const artifact = normalizeThinkingArtifact(
+      (reasoning.meta as Record<string, unknown>)["thinkingArtifact"],
+    ) ?? inferThinkingArtifact(
+      reasoning.content,
+      (reasoning.meta as Record<string, unknown>)["reasoningState"],
+    );
+    if (artifact) {
+      msg.reasoning_content = artifact.plainReplayText;
+      msg._thinking_artifact = artifact;
+      if (artifact.encryption !== "none") {
+        msg._reasoning_state = artifact.sealedPayload;
+      } else {
+        const reasoningState = (reasoning.meta as Record<string, unknown>)["reasoningState"];
+        if (reasoningState !== undefined) {
+          msg._reasoning_state = reasoningState;
+        }
+      }
+    } else {
+      msg.reasoning_content = reasoning.content;
+      const reasoningState = (reasoning.meta as Record<string, unknown>)["reasoningState"];
+      if (reasoningState !== undefined) {
+        msg._reasoning_state = reasoningState;
+      }
     }
   }
 

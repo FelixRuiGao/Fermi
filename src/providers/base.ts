@@ -5,6 +5,8 @@
  * provider responses, and the abstract BaseProvider contract.
  */
 
+import type { ThinkingArtifact } from "../thinking-artifact.js";
+
 // ------------------------------------------------------------------
 // Data interfaces
 // ------------------------------------------------------------------
@@ -122,6 +124,7 @@ export class ProviderResponse {
   raw: unknown;
   reasoningContent: string;
   reasoningState: unknown;
+  thinkingArtifact: ThinkingArtifact | null;
   citations: Citation[];
   extra: Record<string, unknown>;
 
@@ -132,6 +135,7 @@ export class ProviderResponse {
     raw?: unknown;
     reasoningContent?: string;
     reasoningState?: unknown;
+    thinkingArtifact?: ThinkingArtifact | null;
     citations?: Citation[];
     extra?: Record<string, unknown>;
   } = {}) {
@@ -141,6 +145,7 @@ export class ProviderResponse {
     this.raw = opts.raw ?? null;
     this.reasoningContent = opts.reasoningContent ?? "";
     this.reasoningState = opts.reasoningState ?? null;
+    this.thinkingArtifact = opts.thinkingArtifact ?? null;
     this.citations = opts.citations ?? [];
     this.extra = opts.extra ?? {};
   }

@@ -121,7 +121,7 @@ describe("OpenRouter _applyThinkingParams", () => {
 });
 
 describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
-  it("passes reasoning_details from _reasoning_state to converted messages", () => {
+  it("passes reasoning_details from typed anthropic artifacts to converted messages", () => {
     const provider = new OpenRouterProvider(modelConfig());
     const reasoningDetails = [
       { type: "reasoning.text", content: "thinking step 1" },
@@ -134,7 +134,11 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
         role: "assistant",
         content: "response",
         reasoning_content: "thinking",
-        _reasoning_state: reasoningDetails,
+        _thinking_artifact: {
+          encryption: "anthropic",
+          plainReplayText: "thinking",
+          sealedPayload: reasoningDetails,
+        },
       },
     ];
 
@@ -147,7 +151,7 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
     expect(assistantMsg!["reasoning_content"]).toBe("thinking");
   });
 
-  it("does not set reasoning_details when _reasoning_state is a string", () => {
+  it("does not set reasoning_details when legacy state is plain text", () => {
     const provider = new OpenRouterProvider(modelConfig());
     const messages = [
       {
@@ -163,16 +167,34 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
     expect(assistantMsg!["reasoning_details"]).toBeUndefined();
   });
 
-  it("handles multiple assistant messages correctly", () => {
+  it("handles multiple typed anthropic artifacts correctly", () => {
     const provider = new OpenRouterProvider(modelConfig());
     const details1 = [{ type: "reasoning.text", content: "step 1" }];
     const details2 = [{ type: "reasoning.text", content: "step 2" }];
 
     const messages = [
       { role: "user", content: "q1" },
-      { role: "assistant", content: "a1", reasoning_content: "r1", _reasoning_state: details1 },
+      {
+        role: "assistant",
+        content: "a1",
+        reasoning_content: "r1",
+        _thinking_artifact: {
+          encryption: "anthropic",
+          plainReplayText: "r1",
+          sealedPayload: details1,
+        },
+      },
       { role: "user", content: "q2" },
-      { role: "assistant", content: "a2", reasoning_content: "r2", _reasoning_state: details2 },
+      {
+        role: "assistant",
+        content: "a2",
+        reasoning_content: "r2",
+        _thinking_artifact: {
+          encryption: "anthropic",
+          plainReplayText: "r2",
+          sealedPayload: details2,
+        },
+      },
     ];
 
     const converted = (provider as any)._convertMessages(messages) as Record<string, unknown>[];
@@ -181,6 +203,22 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
     expect(assistants).toHaveLength(2);
     expect(assistants[0]["reasoning_details"]).toEqual(details1);
     expect(assistants[1]["reasoning_details"]).toEqual(details2);
+  });
+
+  it("does not resend legacy non-encrypted reasoning_details to encrypted targets", () => {
+    const provider = new OpenRouterProvider(modelConfig());
+    const messages = [
+      {
+        role: "assistant",
+        content: "response",
+        reasoning_content: "plain replay",
+        _reasoning_state: [{ type: "reasoning.text", content: "legacy detail" }],
+      },
+    ];
+
+    const converted = (provider as any)._convertMessages(messages) as Record<string, unknown>[];
+    const assistantMsg = converted.find((m) => m["role"] === "assistant");
+    expect(assistantMsg!["reasoning_details"]).toBeUndefined();
   });
 });
 

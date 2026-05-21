@@ -20,10 +20,8 @@
 
 import { BaseAnthropicProvider } from "./anthropic-base.js";
 import type { ModelConfig } from "../config.js";
+import { getProviderDefaultBaseUrl } from "../provider-defaults.js";
 import type { SendMessageOptions } from "./base.js";
-
-const MINIMAX_GLOBAL = "https://api.minimax.io/anthropic";
-const MINIMAX_CN = "https://api.minimaxi.com/anthropic";
 
 export class MiniMaxAnthropicProvider extends BaseAnthropicProvider {
   constructor(config: ModelConfig) {
@@ -31,7 +29,7 @@ export class MiniMaxAnthropicProvider extends BaseAnthropicProvider {
   }
 
   protected override _defaultBaseUrl(): string {
-    return this._config.provider === "minimax-cn" ? MINIMAX_CN : MINIMAX_GLOBAL;
+    return getProviderDefaultBaseUrl(this._config.provider) ?? "https://api.minimax.io/anthropic";
   }
 
   protected override _applySamplingParams(

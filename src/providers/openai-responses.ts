@@ -18,6 +18,13 @@ import {
   type SendMessageOptions,
   type ToolDef,
 } from "./base.js";
+import {
+  createThinkingArtifact,
+  effectiveThinkingEncryption,
+  resolveMessageThinkingArtifact,
+  selectThinkingTransmission,
+  type ThinkingArtifact,
+} from "../thinking-artifact.js";
 
 // Models that don't support `temperature` on OpenAI Responses API.
 const O_SERIES_RE = /^o\d/;
@@ -157,6 +164,22 @@ export class OpenAIResponsesProvider extends BaseProvider {
     return sanitized;
   }
 
+  private _buildThinkingArtifact(
+    plainReplayText: string,
+    reasoningState: unknown,
+  ): ThinkingArtifact | null {
+    const targetEncryption = effectiveThinkingEncryption(this._config);
+    const replayText = plainReplayText.trim();
+    if (!replayText && (reasoningState === undefined || reasoningState === null)) {
+      return null;
+    }
+    const sealedPayload =
+      Array.isArray(reasoningState) && reasoningState.length > 0
+        ? reasoningState
+        : undefined;
+    return createThinkingArtifact(targetEncryption, replayText, sealedPayload);
+  }
+
   // ------------------------------------------------------------------
   // Tool conversion
   // ------------------------------------------------------------------
@@ -214,22 +237,18 @@ export class OpenAIResponsesProvider extends BaseProvider {
           items.push({ role: "user", content });
         }
       } else if (role === "assistant") {
-        const reasoningBlocks = m["_reasoning_state"];
-
-        if (reasoningBlocks && Array.isArray(reasoningBlocks)) {
+        const transmission = selectThinkingTransmission(
+          resolveMessageThinkingArtifact(m),
+          effectiveThinkingEncryption(this._config),
+        );
+        if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
           const roundtripItems = this._isStatelessResponsesBackend()
-            ? this._sanitizeStatelessRoundtripItems(reasoningBlocks)
-            : (reasoningBlocks as Record<string, unknown>[]);
+            ? this._sanitizeStatelessRoundtripItems(transmission.payload)
+            : (transmission.payload as Record<string, unknown>[]);
           items.push(...roundtripItems);
-          const text = (m["content"] as string) || (m["text"] as string) || "";
-          if (text) {
-            items.push({
-              type: "message",
-              role: "assistant",
-              content: [{ type: "output_text", text }],
-            });
-          }
-        } else if (m["tool_calls"]) {
+        }
+
+        if (m["tool_calls"]) {
           const text = (m["content"] as string) || (m["text"] as string) || "";
           if (text) {
             items.push({
@@ -395,6 +414,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
       raw: response,
       reasoningContent,
       reasoningState,
+      thinkingArtifact: this._buildThinkingArtifact(reasoningContent, reasoningState),
       citations,
     });
   }
@@ -759,6 +779,12 @@ export class OpenAIResponsesProvider extends BaseProvider {
         if (!result.reasoningState) {
           result.reasoningState = result.reasoningContent || null;
         }
+        if (!result.thinkingArtifact) {
+          result.thinkingArtifact = this._buildThinkingArtifact(
+            result.reasoningContent,
+            result.reasoningState,
+          );
+        }
       }
       result.toolCalls = [];
       return result;
@@ -773,6 +799,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
       raw: null,
       reasoningContent: reasoningText,
       reasoningState: reasoningText || null,
+      thinkingArtifact: this._buildThinkingArtifact(reasoningText, reasoningText || null),
     });
   }
 }

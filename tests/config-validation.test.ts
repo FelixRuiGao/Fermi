@@ -65,4 +65,74 @@ describe("Config model validation", () => {
 
     expect(cfg.getModel("kimiGlobal").baseUrl).toBe("https://api.moonshot.ai/anthropic");
   });
+
+  it("applies the shared coding endpoint base URL for provider 'kimi-code'", () => {
+    const cfg = makeConfigWithRaw("kimiCode", {
+      provider: "kimi-code",
+      model: "kimi-k2.5",
+      api_key: "sk-test",
+    });
+
+    expect(cfg.getModel("kimiCode").baseUrl).toBe("https://api.kimi.com/coding");
+  });
+
+  it("treats Kimi as Anthropic transport with non-encrypted thinking", () => {
+    const cfg = makeConfigWithRaw("kimiGlobal", {
+      provider: "kimi",
+      model: "kimi-k2.5",
+      api_key: "sk-test",
+    });
+
+    const model = cfg.getModel("kimiGlobal");
+    expect(model.transportProtocol).toBe("anthropic");
+    expect(model.thinkingEncryption).toBe("none");
+  });
+
+  it("treats OpenRouter Claude models as chat transport with Anthropic-encrypted thinking", () => {
+    const cfg = makeConfigWithRaw("orClaude", {
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4.6",
+      api_key: "sk-test",
+    });
+
+    const model = cfg.getModel("orClaude");
+    expect(model.transportProtocol).toBe("chat");
+    expect(model.thinkingEncryption).toBe("anthropic");
+  });
+
+  it("treats OpenRouter GPT models as chat transport with OpenAI-encrypted thinking", () => {
+    const cfg = makeConfigWithRaw("orGpt", {
+      provider: "openrouter",
+      model: "openai/gpt-5.4",
+      api_key: "sk-test",
+    });
+
+    const model = cfg.getModel("orGpt");
+    expect(model.transportProtocol).toBe("chat");
+    expect(model.thinkingEncryption).toBe("openai");
+  });
+
+  it("routes Copilot Claude models through Anthropic transport and encryption", () => {
+    const cfg = makeConfigWithRaw("copilotClaude", {
+      provider: "copilot",
+      model: "claude-sonnet-4.6",
+      api_key: "sk-test",
+    });
+
+    const model = cfg.getModel("copilotClaude");
+    expect(model.transportProtocol).toBe("anthropic");
+    expect(model.thinkingEncryption).toBe("anthropic");
+  });
+
+  it("routes Copilot GPT models through Responses transport and OpenAI encryption", () => {
+    const cfg = makeConfigWithRaw("copilotGpt", {
+      provider: "copilot",
+      model: "gpt-5.4",
+      api_key: "sk-test",
+    });
+
+    const model = cfg.getModel("copilotGpt");
+    expect(model.transportProtocol).toBe("responses");
+    expect(model.thinkingEncryption).toBe("openai");
+  });
 });

@@ -16,12 +16,11 @@
  * we can opt in via a flag).
  */
 
+import { getProviderDefaultBaseUrl } from "../provider-defaults.js";
 import { BaseAnthropicProvider } from "./anthropic-base.js";
-
-const XIAOMI_DEFAULT_URL = "https://api.xiaomimimo.com/anthropic";
 
 export class XiaomiAnthropicProvider extends BaseAnthropicProvider {
   protected override _defaultBaseUrl(): string {
-    return XIAOMI_DEFAULT_URL;
+    return getProviderDefaultBaseUrl(this._config.provider) ?? "https://api.xiaomimimo.com/anthropic";
   }
 }

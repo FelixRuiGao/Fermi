@@ -34,6 +34,7 @@ import {
   createToolCall,
   createToolResult as createToolResultEntry,
 } from "../log-entry.js";
+import type { ThinkingArtifact } from "../thinking-artifact.js";
 import type { AskRequest } from "../ask.js";
 import {
   type DiffHunk,
@@ -598,6 +599,7 @@ export interface ToolLoopResult {
   lastInputTokens: number;
   reasoningContent: string;
   reasoningState: unknown;
+  thinkingArtifact?: ThinkingArtifact | null;
   /** Flat context_id of the last tool-call round (undefined if no tool calls). */
   lastRoundId?: string;
   /** Whether the tool loop detected that compact is needed. */
@@ -705,7 +707,11 @@ export interface ToolLoopOptions {
   onTextChunk?: (roundIndex: number, chunk: string) => boolean | void;
   onReasoningChunk?: (roundIndex: number, chunk: string) => boolean | void;
   /** Called after all reasoning content for a round has been received. */
-  onReasoningDone?: (roundIndex: number) => void;
+  onReasoningDone?: (
+    roundIndex: number,
+    thinkingArtifact?: ThinkingArtifact | null,
+    reasoningState?: unknown,
+  ) => void;
   /** Fallback executor for tools not found in toolExecutors. */
   builtinExecutor?: (
     name: string,
@@ -829,6 +835,7 @@ export async function asyncRunToolLoop(
   let lastInput = 0;
   let lastReasoningContent = "";
   let lastReasoningState: unknown = null;
+  let lastThinkingArtifact: ThinkingArtifact | null = null;
 
   // Flat context ID per tool-call round
   let lastRoundId: string | undefined;
@@ -1485,7 +1492,7 @@ export async function asyncRunToolLoop(
 
     // Signal reasoning complete (whether streamed or returned in final response)
     if ((resp.reasoningContent || providerStreamedReasoning) && onReasoningDone) {
-      onReasoningDone(roundIndex);
+      onReasoningDone(roundIndex, resp.thinkingArtifact, resp.reasoningState);
     }
 
     if (resp.text) {
@@ -1504,6 +1511,7 @@ export async function asyncRunToolLoop(
         lastInputTokens: lastInput,
         reasoningContent: resp.reasoningContent,
         reasoningState: resp.reasoningState,
+        thinkingArtifact: resp.thinkingArtifact,
         lastRoundId: lastRoundId,
         compactNeeded: false,
         compactScenario: undefined,
@@ -1517,6 +1525,7 @@ export async function asyncRunToolLoop(
     // Track reasoning from each round (used in max-rounds fallback)
     lastReasoningContent = resp.reasoningContent;
     lastReasoningState = resp.reasoningState;
+    lastThinkingArtifact = resp.thinkingArtifact ?? null;
 
     // Context ID: allocate a flat ID per round
     if (contextIdAllocator) {
@@ -1535,6 +1544,7 @@ export async function asyncRunToolLoop(
         resp.reasoningContent,
         resp.reasoningState,
         lastRoundId,
+        resp.thinkingArtifact,
       ));
     }
 
@@ -1587,6 +1597,7 @@ export async function asyncRunToolLoop(
         lastInputTokens: lastInput,
         reasoningContent: resp.reasoningContent,
         reasoningState: resp.reasoningState,
+        thinkingArtifact: resp.thinkingArtifact,
         lastRoundId: lastRoundId,
         compactNeeded: false,
         lastTotalTokens: resp.usage.inputTokens + resp.usage.outputTokens,
@@ -1606,6 +1617,7 @@ export async function asyncRunToolLoop(
         lastInputTokens: lastInput,
         reasoningContent: lastReasoningContent,
         reasoningState: lastReasoningState,
+        thinkingArtifact: lastThinkingArtifact,
         lastRoundId: lastRoundId,
         compactNeeded: true,
         compactScenario: "mid_turn",
@@ -1625,6 +1637,7 @@ export async function asyncRunToolLoop(
     lastInputTokens: lastInput,
     reasoningContent: lastReasoningContent,
     reasoningState: lastReasoningState,
+    thinkingArtifact: lastThinkingArtifact,
     lastRoundId: lastRoundId,
     lastTotalTokens: totalInput + totalOutput,
     textHandledInLog: false,

@@ -839,14 +839,7 @@ async function cmdModel(ctx: CommandContext, args: string): Promise<void> {
     }
     const { selectedConfigName, selectedHint } = resolvedSelection;
 
-    // Save current session before switching
-    ctx.resetUiState();
-    ctx.autoSave();
-    if (ctx.store) {
-      ctx.store.clearSession();
-    }
-
-    // Switch model, then create fresh session
+    // Switch the active runtime in place; the session history remains intact.
     session.switchModel(selectedConfigName);
     session.setPersistedModelSelection?.({
       modelConfigName: selectedConfigName,
@@ -854,11 +847,11 @@ async function cmdModel(ctx: CommandContext, args: string): Promise<void> {
       modelSelectionKey: resolvedSelection.modelSelectionKey,
       modelId: resolvedSelection.modelId,
     });
-    await session.resetForNewSession(ctx.store);
 
     // Prompt for thinking level if the new model supports it
     await promptThinkingLevel(ctx);
     persistModelSelection(ctx);
+    ctx.autoSave();
 
     void selectedHint;
   } catch (e) {
@@ -992,13 +985,7 @@ async function cmdModelLocalDiscover(ctx: CommandContext, providerId: string): P
     }, ctx.fermiHomeDir);
   }
 
-  // Switch to the new model
-  ctx.resetUiState();
-  ctx.autoSave();
-  if (ctx.store) {
-    ctx.store.clearSession();
-  }
-
+  // Switch to the new model in place.
   session.switchModel(rtName);
   session.setPersistedModelSelection?.({
     modelConfigName: rtName,
@@ -1006,11 +993,11 @@ async function cmdModelLocalDiscover(ctx: CommandContext, providerId: string): P
     modelSelectionKey: modelChoice,
     modelId: modelChoice,
   });
-  await session.resetForNewSession(ctx.store);
 
   // Prompt for thinking level if the new model supports it
   await promptThinkingLevel(ctx);
   persistModelSelection(ctx);
+  ctx.autoSave();
 
 }
 

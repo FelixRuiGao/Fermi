@@ -18,6 +18,13 @@ import {
   type SendMessageOptions,
   type ToolDef,
 } from "./base.js";
+import {
+  createThinkingArtifact,
+  effectiveThinkingEncryption,
+  resolveMessageThinkingArtifact,
+  selectThinkingTransmission,
+  type ThinkingArtifact,
+} from "../thinking-artifact.js";
 
 type ToolArgsMode = "legacy" | "auto";
 
@@ -41,6 +48,26 @@ export class OpenAIChatProvider extends BaseProvider {
       opts.baseURL = config.baseUrl;
     }
     return new OpenAI(opts);
+  }
+
+  protected _buildThinkingArtifact(
+    plainReplayText: string,
+    reasoningState: unknown,
+  ): ThinkingArtifact | null {
+    const targetEncryption = effectiveThinkingEncryption(this._config);
+    const replayText = plainReplayText.trim();
+    if (!replayText && (reasoningState === undefined || reasoningState === null)) {
+      return null;
+    }
+    const sealedPayload =
+      targetEncryption !== "none" &&
+      reasoningState !== undefined &&
+      reasoningState !== null &&
+      reasoningState !== plainReplayText &&
+      reasoningState !== replayText
+        ? reasoningState
+        : undefined;
+    return createThinkingArtifact(targetEncryption, replayText, sealedPayload);
   }
 
   private _resolveToolArgsMode(): ToolArgsMode {
@@ -151,8 +178,13 @@ export class OpenAIChatProvider extends BaseProvider {
         if (text) {
           entry["content"] = text;
         }
-        // Preserve reasoning_content for faithful round-trip
-        if ("reasoning_content" in m) {
+        const transmission = selectThinkingTransmission(
+          resolveMessageThinkingArtifact(m),
+          effectiveThinkingEncryption(this._config),
+        );
+        if (transmission?.kind === "plain") {
+          entry["reasoning_content"] = transmission.plainReplayText;
+        } else if ("reasoning_content" in m) {
           entry["reasoning_content"] = m["reasoning_content"];
         } else if (this._config.supportsThinking) {
           entry["reasoning_content"] = "";
@@ -164,7 +196,13 @@ export class OpenAIChatProvider extends BaseProvider {
           role: "assistant",
           content: text,
         };
-        if ("reasoning_content" in m) {
+        const transmission = selectThinkingTransmission(
+          resolveMessageThinkingArtifact(m),
+          effectiveThinkingEncryption(this._config),
+        );
+        if (transmission?.kind === "plain") {
+          entry["reasoning_content"] = transmission.plainReplayText;
+        } else if ("reasoning_content" in m) {
           entry["reasoning_content"] = m["reasoning_content"];
         }
         converted.push(entry);
@@ -251,6 +289,7 @@ export class OpenAIChatProvider extends BaseProvider {
       raw: resp,
       reasoningContent: reasoning,
       reasoningState: reasoning || null,
+      thinkingArtifact: this._buildThinkingArtifact(reasoning, reasoning || null),
       citations,
     });
   }
@@ -716,6 +755,10 @@ export class OpenAIChatProvider extends BaseProvider {
       raw: null,
       reasoningContent: reasoningText,
       reasoningState: latestReasoningState ?? (reasoningText || null),
+      thinkingArtifact: this._buildThinkingArtifact(
+        reasoningText,
+        latestReasoningState ?? (reasoningText || null),
+      ),
       citations,
     });
   }

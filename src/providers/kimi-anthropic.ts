@@ -14,11 +14,9 @@
  */
 
 import type { ModelConfig } from "../config.js";
+import { getProviderDefaultBaseUrl } from "../provider-defaults.js";
 import { BaseAnthropicProvider } from "./anthropic-base.js";
 import type { SendMessageOptions } from "./base.js";
-
-const MOONSHOT_GLOBAL = "https://api.moonshot.ai/anthropic";
-const MOONSHOT_CN = "https://api.moonshot.cn/anthropic";
 
 export class KimiAnthropicProvider extends BaseAnthropicProvider {
   constructor(config: ModelConfig) {
@@ -26,9 +24,15 @@ export class KimiAnthropicProvider extends BaseAnthropicProvider {
   }
 
   protected override _defaultBaseUrl(): string {
-    const p = this._config.provider;
-    if (p === "kimi-cn") return MOONSHOT_CN;
-    return MOONSHOT_GLOBAL;
+    return getProviderDefaultBaseUrl(this._config.provider) ?? "https://api.moonshot.ai/anthropic";
+  }
+
+  protected override _convertWebSearchTool(): Record<string, unknown> {
+    return {
+      type: "web_search_20250305",
+      name: "web_search",
+      max_uses: 20,
+    };
   }
 
   protected override _applySamplingParams(

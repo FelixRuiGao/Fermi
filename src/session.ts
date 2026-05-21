@@ -4630,6 +4630,7 @@ export class Session {
                 result.reasoningContent,
                 result.reasoningState,
                 finalContextId,
+                result.thinkingArtifact ?? null,
               ), false);
             }
             if (!result.textHandledInLog) {
@@ -5306,10 +5307,20 @@ export class Session {
     }
 
     // Mark reasoning entry as complete when the provider finishes streaming reasoning
-    const onReasoningDone = (roundIndex: number) => {
+    const onReasoningDone = (
+      roundIndex: number,
+      thinkingArtifact?: import("./thinking-artifact.js").ThinkingArtifact | null,
+      reasoningState?: unknown,
+    ) => {
       const entry = streamedReasoningEntries.get(roundIndex);
       if (entry) {
         (entry.meta as Record<string, unknown>).reasoningComplete = true;
+        if (reasoningState !== undefined) {
+          (entry.meta as Record<string, unknown>).reasoningState = reasoningState;
+        }
+        if (thinkingArtifact) {
+          (entry.meta as Record<string, unknown>).thinkingArtifact = thinkingArtifact;
+        }
         if (this._activeLogEntryId === entry.id) {
           this._activeLogEntryId = null;
         }
@@ -6281,6 +6292,7 @@ export class Session {
               result.reasoningContent,
               result.reasoningState,
               compactContextId,
+              result.thinkingArtifact ?? null,
             );
             compactReasoningEntry.tuiVisible = false;
             compactReasoningEntry.displayKind = null;

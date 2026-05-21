@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { readOAuthAccessToken, hasOAuthTokens } from "./auth/openai-oauth.js";
 import { loadGitHubTokens, hasGitHubTokens } from "./auth/github-copilot-oauth.js";
 import { getFermiHomeDir } from "./home-path.js";
+import { getProviderDefaultBaseUrl } from "./provider-defaults.js";
 import {
   findProviderPreset,
   findProviderPresetModel,
@@ -20,6 +21,12 @@ import {
   isManagedProvider,
 } from "./managed-provider-credentials.js";
 import type { AgentModelEntry, LocalProviderConfig, ModelTierEntry } from "./persistence.js";
+import {
+  type ThinkingEncryption,
+  type TransportProtocol,
+  resolveThinkingEncryption,
+  resolveTransportProtocol,
+} from "./thinking-artifact.js";
 
 export { FERMI_HOME_DIR } from "./home-path.js";
 
@@ -40,6 +47,8 @@ export interface ModelConfig {
   supportsThinking: boolean;
   thinkingBudget: number;
   supportsWebSearch: boolean;
+  transportProtocol: TransportProtocol;
+  thinkingEncryption: ThinkingEncryption;
   extra: Record<string, unknown>;
 }
 
@@ -476,6 +485,22 @@ function optionalConfigBooleanField(
   return raw;
 }
 
+function optionalConfigEnumField<T extends string>(
+  modelConfigName: string,
+  cfg: Record<string, unknown>,
+  field: string,
+  allowed: readonly T[],
+): T | undefined {
+  const raw = cfg[field];
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || !allowed.includes(raw as T)) {
+    throw new Error(
+      `Invalid model config '${modelConfigName}': field '${field}' must be one of ${allowed.join(", ")}`,
+    );
+  }
+  return raw as T;
+}
+
 // ------------------------------------------------------------------
 // Config path resolution
 // ------------------------------------------------------------------
@@ -664,34 +689,6 @@ export function getBundledAssetsDir(): string {
 }
 
 // ------------------------------------------------------------------
-// Provider default base URLs
-// ------------------------------------------------------------------
-
-const PROVIDER_URLS: Record<string, string> = {
-  "ollama": "http://localhost:11434/v1",
-  "omlx": "http://localhost:8000/v1",
-  "lmstudio": "http://localhost:1234/v1",
-  "openai-codex": "https://chatgpt.com/backend-api/codex",
-  // Kimi / Moonshot — Anthropic protocol (2026-05). The SDK appends /v1/messages.
-  "kimi": "https://api.moonshot.ai/anthropic",
-  "kimi-cn": "https://api.moonshot.cn/anthropic",
-  "kimi-ai": "https://api.moonshot.ai/anthropic",
-  "kimi-code": "https://api.kimi.com/coding",
-  "glm": "https://open.bigmodel.cn/api/paas/v4",
-  "glm-intl": "https://api.z.ai/api/paas/v4",
-  "glm-code": "https://open.bigmodel.cn/api/coding/paas/v4",
-  "glm-intl-code": "https://api.z.ai/api/coding/paas/v4",
-  // MiniMax — Anthropic protocol (2026-05).
-  "minimax": "https://api.minimax.io/anthropic",
-  "minimax-cn": "https://api.minimaxi.com/anthropic",
-  // DeepSeek — Anthropic protocol (2026-05).
-  "deepseek": "https://api.deepseek.com/anthropic",
-  // Xiaomi (MiMo) — Anthropic protocol (2026-05).
-  "xiaomi": "https://api.xiaomimimo.com/anthropic",
-  "openrouter": "https://openrouter.ai/api/v1",
-};
-
-// ------------------------------------------------------------------
 // Config class
 // ------------------------------------------------------------------
 
@@ -812,7 +809,7 @@ export class Config {
     const provider = requireConfigStringField(name, cfg, "provider");
     const modelName = requireConfigStringField(name, cfg, "model");
     const apiKeyRaw = requireConfigStringField(name, cfg, "api_key");
-    const baseUrl = optionalConfigStringField(name, cfg, "base_url") || PROVIDER_URLS[provider];
+    const baseUrl = optionalConfigStringField(name, cfg, "base_url") || getProviderDefaultBaseUrl(provider);
     const apiKeyEnv = parseEnvRef(apiKeyRaw);
     const resolvedApiKey = (() => {
       // OAuth token resolution
@@ -859,6 +856,7 @@ export class Config {
       "temperature", "max_tokens", "context_length",
       "supports_multimodal", "supports_thinking", "thinking_budget",
       "supports_web_search",
+      "transport_protocol", "thinking_encryption",
     ]);
     const extra: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(cfg)) {
@@ -872,6 +870,18 @@ export class Config {
     const supportsMultimodalOverride = optionalConfigBooleanField(name, cfg, "supports_multimodal");
     const supportsThinkingOverride = optionalConfigBooleanField(name, cfg, "supports_thinking");
     const supportsWebSearchOverride = optionalConfigBooleanField(name, cfg, "supports_web_search");
+    const transportProtocol = optionalConfigEnumField(
+      name,
+      cfg,
+      "transport_protocol",
+      ["responses", "anthropic", "chat"] as const,
+    ) ?? resolveTransportProtocol(provider, modelName);
+    const thinkingEncryption = optionalConfigEnumField(
+      name,
+      cfg,
+      "thinking_encryption",
+      ["openai", "anthropic", "none"] as const,
+    ) ?? resolveThinkingEncryption(provider, modelName);
 
     return {
       name,
@@ -896,6 +906,8 @@ export class Config {
         supportsWebSearchOverride,
         provider,
       ),
+      transportProtocol,
+      thinkingEncryption,
       extra,
     };
   }

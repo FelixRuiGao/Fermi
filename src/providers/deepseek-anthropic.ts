@@ -15,14 +15,13 @@
  * round-trip it.
  */
 
+import { getProviderDefaultBaseUrl } from "../provider-defaults.js";
 import { BaseAnthropicProvider } from "./anthropic-base.js";
 import type { SendMessageOptions } from "./base.js";
 
-const DEEPSEEK_DEFAULT_URL = "https://api.deepseek.com/anthropic";
-
 export class DeepSeekAnthropicProvider extends BaseAnthropicProvider {
   protected override _defaultBaseUrl(): string {
-    return DEEPSEEK_DEFAULT_URL;
+    return getProviderDefaultBaseUrl(this._config.provider) ?? "https://api.deepseek.com/anthropic";
   }
 
   protected override _applyThinkingParams(

@@ -17,6 +17,12 @@ import {
   type ToolDef,
 } from "./base.js";
 import { OpenAIChatProvider } from "./openai-chat.js";
+import {
+  createThinkingArtifact,
+  effectiveThinkingEncryption,
+  resolveMessageThinkingArtifact,
+  selectThinkingTransmission,
+} from "../thinking-artifact.js";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -171,6 +177,11 @@ export class OpenRouterProvider extends OpenAIChatProvider {
               if (texts.length > 0) {
                 result.reasoningContent = texts.join("\n");
                 result.reasoningState = details; // Preserve structured data for round-trip
+                result.thinkingArtifact = createThinkingArtifact(
+                  effectiveThinkingEncryption(this._config),
+                  result.reasoningContent,
+                  details,
+                );
               }
             }
           }
@@ -210,9 +221,12 @@ export class OpenRouterProvider extends OpenAIChatProvider {
     for (let i = 0; i < count; i++) {
       const orig = originals[origAssistantIndices[i]];
       const conv = converted[convAssistantIndices[i]];
-      const state = orig["_reasoning_state"];
-      if (state && Array.isArray(state)) {
-        conv["reasoning_details"] = state;
+      const transmission = selectThinkingTransmission(
+        resolveMessageThinkingArtifact(orig),
+        effectiveThinkingEncryption(this._config),
+      );
+      if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
+        conv["reasoning_details"] = transmission.payload;
       }
     }
 
