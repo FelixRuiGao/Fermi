@@ -328,6 +328,66 @@ export async function launchTui(): Promise<void> {
       // ignore
     }
 
+    // 1a. Mouse-event residue on exit (three-layer bug, see CHANGELOG and
+    // renderer.ts:resetMouseTracking() for the full history).
+    //
+    // Symptom: after quitting fermi on macOS Terminal.app, the shell prompt
+    // showed garbage like `51;790;1276M` or `51;65;13M`. These are SGR mouse
+    // reports (CSI `<` Cb;Cx;Cy `M`) leaking after destroy — the shell read
+    // them as input and printed them.
+    //
+    // Layer 1 — destroy never wrote ?1000l/?1002l/?1003l/?1006l. Upstream
+    // OpenTUI 0.2.1's cleanupBeforeDestroy() simply forgot to reset mouse
+    // tracking; modern terminals (iTerm2/Alacritty/Kitty/Ghostty) implicitly
+    // clear mouse modes when the alt-screen client exits, so the upstream
+    // author never saw the bug. Terminal.app does not clear, so it leaked.
+    // opencode (same upstream) shows the same residue with character-cell
+    // coordinates because it doesn't enable ?1016.
+    //
+    // Layer 2 — ?1016 (SGR-Pixels) was added by fermi's
+    // `feat(tui): sub-cell scrollbar-thumb drag via SGR-Pixels mouse`
+    // (b5159a94). That commit added the enable path
+    // (`\x1b[?1016h` in updateMousePixelMode) but never paired it with a
+    // disable. zig's setMouseMode deliberately ignores ?1016 (see comment
+    // in updateMousePixelMode), so even if upstream had reset the other
+    // mouse modes, ?1016 would still hang around forcing SGR-Pixel framing
+    // on subsequent reports.
+    //
+    // Layer 3 — even after writing all reset CSIs synchronously here, one or
+    // two mouse-motion bytes still leaked. The root cause is the kernel TTY
+    // input buffer: while running we're in raw mode and motion reports flow
+    // continuously; by the time we write the reset, several bytes are
+    // already buffered in the kernel waiting for node to read them.
+    // renderer.destroy() restores cooked mode (setRawMode(false)), and any
+    // bytes still in the kernel buffer at that moment are inherited by the
+    // shell. The fix below is the missing piece: tell the terminal to stop
+    // emitting (resetMouseTracking), wait ~30ms so the kernel pumps the
+    // in-flight bytes up into node where the still-attached stdinParser
+    // consumes them, drain anything left in node's readable queue, then
+    // destroy. resetMouseTracking() also bypasses zig's writeOutBuf — an
+    // earlier attempt routed ?1000/?1002/?1003/?1006 through
+    // lib.disableMouse() but those bytes were dropped when the render
+    // thread suspended before draining its buffer.
+    //
+    // Empirical: 30ms is enough for one kernel pump cycle on macOS even at
+    // high mouse motion rates. If residue ever comes back, increasing the
+    // window is the first thing to try; the real long-term fix would be a
+    // libc tcflush(STDIN_FILENO, TCIFLUSH) via bun:ffi, but that requires
+    // platform-specific termios constants.
+    try {
+      renderer.resetMouseTracking();
+    } catch {
+      // ignore
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    try {
+      while (process.stdin.read() !== null) {
+        // discard buffered mouse-event bytes so they don't survive into the shell
+      }
+    } catch {
+      // ignore
+    }
+
     try {
       renderer.destroy();
     } catch {

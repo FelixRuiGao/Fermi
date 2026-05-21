@@ -2513,6 +2513,57 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib.disableMouse(this.rendererPtr)
   }
 
+  // Synchronously write mouse-mode reset CSIs straight to the TTY, bypassing
+  // zig's writeOutBuf. Callable from outside (main.tsx) so the host can run
+  // it *before* renderer.destroy(), then await a drain window so any
+  // in-flight mouse-motion bytes the kernel TTY buffer still holds reach
+  // node and get consumed by the still-attached stdinParser. Without that
+  // window the bytes get inherited by the shell and printed as
+  // `<Cb;Cx;Cy;M` on the prompt. cleanupBeforeDestroy() also calls this
+  // for shutdown paths that don't go through main.tsx (fatal-error cleanup,
+  // tests, embedders).
+  //
+  // History — three failed attempts before this shape:
+  //   1. Only emitting ?1016l from TS while delegating ?1000/?1002/?1003/?1006
+  //      to lib.disableMouse(). lib.disableMouse() routes through zig's
+  //      writeOutBuf, which is drained by the render thread; that thread is
+  //      about to be suspended/destroyed, so most of the reset bytes never
+  //      reach the TTY. The terminal kept SGR framing on (?1006 still
+  //      active) and motion events kept flowing — leaked sequences read as
+  //      full SGR-Pixel reports like `<51;790;1276M`.
+  //   2. Same as (1) but doing everything synchronously here via
+  //      realStdoutWrite. Terminal now stops emitting new events, but one or
+  //      two mouse-motion reports still showed up on the shell prompt
+  //      because the bytes were already in flight from the kernel TTY input
+  //      buffer at the moment we wrote the reset. Restoring cooked mode then
+  //      transferred those buffered bytes to the shell.
+  //   3. Same as (2), now used by both cleanupBeforeDestroy() and by
+  //      main.tsx's exit() with a setTimeout(30ms) + stdin.read() drain
+  //      *between* the reset and renderer.destroy(). The drain window lets
+  //      the kernel pump in-flight bytes into node where the still-attached
+  //      stdinParser consumes them, so they never reach the shell. Verified
+  //      clean on macOS Terminal.app under high-frequency mouse motion.
+  //
+  // Why bypass lib.disableMouse(): see (1) above — writeOutBuf is async and
+  // racy with destroy. Why ?1016 is exclusively a TS concern: the shipped
+  // zig native binary only *queries* ?1016 capability (?1016$p) and never
+  // toggles it, so the TS layer owns both enable (updateMousePixelMode) and
+  // disable (here).
+  //
+  // Sequence: ?1003/?1002 first to stop motion reports, then ?1006/?1016 to
+  // tear down SGR framing so any bytes already serialized by the terminal
+  // can't decode as valid mouse reports, then ?1000 as a final X10 catch-all.
+  public resetMouseTracking(): void {
+    if (!this._useMouse && !this._sgrPixelsActive) return
+    try {
+      this.realStdoutWrite.call(
+        this.stdout,
+        "\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[?1016l\x1b[?1000l",
+      )
+    } catch {}
+    this._sgrPixelsActive = false
+  }
+
   // Tracks whether we have emitted DECSET 1016 (SGR-Pixels) to the terminal,
   // so the enable/disable sequence is only written on an actual transition.
   private _sgrPixelsActive = false
@@ -3718,6 +3769,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       },
       true,
     )
+
+    this.resetMouseTracking()
+
     this._useMouse = false
     this.setCapturedRenderable(undefined)
 
