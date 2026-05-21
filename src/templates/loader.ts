@@ -175,6 +175,7 @@ export function loadTemplate(
   nameOverride?: string,
   mcpManager?: MCPClientManager,
   promptsDirs?: string[],
+  fallbackModel?: string,
 ): Agent {
   const yamlPath = join(templateDir, AGENT_YAML);
   if (!existsSync(yamlPath)) {
@@ -192,7 +193,7 @@ export function loadTemplate(
     nameOverride ??
     (spec["name"] as string | undefined) ??
     basename(templateDir);
-  const model = spec["model"] as string | undefined;
+  const model = (spec["model"] as string | undefined) ?? fallbackModel;
 
   const resolvedPromptsDirs = promptsDirs && promptsDirs.length > 0
     ? promptsDirs
@@ -242,6 +243,7 @@ export function loadTemplates(
   promptsDirs?: string[],
   userRoot?: string,
   projectRoot?: string,
+  fallbackModel?: string,
 ): Record<string, Agent> {
   if (!existsSync(bundledRoot) || !statSync(bundledRoot).isDirectory()) {
     throw new Error(`Bundled templates root not found: ${bundledRoot}`);
@@ -287,7 +289,14 @@ export function loadTemplates(
 
   const agents: Record<string, Agent> = {};
   for (const name of Object.keys(templateDirs).sort()) {
-    const agent = loadTemplate(templateDirs[name], config, undefined, mcpManager, resolvedPromptsDirs);
+    const agent = loadTemplate(
+      templateDirs[name],
+      config,
+      undefined,
+      mcpManager,
+      resolvedPromptsDirs,
+      fallbackModel,
+    );
     agents[agent.name] = agent;
   }
 

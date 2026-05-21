@@ -44,7 +44,7 @@ import {
 import { resolveSkillContent, type SkillMeta } from "./skills/loader.js";
 import { buildModelPickerTree, toCommandPickerOptions, type ModelPickerTreeContext } from "./model-picker-tree.js";
 import { describeModel, formatCurrentModelScopedLabel, getCurrentModelDescriptor } from "./model-presentation.js";
-import { hasOAuthTokens, isTokenExpiring, readOAuthAccessToken, clearOAuthTokens } from "./auth/openai-oauth.js";
+import { hasOAuthTokens, isTokenExpiring, readOAuthAccessToken, clearOAuthTokens, ensureFreshToken } from "./auth/openai-oauth.js";
 import { hasGitHubTokens, clearGitHubTokens } from "./auth/github-copilot-oauth.js";
 
 // ------------------------------------------------------------------
@@ -717,11 +717,32 @@ async function ensureModelSelectionReady(
 
   if (parsedTarget?.provider === "openai-codex") {
     const existingToken = readOAuthAccessToken();
+    if (hasOAuthTokens() && existingToken && isTokenExpiring(existingToken)) {
+      try {
+        await ensureFreshToken();
+        ctx.session.config?.invalidateModelsByProvider?.("openai-codex");
+        if (ctx.session.primaryAgent?.modelConfig?.provider === "openai-codex") {
+          ctx.session.reloadCurrentModelConfig?.();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.session.appendErrorMessage?.(
+          `OAuth token refresh failed: ${message}`,
+          "oauth_refresh",
+        );
+      }
+    }
+
+    const currentToken = readOAuthAccessToken();
     const needsLogin = !hasOAuthTokens()
-      || (existingToken && isTokenExpiring(existingToken));
+      || (currentToken && isTokenExpiring(currentToken));
     if (needsLogin && ctx.requestOAuthLogin) {
       const tokens = await ctx.requestOAuthLogin("codex");
       if (!tokens) return undefined;
+      ctx.session.config?.invalidateModelsByProvider?.("openai-codex");
+      if (ctx.session.primaryAgent?.modelConfig?.provider === "openai-codex") {
+        ctx.session.reloadCurrentModelConfig?.();
+      }
     } else if (needsLogin) {
       throw new Error(
         "OpenAI OAuth token is missing or expired.\n" +

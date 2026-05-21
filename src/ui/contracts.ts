@@ -152,7 +152,13 @@ export interface Session {
   thinkingLevel?: string;
   currentModelConfigName?: string;
   switchModel?(modelConfigName: string): void;
-  config?: { modelNames: string[]; getModel(name: string): { provider: string; model: string; contextLength: number; supportsThinking: boolean; supportsMultimodal: boolean } };
+  reloadCurrentModelConfig?(): void;
+  config?: {
+    modelNames: string[];
+    getModel(name: string): { provider: string; model: string; contextLength: number; supportsThinking: boolean; supportsMultimodal: boolean };
+    invalidateModel?(name: string): void;
+    invalidateModelsByProvider?(provider: string): void;
+  };
   _resetTransientState(): void;
   _initConversation(): void;
   deliverMessage?(source: "user" | "system", content: string): DeliverMessageResult | void;

@@ -34,6 +34,22 @@ describe("Config preference-backed models", () => {
       ]),
     );
   });
+
+  it("can invalidate cached models by provider", () => {
+    const config = new Config({});
+    config.upsertModelRaw("runtime-test", {
+      provider: "openai-codex",
+      model: "gpt-5.4",
+      api_key: "old-token",
+    });
+
+    expect(config.getModel("runtime-test").apiKey).toBe("old-token");
+    (config as any)._rawModels["runtime-test"].api_key = "new-token";
+    expect(config.getModel("runtime-test").apiKey).toBe("old-token");
+
+    config.invalidateModelsByProvider("openai-codex");
+    expect(config.getModel("runtime-test").apiKey).toBe("new-token");
+  });
 });
 
 describe("process settings overrides", () => {

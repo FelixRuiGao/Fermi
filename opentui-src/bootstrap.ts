@@ -44,6 +44,39 @@ function identifyPrimaryAgent(
   throw new Error("No agent templates found.");
 }
 
+function formatOAuthRefreshError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function resolveTemplateFallbackModel(
+  config: Config,
+  effectiveModelConfigName: string | undefined,
+  modelState: ReturnType<typeof loadModelSelectionState>,
+): string | undefined {
+  if (effectiveModelConfigName && config.modelNames.includes(effectiveModelConfigName)) {
+    return effectiveModelConfigName;
+  }
+  const provider = modelState.provider?.trim();
+  const model = modelState.model_id?.trim() || modelState.selection_key?.trim();
+  if (!provider || !model) return undefined;
+  return config.findModelConfigName(provider, model);
+}
+
+async function refreshActiveOpenAICodexToken(session: Session): Promise<void> {
+  if (session.primaryAgent?.modelConfig?.provider !== "openai-codex") return;
+
+  try {
+    const { ensureFreshToken } = await import("../src/auth/openai-oauth.js");
+    await ensureFreshToken();
+    session.reloadCurrentModelConfig();
+  } catch (err) {
+    session.appendErrorMessage(
+      `OAuth token refresh failed: ${formatOAuthRefreshError(err)}`,
+      "oauth_refresh",
+    );
+  }
+}
+
 export interface OpenTuiRuntime {
   session: Session;
   store: SessionStore;
@@ -103,20 +136,15 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     subAgentInheritHooks: settings.sub_agent_inherit_hooks,
   });
 
-  // ── OAuth token refresh ──
-  const oauthEntries = config.listModelEntries().filter(
-    (entry) => entry.apiKeyRaw === "oauth:openai-codex",
+  // Restore the selected model before templates are instantiated so templates
+  // without an explicit model do not force Config.defaultModel token resolution.
+  const modelState = loadModelSelectionState(homeDir);
+  const effectiveModelConfigName = settings.default_model ?? modelState.config_name;
+  const templateFallbackModel = resolveTemplateFallbackModel(
+    config,
+    effectiveModelConfigName,
+    modelState,
   );
-  if (oauthEntries.length > 0) {
-    try {
-      const { ensureFreshToken } = await import("../src/auth/openai-oauth.js");
-      await ensureFreshToken();
-    } catch (err) {
-      console.warn(
-        `Warning: OAuth token refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
 
   // ── MCP client ──
   let mcpManager: unknown = null;
@@ -146,6 +174,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     promptsDirs,
     paths.templatesPath ?? undefined,
     paths.projectTemplatesPath ?? undefined,
+    templateFallbackModel,
   );
   const primary = identifyPrimaryAgent(agents);
 
@@ -185,8 +214,6 @@ export async function bootstrapOpenTuiRuntime(opts?: {
 
   // ── Restore model selection ──
   // Priority: settings.default_model > state/model-selection.json
-  const modelState = loadModelSelectionState(homeDir);
-  const effectiveModelConfigName = settings.default_model ?? modelState.config_name;
   try {
     if (effectiveModelConfigName) {
       applyPersistedModelSelectionToSession(
@@ -207,6 +234,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
 
   // ── Apply settings to session ──
   session.applySettings(settings, modelState);
+  await refreshActiveOpenAICodexToken(session);
   if (settings.accent_color) {
     setAccent(settings.accent_color);
   }

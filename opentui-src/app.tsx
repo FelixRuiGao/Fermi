@@ -1059,6 +1059,12 @@ export function OpenTuiApp({
       .then(async (tokens) => {
         if (provider === "codex") {
           saveOAuthTokens(tokens as OAuthTokens);
+          session.config?.invalidateModelsByProvider?.("openai-codex");
+          if (session.primaryAgent?.modelConfig?.provider === "openai-codex") {
+            session.reloadCurrentModelConfig?.();
+          }
+          const token = readOAuthAccessToken();
+          if (token) usagePollerRef.current?.updateToken(token);
         } else {
           saveGitHubTokens(tokens as GitHubOAuthTokens);
           // Prime the Copilot models cache so picker visibility is accurate
@@ -1089,7 +1095,7 @@ export function OpenTuiApp({
           : s);
         oauthAbortRef.current = null;
       });
-  }, [focusComposerSoon]);
+  }, [focusComposerSoon, session]);
 
   const acceptOAuthChoice = useCallback(() => {
     setOauthOverlay((s) => {

@@ -941,6 +941,18 @@ export class Config {
     return model;
   }
 
+  invalidateModel(name: string): void {
+    this._models.delete(name);
+  }
+
+  invalidateModelsByProvider(provider: string): void {
+    for (const [name, cfg] of Object.entries(this._rawModels)) {
+      if (cfg["provider"] === provider) {
+        this._models.delete(name);
+      }
+    }
+  }
+
   get modelNames(): string[] {
     return Object.keys(this._rawModels);
   }

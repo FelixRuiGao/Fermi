@@ -3490,6 +3490,23 @@ export class Session {
     );
   }
 
+  reloadCurrentModelConfig(): void {
+    const modelConfigName = this.currentModelConfigName;
+    this.config.invalidateModel(modelConfigName);
+    const newModelConfig = this.config.getModel(modelConfigName);
+    this.primaryAgent.replaceModelConfig(newModelConfig);
+    this._persistedModelSelection = this._buildPersistedModelSelection({
+      modelConfigName,
+      modelProvider: newModelConfig.provider,
+      modelSelectionKey: newModelConfig.model,
+      modelId: newModelConfig.model,
+    });
+    this._thinkingLevel = this._resolveThinkingLevelForModel(
+      newModelConfig.model,
+      this._preferredThinkingLevel,
+    );
+  }
+
   applyGlobalPreferences(preferences: GlobalTuiPreferences): void {
     const prefs = createGlobalTuiPreferences(preferences);
     this._preferredThinkingLevel = prefs.thinkingLevel;
