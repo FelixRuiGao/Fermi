@@ -56,13 +56,13 @@ describe("Config model validation", () => {
     );
   });
 
-  it("applies the global Moonshot base URL for provider 'kimi'", () => {
+  it("applies the global Moonshot Anthropic base URL for provider 'kimi'", () => {
     const cfg = makeConfigWithRaw("kimiGlobal", {
       provider: "kimi",
       model: "kimi-k2.5",
       api_key: "sk-test",
     });
 
-    expect(cfg.getModel("kimiGlobal").baseUrl).toBe("https://api.moonshot.ai/v1");
+    expect(cfg.getModel("kimiGlobal").baseUrl).toBe("https://api.moonshot.ai/anthropic");
   });
 });

@@ -672,18 +672,22 @@ const PROVIDER_URLS: Record<string, string> = {
   "omlx": "http://localhost:8000/v1",
   "lmstudio": "http://localhost:1234/v1",
   "openai-codex": "https://chatgpt.com/backend-api/codex",
-  "kimi": "https://api.moonshot.ai/v1",
-  "kimi-cn": "https://api.moonshot.cn/v1",
-  "kimi-ai": "https://api.moonshot.ai/v1",
-  "kimi-code": "https://api.kimi.com/coding/v1",
+  // Kimi / Moonshot — Anthropic protocol (2026-05). The SDK appends /v1/messages.
+  "kimi": "https://api.moonshot.ai/anthropic",
+  "kimi-cn": "https://api.moonshot.cn/anthropic",
+  "kimi-ai": "https://api.moonshot.ai/anthropic",
+  "kimi-code": "https://api.kimi.com/coding",
   "glm": "https://open.bigmodel.cn/api/paas/v4",
   "glm-intl": "https://api.z.ai/api/paas/v4",
   "glm-code": "https://open.bigmodel.cn/api/coding/paas/v4",
   "glm-intl-code": "https://api.z.ai/api/coding/paas/v4",
-  "minimax": "https://api.minimax.io/v1",
-  "minimax-cn": "https://api.minimaxi.com/v1",
-  "deepseek": "https://api.deepseek.com/v1",
-  "xiaomi": "https://api.xiaomimimo.com/v1",
+  // MiniMax — Anthropic protocol (2026-05).
+  "minimax": "https://api.minimax.io/anthropic",
+  "minimax-cn": "https://api.minimaxi.com/anthropic",
+  // DeepSeek — Anthropic protocol (2026-05).
+  "deepseek": "https://api.deepseek.com/anthropic",
+  // Xiaomi (MiMo) — Anthropic protocol (2026-05).
+  "xiaomi": "https://api.xiaomimimo.com/anthropic",
   "openrouter": "https://openrouter.ai/api/v1",
 };
 

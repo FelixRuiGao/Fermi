@@ -1,4 +1,12 @@
 /**
+ * @deprecated 2026-05 — superseded by DeepSeekAnthropicProvider in `./deepseek-anthropic.ts`.
+ *
+ * Kept in the tree for emergency rollback only. The registry no longer
+ * dispatches the `deepseek` provider id to this class. Once the new path
+ * has soaked, delete this file.
+ *
+ * ---- Original docstring follows ----
+ *
  * DeepSeek provider adapter.
  *
  * Extends OpenAIChatProvider with DeepSeek's thinking control:

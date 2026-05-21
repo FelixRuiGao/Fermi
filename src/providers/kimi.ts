@@ -1,4 +1,12 @@
 /**
+ * @deprecated 2026-05 — superseded by KimiAnthropicProvider in `./kimi-anthropic.ts`.
+ *
+ * Kept in the tree for emergency rollback only. The registry no longer
+ * dispatches the `kimi*` provider ids to this class — see registry.ts for
+ * the live wiring. Once the new path has soaked, delete this file.
+ *
+ * ---- Original docstring follows ----
+ *
  * Kimi (Moonshot) provider adapter.
  *
  * Extends OpenAIChatProvider with:

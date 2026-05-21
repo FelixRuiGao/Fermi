@@ -1,4 +1,12 @@
 /**
+ * @deprecated 2026-05 — superseded by XiaomiAnthropicProvider in `./xiaomi-anthropic.ts`.
+ *
+ * Kept in the tree for emergency rollback only. The registry no longer
+ * dispatches the `xiaomi` provider id to this class. Once the new path has
+ * soaked, delete this file.
+ *
+ * ---- Original docstring follows ----
+ *
  * Xiaomi (MiMo) provider adapter.
  *
  * Extends OpenAIChatProvider with MiMo's thinking toggle:

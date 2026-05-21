@@ -1,4 +1,12 @@
 /**
+ * @deprecated 2026-05 — superseded by MiniMaxAnthropicProvider in `./minimax-anthropic.ts`.
+ *
+ * Kept in the tree for emergency rollback only. The registry no longer
+ * dispatches the `minimax*` provider ids to this class. Once the new path
+ * has soaked, delete this file.
+ *
+ * ---- Original docstring follows ----
+ *
  * MiniMax provider adapter.
  *
  * Extends OpenAIChatProvider with reasoning_split support.
