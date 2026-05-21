@@ -19,6 +19,7 @@ function modelConfig(overrides?: Partial<ModelConfig>): ModelConfig {
     supportsWebSearch: false,
     transportProtocol: "anthropic",
     thinkingEncryption: "none",
+    sealedSchema: null,
     extra: {},
     ...overrides,
   };

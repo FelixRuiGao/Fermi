@@ -20,6 +20,7 @@ function anthropicConfig(overrides?: Partial<ModelConfig>): ModelConfig {
     supportsWebSearch: false,
     transportProtocol: "anthropic",
     thinkingEncryption: "anthropic",
+    sealedSchema: "anthropic-messages",
     extra: {},
     ...overrides,
   };
@@ -41,6 +42,7 @@ function openaiConfig(overrides?: Partial<ModelConfig>): ModelConfig {
     supportsWebSearch: false,
     transportProtocol: "responses",
     thinkingEncryption: "openai",
+    sealedSchema: "openai-responses",
     extra: {},
     ...overrides,
   };

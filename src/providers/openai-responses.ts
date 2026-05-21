@@ -20,9 +20,11 @@ import {
 } from "./base.js";
 import {
   createThinkingArtifact,
+  effectiveSealedSchema,
   effectiveThinkingEncryption,
   resolveMessageThinkingArtifact,
   selectThinkingTransmission,
+  SEALED_SCHEMA_OPENAI_RESPONSES,
   type ThinkingArtifact,
 } from "../thinking-artifact.js";
 
@@ -177,7 +179,8 @@ export class OpenAIResponsesProvider extends BaseProvider {
       Array.isArray(reasoningState) && reasoningState.length > 0
         ? reasoningState
         : undefined;
-    return createThinkingArtifact(targetEncryption, replayText, sealedPayload);
+    const sealedSchema = sealedPayload ? SEALED_SCHEMA_OPENAI_RESPONSES : null;
+    return createThinkingArtifact(targetEncryption, replayText, sealedPayload, sealedSchema);
   }
 
   // ------------------------------------------------------------------
@@ -240,6 +243,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
         const transmission = selectThinkingTransmission(
           resolveMessageThinkingArtifact(m),
           effectiveThinkingEncryption(this._config),
+          effectiveSealedSchema(this._config),
         );
         if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
           const roundtripItems = this._isStatelessResponsesBackend()

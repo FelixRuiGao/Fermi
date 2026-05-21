@@ -20,6 +20,7 @@ import {
 } from "./base.js";
 import {
   createThinkingArtifact,
+  effectiveSealedSchema,
   effectiveThinkingEncryption,
   resolveMessageThinkingArtifact,
   selectThinkingTransmission,
@@ -67,7 +68,19 @@ export class OpenAIChatProvider extends BaseProvider {
       reasoningState !== replayText
         ? reasoningState
         : undefined;
-    return createThinkingArtifact(targetEncryption, replayText, sealedPayload);
+    // Base OpenAIChatProvider doesn't know what wire-format schema its
+    // sealed payload follows — subclasses that emit sealed payloads
+    // (e.g. OpenRouter wrapping its reasoning_details array) override
+    // _buildThinkingArtifact or set the schema in their own path.
+    // Without a known schema we cannot safely round-trip sealed data, so
+    // we omit the schema tag here — same effect as omit for sealed selection.
+    const sealedSchema = this._sealedSchemaForChatProvider();
+    return createThinkingArtifact(targetEncryption, replayText, sealedPayload, sealedSchema);
+  }
+
+  /** Override in subclasses (e.g. OpenRouter) to declare a sealed schema. */
+  protected _sealedSchemaForChatProvider(): string | null {
+    return null;
   }
 
   private _resolveToolArgsMode(): ToolArgsMode {
@@ -181,6 +194,7 @@ export class OpenAIChatProvider extends BaseProvider {
         const transmission = selectThinkingTransmission(
           resolveMessageThinkingArtifact(m),
           effectiveThinkingEncryption(this._config),
+          effectiveSealedSchema(this._config),
         );
         if (transmission?.kind === "plain") {
           entry["reasoning_content"] = transmission.plainReplayText;
@@ -199,6 +213,7 @@ export class OpenAIChatProvider extends BaseProvider {
         const transmission = selectThinkingTransmission(
           resolveMessageThinkingArtifact(m),
           effectiveThinkingEncryption(this._config),
+          effectiveSealedSchema(this._config),
         );
         if (transmission?.kind === "plain") {
           entry["reasoning_content"] = transmission.plainReplayText;

@@ -124,8 +124,8 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
   it("passes reasoning_details from typed anthropic artifacts to converted messages", () => {
     const provider = new OpenRouterProvider(modelConfig());
     const reasoningDetails = [
-      { type: "reasoning.text", content: "thinking step 1" },
-      { type: "reasoning.text", content: "thinking step 2" },
+      { type: "reasoning.text", text: "thinking step 1", signature: "sig" },
+      { type: "reasoning.text", text: "thinking step 2", signature: "sig2" },
     ];
 
     const messages = [
@@ -138,6 +138,7 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
           encryption: "anthropic",
           plainReplayText: "thinking",
           sealedPayload: reasoningDetails,
+          sealedSchema: "openrouter-chat",
         },
       },
     ];
@@ -169,8 +170,8 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
 
   it("handles multiple typed anthropic artifacts correctly", () => {
     const provider = new OpenRouterProvider(modelConfig());
-    const details1 = [{ type: "reasoning.text", content: "step 1" }];
-    const details2 = [{ type: "reasoning.text", content: "step 2" }];
+    const details1 = [{ type: "reasoning.text", text: "step 1", signature: "s1" }];
+    const details2 = [{ type: "reasoning.text", text: "step 2", signature: "s2" }];
 
     const messages = [
       { role: "user", content: "q1" },
@@ -182,6 +183,7 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
           encryption: "anthropic",
           plainReplayText: "r1",
           sealedPayload: details1,
+          sealedSchema: "openrouter-chat",
         },
       },
       { role: "user", content: "q2" },
@@ -193,6 +195,7 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
           encryption: "anthropic",
           plainReplayText: "r2",
           sealedPayload: details2,
+          sealedSchema: "openrouter-chat",
         },
       },
     ];
@@ -205,17 +208,40 @@ describe("OpenRouter _convertMessages reasoning_details round-trip", () => {
     expect(assistants[1]["reasoning_details"]).toEqual(details2);
   });
 
-  it("does not resend legacy non-encrypted reasoning_details to encrypted targets", () => {
+  it("recovers reasoning_details from legacy _reasoning_state when entries carry encryption hints", () => {
+    // Anthropic-family hint: at least one entry has a non-empty `signature`
+    const provider = new OpenRouterProvider(modelConfig());
+    const legacyDetails = [
+      { type: "reasoning.text", text: "legacy detail", signature: "anthropic-sig" },
+    ];
+    const messages = [
+      {
+        role: "assistant",
+        content: "response",
+        reasoning_content: "plain replay",
+        _reasoning_state: legacyDetails,
+      },
+    ];
+    const converted = (provider as any)._convertMessages(messages) as Record<string, unknown>[];
+    const assistantMsg = converted.find((m) => m["role"] === "assistant");
+    // legacy details now round-trip because inferThinkingArtifact tags them
+    // with sealedSchema "openrouter-chat" and encryption "anthropic"
+    expect(assistantMsg!["reasoning_details"]).toEqual(legacyDetails);
+  });
+
+  it("drops reasoning_details when legacy _reasoning_state lacks encryption hints (no signature, no encrypted)", () => {
+    // Pure reasoning.text without signature can't be safely round-tripped:
+    // we don't know whether the target's encryption family matches, so
+    // inferThinkingArtifact tags encryption="none" and skips sealed.
     const provider = new OpenRouterProvider(modelConfig());
     const messages = [
       {
         role: "assistant",
         content: "response",
         reasoning_content: "plain replay",
-        _reasoning_state: [{ type: "reasoning.text", content: "legacy detail" }],
+        _reasoning_state: [{ type: "reasoning.text", text: "trace only" }],
       },
     ];
-
     const converted = (provider as any)._convertMessages(messages) as Record<string, unknown>[];
     const assistantMsg = converted.find((m) => m["role"] === "assistant");
     expect(assistantMsg!["reasoning_details"]).toBeUndefined();

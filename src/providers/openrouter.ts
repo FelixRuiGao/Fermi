@@ -19,9 +19,11 @@ import {
 import { OpenAIChatProvider } from "./openai-chat.js";
 import {
   createThinkingArtifact,
+  effectiveSealedSchema,
   effectiveThinkingEncryption,
   resolveMessageThinkingArtifact,
   selectThinkingTransmission,
+  SEALED_SCHEMA_OPENROUTER_CHAT,
 } from "../thinking-artifact.js";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -38,6 +40,10 @@ const EFFORT_MAP: Record<string, string> = {
 };
 
 export class OpenRouterProvider extends OpenAIChatProvider {
+  protected override _sealedSchemaForChatProvider(): string | null {
+    return SEALED_SCHEMA_OPENROUTER_CHAT;
+  }
+
   constructor(config: ModelConfig) {
     const headerExtra = config.extra ?? {};
     const sanitizedExtra = Object.fromEntries(
@@ -181,6 +187,7 @@ export class OpenRouterProvider extends OpenAIChatProvider {
                   effectiveThinkingEncryption(this._config),
                   result.reasoningContent,
                   details,
+                  SEALED_SCHEMA_OPENROUTER_CHAT,
                 );
               }
             }
@@ -224,6 +231,7 @@ export class OpenRouterProvider extends OpenAIChatProvider {
       const transmission = selectThinkingTransmission(
         resolveMessageThinkingArtifact(orig),
         effectiveThinkingEncryption(this._config),
+        effectiveSealedSchema(this._config),
       );
       if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
         conv["reasoning_details"] = transmission.payload;

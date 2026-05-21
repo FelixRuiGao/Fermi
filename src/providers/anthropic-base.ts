@@ -33,10 +33,12 @@ import {
 import {
   buildAnthropicPlainThinkingPayload,
   createThinkingArtifact,
+  effectiveSealedSchema,
   effectiveThinkingEncryption,
-  isAnthropicEncryptedPayload,
+  isAnthropicMessagesSealedPayload,
   resolveMessageThinkingArtifact,
   selectThinkingTransmission,
+  SEALED_SCHEMA_ANTHROPIC_MESSAGES,
   type ThinkingArtifact,
 } from "../thinking-artifact.js";
 
@@ -186,6 +188,7 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
         const transmission = selectThinkingTransmission(
           resolveMessageThinkingArtifact(m),
           effectiveThinkingEncryption(this._config),
+          effectiveSealedSchema(this._config),
         );
         if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
           for (const rb of transmission.payload) {
@@ -214,6 +217,7 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
         const transmission = selectThinkingTransmission(
           resolveMessageThinkingArtifact(m),
           effectiveThinkingEncryption(this._config),
+          effectiveSealedSchema(this._config),
         );
         if (transmission?.kind === "sealed" && Array.isArray(transmission.payload)) {
           for (const rb of transmission.payload) {
@@ -323,8 +327,13 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
     if (!replayText && (reasoningBlocks === undefined || reasoningBlocks === null)) {
       return null;
     }
-    if (targetEncryption === "anthropic" && isAnthropicEncryptedPayload(reasoningBlocks)) {
-      return createThinkingArtifact("anthropic", replayText, reasoningBlocks);
+    if (targetEncryption === "anthropic" && isAnthropicMessagesSealedPayload(reasoningBlocks)) {
+      return createThinkingArtifact(
+        "anthropic",
+        replayText,
+        reasoningBlocks,
+        SEALED_SCHEMA_ANTHROPIC_MESSAGES,
+      );
     }
     return createThinkingArtifact("none", replayText);
   }
@@ -340,8 +349,19 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
     const toolCalls: ToolCall[] = [];
     const citations: Citation[] = [];
 
-    for (const block of resp.content) {
+    const blocks = resp.content;
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
       if (block.type === "text") {
+        // Drop server-tool-use preamble text. Some vendors (notably Kimi via
+        // /anthropic with web_search_20250305) emit an internal "Search results
+        // for query: ..." text block immediately before the server_tool_use
+        // block. Native Anthropic does not. Filter the noise so the agent's
+        // text field stays clean.
+        const next = blocks[i + 1];
+        if (next && (next as unknown as Record<string, unknown>)["type"] === "server_tool_use") {
+          continue;
+        }
         textParts.push(block.text);
         const blockAny = block as unknown as Record<string, unknown>;
         if (blockAny["citations"] && Array.isArray(blockAny["citations"])) {
@@ -602,19 +622,38 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
 
     const response = await stream.finalMessage();
 
-    for (const block of response.content) {
-      if (block.type === "text") {
-        const blockAny = block as unknown as Record<string, unknown>;
-        if (blockAny["citations"] && Array.isArray(blockAny["citations"])) {
-          for (const c of blockAny["citations"] as Record<string, unknown>[]) {
-            citations.push({
-              url: (c["url"] as string) || "",
-              title: (c["title"] as string) || "",
-              citedText: (c["cited_text"] as string) || "",
-            });
+    // Re-derive the final text from the parsed message so the preamble filter
+    // (drop text blocks immediately followed by server_tool_use) applies to
+    // both streaming and non-streaming paths. The streamed `textParts` array
+    // is built from raw deltas without lookahead, so it would otherwise
+    // include vendor preambles like Kimi's "Search results for query: ...".
+    let finalText = "";
+    {
+      const respBlocks = response.content;
+      for (let i = 0; i < respBlocks.length; i++) {
+        const block = respBlocks[i];
+        if (block.type === "text") {
+          const next = respBlocks[i + 1];
+          if (next && (next as unknown as Record<string, unknown>)["type"] === "server_tool_use") {
+            continue;
+          }
+          finalText += block.text;
+          const blockAny = block as unknown as Record<string, unknown>;
+          if (blockAny["citations"] && Array.isArray(blockAny["citations"])) {
+            for (const c of blockAny["citations"] as Record<string, unknown>[]) {
+              citations.push({
+                url: (c["url"] as string) || "",
+                title: (c["title"] as string) || "",
+                citedText: (c["cited_text"] as string) || "",
+              });
+            }
           }
         }
       }
+    }
+    // Fallback if the final message can't be inspected for some reason
+    if (!finalText && textParts.length > 0) {
+      finalText = textParts.join("");
     }
 
     const streamUsage = response.usage as unknown as Record<string, number> | undefined;
@@ -633,7 +672,7 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
       : (reasoningText || null);
 
     return new ProviderResponse({
-      text: textParts.join(""),
+      text: finalText,
       toolCalls: [],
       usage,
       raw: response,

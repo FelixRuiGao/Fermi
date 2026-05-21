@@ -20,6 +20,7 @@ function anthropicConfig(overrides?: Partial<ModelConfig>): ModelConfig {
     supportsWebSearch: true,
     transportProtocol: "anthropic",
     thinkingEncryption: "anthropic",
+    sealedSchema: "anthropic-messages",
     extra: {},
     ...overrides,
   };
@@ -41,6 +42,7 @@ function deepseekConfig(overrides?: Partial<ModelConfig>): ModelConfig {
     supportsWebSearch: false,
     transportProtocol: "anthropic",
     thinkingEncryption: "none",
+    sealedSchema: null,
     extra: {},
     ...overrides,
   };

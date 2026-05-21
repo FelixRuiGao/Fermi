@@ -22,8 +22,10 @@ import {
 } from "./managed-provider-credentials.js";
 import type { AgentModelEntry, LocalProviderConfig, ModelTierEntry } from "./persistence.js";
 import {
+  type SealedSchema,
   type ThinkingEncryption,
   type TransportProtocol,
+  resolveSealedSchema,
   resolveThinkingEncryption,
   resolveTransportProtocol,
 } from "./thinking-artifact.js";
@@ -49,6 +51,12 @@ export interface ModelConfig {
   supportsWebSearch: boolean;
   transportProtocol: TransportProtocol;
   thinkingEncryption: ThinkingEncryption;
+  /**
+   * Wire-format tag for sealed thinking payloads. Two providers with the same
+   * tag can round-trip sealed reasoning between each other; null means the
+   * provider does not emit or accept sealed payloads.
+   */
+  sealedSchema: SealedSchema | null;
   extra: Record<string, unknown>;
 }
 
@@ -856,7 +864,7 @@ export class Config {
       "temperature", "max_tokens", "context_length",
       "supports_multimodal", "supports_thinking", "thinking_budget",
       "supports_web_search",
-      "transport_protocol", "thinking_encryption",
+      "transport_protocol", "thinking_encryption", "sealed_schema",
     ]);
     const extra: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(cfg)) {
@@ -882,6 +890,11 @@ export class Config {
       "thinking_encryption",
       ["openai", "anthropic", "none"] as const,
     ) ?? resolveThinkingEncryption(provider, modelName);
+    const sealedSchemaOverride = optionalConfigStringField(name, cfg, "sealed_schema");
+    const sealedSchema =
+      sealedSchemaOverride !== undefined
+        ? (sealedSchemaOverride === "" ? null : sealedSchemaOverride)
+        : resolveSealedSchema(provider, modelName);
 
     return {
       name,
@@ -908,6 +921,7 @@ export class Config {
       ),
       transportProtocol,
       thinkingEncryption,
+      sealedSchema,
       extra,
     };
   }
