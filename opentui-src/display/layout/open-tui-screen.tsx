@@ -8,7 +8,6 @@ import type { AgentQuestionItem } from "../../../src/ask.js";
 import type { CommandPickerState } from "../../../src/ui/command-picker.js";
 import type { CheckboxPickerState } from "../../../src/ui/checkbox-picker.js";
 import type { PresentationEntry } from "../../presentation/types.js";
-import type { ChildSessionSnapshot } from "../../../src/session-tree-types.js";
 import type { ComposerTokenVisuals } from "../../composer-tokens.js";
 import { createTextAttributes } from "@opentui/core";
 import { PresentationPanel } from "../../components/entry/presentation-panel.js";
@@ -41,7 +40,6 @@ import {
   PromptSecretView,
   PromptSelectView,
 } from "../overlays/views.js";
-import { AgentListModal } from "../overlays/agent-list-modal.js";
 import { RightSidebar, type SidebarMode } from "../../sidebar/right-sidebar.js";
 import { computePickerMaxVisible, getSidebarWidth } from "./metrics.js";
 import { HorizontalTabBar } from "./horizontal-tab-bar.js";
@@ -110,16 +108,9 @@ export interface OpenTuiScreenProps {
   onSubmit: () => void;
   onModelClick: () => void;
   onPermissionClick?: () => void;
-  onAgentIndicatorClick?: () => void;
   runningAgentCount?: number;
   idleAgentCount?: number;
   archivedAgentCount?: number;
-  agentListOpen?: boolean;
-  agentListAgents?: readonly ChildSessionSnapshot[];
-  agentListSelectedIndex?: number;
-  onAgentListClose?: () => void;
-  onAgentListSelect?: (agentId: string) => void;
-  onAgentListStopAll?: () => void;
   onBackgroundMouseDown: () => void;
   sidebarMode?: SidebarMode;
   activeShells?: Array<{ id: string; command: string; status: string }>;
@@ -201,16 +192,9 @@ export function OpenTuiScreen({
   onSubmit,
   onModelClick,
   onPermissionClick,
-  onAgentIndicatorClick,
   runningAgentCount,
   idleAgentCount,
   archivedAgentCount,
-  agentListOpen,
-  agentListAgents,
-  agentListSelectedIndex,
-  onAgentListClose,
-  onAgentListSelect,
-  onAgentListStopAll,
   onBackgroundMouseDown,
   sidebarMode = "close",
   activeShells = [],
@@ -300,7 +284,6 @@ export function OpenTuiScreen({
       onSubmit={onSubmit}
       onModelClick={onModelClick}
       onPermissionClick={onPermissionClick}
-      onAgentIndicatorClick={onAgentIndicatorClick}
       runningAgentCount={runningAgentCount}
       idleAgentCount={idleAgentCount}
       archivedAgentCount={archivedAgentCount}
@@ -526,19 +509,6 @@ export function OpenTuiScreen({
           </box>
         </box>
       ) : null}
-
-      {/* Agent list modal (absolute positioned, above everything) */}
-      <AgentListModal
-        visible={agentListOpen ?? false}
-        agents={agentListAgents ?? []}
-        selectedIndex={agentListSelectedIndex ?? 0}
-        terminalWidth={terminal.width}
-        terminalHeight={terminal.height}
-        colors={theme.colors}
-        onClose={onAgentListClose ?? (() => {})}
-        onSelect={onAgentListSelect ?? (() => {})}
-        onStopAll={onAgentListStopAll}
-      />
     </box>
   );
 }

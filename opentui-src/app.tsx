@@ -346,10 +346,6 @@ export function OpenTuiApp({
     }
   }, [planCheckpoints.length]);
 
-  // Agent list modal state
-  const [agentListOpen, setAgentListOpen] = useState(false);
-  const [agentListSelectedIndex, setAgentListSelectedIndex] = useState(0);
-
   // Frozen child view — protects display when viewed child becomes archived
   const [frozenChildView, setFrozenChildView] = useState<{
     snapshot: ChildSessionSnapshot;
@@ -2668,50 +2664,6 @@ export function OpenTuiApp({
       return;
     }
 
-    // Agent list modal keyboard handling
-    if (agentListOpen) {
-      if (event.name === "escape") {
-        setAgentListOpen(false);
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (event.name === "up") {
-        setAgentListSelectedIndex((i) => (i - 1 + childSessions.length) % childSessions.length);
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (event.name === "down") {
-        setAgentListSelectedIndex((i) => (i + 1) % childSessions.length);
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (event.name === "return") {
-        const agent = childSessions[agentListSelectedIndex];
-        if (agent) enterChildSession(agent.id);
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (event.name === "x") {
-        const decision = session.interruptAllChildSessions?.() ?? { accepted: false, interrupted: 0, reason: "unsupported" };
-        if (decision.accepted) {
-          showHint(`Interrupted ${decision.interrupted} sub-agent${decision.interrupted === 1 ? "" : "s"}`);
-        } else {
-          showHint(decision.reason === "not_live" ? "No running sub-agents" : "Stop all agents is unavailable");
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      // Block all other keys while modal is open
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
     // Ctrl+G: toggle markdown raw/rendered
     if (event.name === "g" && event.ctrl) {
       setMarkdownMode((current) => {
@@ -2881,17 +2833,7 @@ export function OpenTuiApp({
   const idleAgentCount = childSessions.filter((s) => s.lifecycle === "idle").length;
   const archivedAgentCount = childSessions.filter((s) => s.lifecycle === "archived").length;
 
-  const openAgentList = useCallback(() => {
-    if (childSessions.length === 0) {
-      showHint("No agents spawned");
-      return;
-    }
-    setAgentListSelectedIndex(0);
-    setAgentListOpen(true);
-  }, [childSessions.length, showHint]);
-
   const enterChildSession = useCallback((agentId: string) => {
-    setAgentListOpen(false);
     setSelectedChildId(agentId);
     // Create temporary child tab
     const tabId = `child:${agentId}`;
@@ -2901,15 +2843,6 @@ export function OpenTuiApp({
     });
     setActiveTabId(tabId);
   }, []);
-
-  const stopAllChildSessions = useCallback(() => {
-    const decision = session.interruptAllChildSessions?.() ?? { accepted: false, interrupted: 0, reason: "unsupported" };
-    if (decision.accepted) {
-      showHint(`Interrupted ${decision.interrupted} sub-agent${decision.interrupted === 1 ? "" : "s"}`);
-    } else {
-      showHint(decision.reason === "not_live" ? "No running sub-agents" : "Stop all agents is unavailable");
-    }
-  }, [session, showHint]);
 
   // Data source switching: use child snapshot when viewing a child page
   const childSnapshot = selectedChildId
@@ -3008,16 +2941,9 @@ export function OpenTuiApp({
         void handleSubmit("/model");
       }}
       onPermissionClick={cyclePermissionMode}
-      onAgentIndicatorClick={openAgentList}
       runningAgentCount={runningAgentCount}
       idleAgentCount={idleAgentCount}
       archivedAgentCount={archivedAgentCount}
-      agentListOpen={agentListOpen}
-      agentListAgents={childSessions}
-      agentListSelectedIndex={agentListSelectedIndex}
-      onAgentListClose={() => setAgentListOpen(false)}
-      onAgentListSelect={enterChildSession}
-      onAgentListStopAll={stopAllChildSessions}
       sidebarMode={sidebarMode}
       statusPanel={(() => {
         const showAgents = agentsPanelOpen && childSessions.length > 0;
@@ -3068,7 +2994,6 @@ export function OpenTuiApp({
         if (commandOverlay.visible) setCommandOverlay(EMPTY_COMMAND_OVERLAY);
         if (commandPicker) setCommandPicker(null);
         if (checkboxPicker) setCheckboxPicker(null);
-        if (agentListOpen) setAgentListOpen(false);
       }}
     />
   );

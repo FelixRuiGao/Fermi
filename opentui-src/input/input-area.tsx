@@ -51,7 +51,6 @@ interface InputAreaProps {
   onSubmit: () => void;
   onModelClick: () => void;
   onPermissionClick?: () => void;
-  onAgentIndicatorClick?: () => void;
   commandOverlayVisible: boolean;
   commandPicker: boolean;
   checkboxPicker: boolean;
@@ -139,7 +138,6 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
     runningAgentCount = 0,
     idleAgentCount = 0,
     archivedAgentCount = 0,
-    onAgentIndicatorClick,
     todoOpenCount = 0,
     todoDoneCount = 0,
     todoPanelOpen = false,
