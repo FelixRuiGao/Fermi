@@ -130,6 +130,12 @@ export class AnthropicProvider extends BaseAnthropicProvider {
       return false;
     };
 
+    // 1. Tools — a system breakpoint alone does NOT cache the tools array, so
+    //    without this the tool schemas (~5k tokens) are re-sent uncached on
+    //    every call. Marking the last tool definition caches the tools segment.
+    markLastBlock(kwargs["tools"]);
+
+    // 2. System — cache the (static) system prompt.
     const system = kwargs["system"];
     if (typeof system === "string" && system.length > 0) {
       kwargs["system"] = [{
@@ -137,24 +143,28 @@ export class AnthropicProvider extends BaseAnthropicProvider {
         text: system,
         cache_control: marker,
       }];
-      return;
+    } else {
+      markLastBlock(system);
     }
-    if (markLastBlock(system)) return;
 
+    // 3. Messages — cache the conversation prefix incrementally by marking the
+    //    last message. No effect on a single turn; on a multi-turn conversation
+    //    it saves re-reading the whole history uncached on every subsequent turn.
     const messages = kwargs["messages"] as Record<string, unknown>[] | undefined;
-    if (!Array.isArray(messages)) return;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      const content = msg?.["content"];
-      if (typeof content === "string" && content.length > 0) {
-        msg["content"] = [{
-          type: "text",
-          text: content,
-          cache_control: marker,
-        }];
-        return;
+    if (Array.isArray(messages)) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        const content = msg?.["content"];
+        if (typeof content === "string" && content.length > 0) {
+          msg["content"] = [{
+            type: "text",
+            text: content,
+            cache_control: marker,
+          }];
+          break;
+        }
+        if (markLastBlock(content)) break;
       }
-      if (markLastBlock(content)) return;
     }
   }
 }

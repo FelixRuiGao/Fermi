@@ -17,7 +17,7 @@ Returns `mtime_ms` metadata for optional optimistic concurrency checks.
 Create or overwrite a file. Parent directories are created automatically.
 
 ```
-write_file(path="{PROJECT_ROOT}/example.py", content="print('Hello, world!')")
+write_file(path="[project]/example.py", content="print('Hello, world!')")
 ```
 
 Prefer `write_file` over `edit_file` when you intend to replace the **entire** file contents — fewer tokens than echoing the existing content into `old_str`.
@@ -35,7 +35,7 @@ Apply a patch by replacing one or more strings. By default each `old_str` must a
 **Single replacement:**
 
 ```
-edit_file(path="{PROJECT_ROOT}/example.py", edits=[
+edit_file(path="[project]/example.py", edits=[
   { old_str: "Hello", new_str: "Hi" }
 ])
 ```
@@ -43,7 +43,7 @@ edit_file(path="{PROJECT_ROOT}/example.py", edits=[
 **Replace every occurrence (e.g. for renames):**
 
 ```
-edit_file(path="{PROJECT_ROOT}/example.py", edits=[
+edit_file(path="[project]/example.py", edits=[
   { old_str: "OldName", new_str: "NewName", replace_all: true }
 ])
 ```
@@ -51,7 +51,7 @@ edit_file(path="{PROJECT_ROOT}/example.py", edits=[
 **Multiple replacements in one call:**
 
 ```
-edit_file(path="{PROJECT_ROOT}/example.py", edits=[
+edit_file(path="[project]/example.py", edits=[
   { old_str: "Hello", new_str: "Hi" },
   { old_str: "World", new_str: "Earth" }
 ])
@@ -64,13 +64,13 @@ All edits must not overlap and are applied atomically.
 To append content to the end of a file, use `append_str`:
 
 ```
-edit_file(path="{PROJECT_ROOT}/log.txt", append_str="\nNew entry")
+edit_file(path="[project]/log.txt", append_str="\nNew entry")
 ```
 
 `append_str` can be combined with `edits` — replacements execute first, then append:
 
 ```
-edit_file(path="{PROJECT_ROOT}/example.py", edits=[
+edit_file(path="[project]/example.py", edits=[
   { old_str: "v1.0", new_str: "v1.1" }
 ], append_str="\n# Updated to v1.1")
 ```

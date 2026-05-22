@@ -6154,14 +6154,6 @@ export class Session {
     return join(artifacts, "..");
   }
 
-  private _renderSystemPrompt(rawPrompt: string): string {
-    const predictedArtifacts = this._getPredictedArtifactsDirIfAvailable();
-    return rawPrompt
-      .replace(/\{PROJECT_ROOT\}/g, this._projectRoot)
-      .replace(/\{SESSION_ARTIFACTS\}/g, predictedArtifacts ?? this._resolveSessionArtifacts({ allowUnresolved: true }))
-      .replace(/\{SYSTEM_DATA\}/g, this._resolveSystemData({ allowUnresolved: true }));
-  }
-
   /**
    * Assemble the full system prompt using the layered assembler.
    * Called by _reloadPromptAndTools(), not per-call.
@@ -6178,6 +6170,7 @@ export class Session {
       sessionArtifacts: this._getPredictedArtifactsDirIfAvailable()
         ?? this._resolveSessionArtifacts({ allowUnresolved: true }),
       systemData: this._resolveSystemData({ allowUnresolved: true }),
+      sessionStartedAt: this._createdAt,
       agentModels: this.config.agentModels,
     });
   }
@@ -7413,7 +7406,9 @@ export class Session {
     const agent = new Agent({
       name: taskId,
       modelConfig,
-      systemPrompt: this._renderSystemPrompt(templateAgent.systemPrompt),
+      // Pass the raw template prompt — the child Session appends the single
+      // Session Configuration section itself during its own assembly.
+      systemPrompt: templateAgent.systemPrompt,
       tools,
       maxToolRounds: templateAgent.maxToolRounds,
       description: `Sub-agent '${taskId}' (${templateName})`,
@@ -7429,7 +7424,9 @@ export class Session {
     const agent = new Agent({
       name: taskId,
       modelConfig,
-      systemPrompt: this._renderSystemPrompt(templateAgent.systemPrompt),
+      // Pass the raw template prompt — the child Session appends the single
+      // Session Configuration section itself during its own assembly.
+      systemPrompt: templateAgent.systemPrompt,
       tools: [...templateAgent.tools],
       maxToolRounds: templateAgent.maxToolRounds,
       description: `Sub-agent '${taskId}' (custom)`,

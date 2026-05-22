@@ -25,7 +25,7 @@ function buildSession(projectRoot: string, store: SessionStore): Session {
   };
   const primaryAgent = {
     name: "Primary",
-    systemPrompt: "ROOT={PROJECT_ROOT}",
+    systemPrompt: "ROOT=[project]",
     tools: [],
     modelConfig: { ...modelConfig },
     _provider: { budgetCalcMode: "full_context" },
@@ -34,6 +34,8 @@ function buildSession(projectRoot: string, store: SessionStore): Session {
   const config = {
     pathOverrides: { projectRoot },
     subAgentModelName: undefined,
+    agentModels: {},
+    modelTiers: {},
     mcpServerConfigs: [],
     getModel: () => ({ ...modelConfig }),
     listModelEntries: () => [],

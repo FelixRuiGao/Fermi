@@ -75,7 +75,7 @@ function makeSession(
 
   const primaryAgent = {
     name: "Primary",
-    systemPrompt: "ROOT={PROJECT_ROOT}\nART={SESSION_ARTIFACTS}\nSYS={SYSTEM_DATA}",
+    systemPrompt: "ROOT=[project]\nART=[session]\nSYS=[system]",
     tools: [],
     modelConfig: { ...modelConfigs[initialModelConfigName as keyof typeof modelConfigs] },
     _provider: { budgetCalcMode: "full_context" },
@@ -87,6 +87,8 @@ function makeSession(
   const config = {
     pathOverrides: { projectRoot },
     subAgentModelName: undefined,
+    agentModels: {},
+    modelTiers: {},
     mcpServerConfigs: [],
     getModel: (name: string) => {
       const model = (modelConfigs as Record<string, any>)[name];

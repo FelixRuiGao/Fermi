@@ -41,6 +41,7 @@ function makeSession(
       supportsMultimodal: boolean;
     }>;
     initialModelConfigName?: string;
+    agentTemplates?: Record<string, any>;
   },
 ): Session {
   const modelConfigs = options?.modelConfigs ?? {
@@ -62,7 +63,7 @@ function makeSession(
 
   const primaryAgent = {
     name: "Primary",
-    systemPrompt: "ROOT={PROJECT_ROOT}\nART={SESSION_ARTIFACTS}\nSYS={SYSTEM_DATA}",
+    systemPrompt: "ROOT=[project]\nART=[session]\nSYS=[system]",
     tools: [],
     modelConfig: { ...initialModelConfig },
     _provider: {
@@ -76,6 +77,8 @@ function makeSession(
   const config = {
     pathOverrides: { projectRoot },
     subAgentModelName: undefined,
+    agentModels: {},
+    modelTiers: {},
     mcpServerConfigs: [],
     getModel: (name: string) => {
       const modelConfig = modelConfigs[name];
@@ -112,6 +115,7 @@ function makeSession(
   return new Session({
     primaryAgent,
     config,
+    agentTemplates: options?.agentTemplates,
     store,
   });
 }
@@ -131,6 +135,14 @@ function countMessageTokens(messages: Array<Record<string, unknown>>): number {
   return gptCountTokens(messages as any);
 }
 
+function getSystemPromptContent(session: Session): string {
+  return String(((session as any)._log?.find((e: any) => e.type === "system_prompt")?.content ?? ""));
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 describe("session storage lifecycle", () => {
   it("constructs with a store that has no active session directory", () => {
     const baseDir = makeTempDir("fermi-lifecycle-base-");
@@ -138,12 +150,15 @@ describe("session storage lifecycle", () => {
     try {
       const store = new SessionStore({ baseDir, projectPath: projectRoot });
       const session = makeSession(projectRoot, store);
-      const systemContent = String(((session as any)._log?.find((e: any) => e.type === "system_prompt")?.content ?? ""));
+      const systemContent = getSystemPromptContent(session);
 
       expect(store.sessionDir).toBeUndefined();
+      expect(systemContent).toContain("ART=[session]");
+      expect(systemContent).toContain("# Session Configuration");
       expect(systemContent).toContain("/artifacts");
       expect(systemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(systemContent).toContain(store.projectDir);
+      expect(countOccurrences(systemContent, "# Session Configuration")).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -160,13 +175,16 @@ describe("session storage lifecycle", () => {
 
       const result = await session.turn("hello");
       const artifactsDir = store.artifactsDir;
-      const systemContent = String(((session as any)._log?.find((e: any) => e.type === "system_prompt")?.content ?? ""));
+      const systemContent = getSystemPromptContent(session);
 
       expect(result).toBe("first-response");
       expect(store.sessionDir).toBeTruthy();
       expect(artifactsDir).toBeTruthy();
+      expect(systemContent).toContain("ART=[session]");
+      expect(systemContent).toContain("# Session Configuration");
       expect(systemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(systemContent).toContain(artifactsDir as string);
+      expect(countOccurrences(systemContent, "# Session Configuration")).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -188,22 +206,28 @@ describe("session storage lifecycle", () => {
       store.clearSession();
       session.resetForNewSession(store);
 
-      const resetSystemContent = String(((session as any)._log?.find((e: any) => e.type === "system_prompt")?.content ?? ""));
+      const resetSystemContent = getSystemPromptContent(session);
       expect(store.sessionDir).toBeUndefined();
+      expect(resetSystemContent).toContain("ART=[session]");
+      expect(resetSystemContent).toContain("# Session Configuration");
       expect(resetSystemContent).toContain("/artifacts");
       expect(resetSystemContent).not.toContain("{SESSION_ARTIFACTS}");
+      expect(countOccurrences(resetSystemContent, "# Session Configuration")).toBe(1);
 
       stubRunActivation(session, "phase-2");
       await session.turn("second");
 
       const secondSessionDir = store.sessionDir;
       const secondArtifactsDir = store.artifactsDir;
-      const hydratedSystemContent = String(((session as any)._log?.find((e: any) => e.type === "system_prompt")?.content ?? ""));
+      const hydratedSystemContent = getSystemPromptContent(session);
       expect(secondSessionDir).toBeTruthy();
       expect(secondSessionDir).not.toBe(firstSessionDir);
       expect(secondArtifactsDir).toBeTruthy();
+      expect(hydratedSystemContent).toContain("ART=[session]");
+      expect(hydratedSystemContent).toContain("# Session Configuration");
       expect(hydratedSystemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(hydratedSystemContent).toContain(secondArtifactsDir as string);
+      expect(countOccurrences(hydratedSystemContent, "# Session Configuration")).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -636,6 +660,50 @@ describe("session storage lifecycle", () => {
 
       expect(session.contextBudget).toBe(200_000);
       expect(handle.session.contextBudget).toBe(128_000);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not duplicate Session Configuration for predefined child templates", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      store.createSession();
+      const modelConfig = {
+        name: "test-model",
+        provider: "openai",
+        model: "gpt-5.2",
+        apiKey: "sk-test",
+        maxTokens: 256,
+        contextLength: 128_000,
+        supportsMultimodal: false,
+      };
+      const templateAgent = {
+        name: "explorer",
+        systemPrompt: "Explorer template rooted at [project].",
+        tools: [],
+        maxToolRounds: 100,
+        modelConfig: { ...modelConfig },
+        _provider: { budgetCalcMode: "full_context" },
+        replaceModelConfig(next: any) {
+          this.modelConfig = next;
+        },
+      } as any;
+      const session = makeSession(projectRoot, store, {
+        modelConfigs: { "test-model": modelConfig },
+        agentTemplates: { explorer: templateAgent },
+      }) as any;
+
+      const { agent } = session._createSubAgentFromPredefined("explorer", "explorer-1");
+      const handle = session._instantiateChildSession("explorer-1", "explorer", "oneshot", agent);
+      const childSystemContent = getSystemPromptContent(handle.session);
+
+      expect(childSystemContent).toContain("Explorer template rooted at [project].");
+      expect(childSystemContent).toContain(`- \`[session]\`  = ${handle.artifactsDir}`);
+      expect(countOccurrences(childSystemContent, "# Session Configuration")).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
