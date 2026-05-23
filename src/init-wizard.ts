@@ -771,7 +771,12 @@ export async function runInitWizard(): Promise<WizardResult> {
   });
 
   const settings: FermiSettings = {
-    default_model: modelSelection?.configName,
+    // Note: do NOT write `default_model` here. `default_model` is a declarative
+    // pin that overrides state/model-selection.json on every startup (see
+    // bootstrap.ts), so auto-populating it from the wizard's initial pick would
+    // make `/model` switches never stick across restarts. The initial selection
+    // is persisted to model-selection.json below — that is the auto-memory.
+    // `default_model` stays opt-in: only present if the user adds it by hand.
     thinking_level: thinkingLevel && thinkingLevel !== "off" && thinkingLevel !== "none"
       ? thinkingLevel
       : undefined,
