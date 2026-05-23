@@ -15,6 +15,7 @@
 
 import type { ModelConfig } from "../config.js";
 import { getProviderDefaultBaseUrl } from "../provider-defaults.js";
+import { makeAnthropicSSERepairFetch } from "./anthropic-sse-repair.js";
 import { BaseAnthropicProvider } from "./anthropic-base.js";
 import type { SendMessageOptions } from "./base.js";
 
@@ -25,6 +26,24 @@ export class KimiAnthropicProvider extends BaseAnthropicProvider {
 
   protected override _defaultBaseUrl(): string {
     return getProviderDefaultBaseUrl(this._config.provider) ?? "https://api.moonshot.ai/anthropic";
+  }
+
+  /**
+   * Kimi's `/anthropic` web_search emits `input_json_delta` events without a
+   * `partial_json` field on degenerate (empty) searches, which crashes the
+   * SDK's stream parser. Repair the SSE before the SDK sees it.
+   */
+  protected override _wrapFetch() {
+    return makeAnthropicSSERepairFetch();
+  }
+
+  /**
+   * Kimi prepends a "Search results for query: ..." text block before its
+   * server-side web_search on every search turn. Suppress it from the live
+   * stream (only relevant when web search is actually enabled).
+   */
+  protected override _dropsLeadingSearchPreamble(): boolean {
+    return this._config.supportsWebSearch;
   }
 
   protected override _convertWebSearchTool(): Record<string, unknown> {

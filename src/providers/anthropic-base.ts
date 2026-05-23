@@ -58,6 +58,10 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
     if (baseUrl) {
       opts.baseURL = baseUrl;
     }
+    const wrappedFetch = this._wrapFetch();
+    if (wrappedFetch) {
+      opts.fetch = wrappedFetch;
+    }
     this._client = new Anthropic(opts);
   }
 
@@ -70,8 +74,36 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
     return undefined;
   }
 
+  /**
+   * Optional fetch wrapper for vendors whose streaming responses need to be
+   * repaired before the SDK consumes them. Default: no wrapper (use the SDK's
+   * own fetch). Override to return a wrapped fetch — see
+   * `makeAnthropicSSERepairFetch`.
+   */
+  protected _wrapFetch():
+    | ((url: string | URL | Request, init?: RequestInit) => Promise<Response>)
+    | undefined {
+    return undefined;
+  }
+
   /** Whether to preserve / forward `signature` on thinking blocks. Anthropic-only. */
   protected _emitSignature(): boolean {
+    return false;
+  }
+
+  /**
+   * Whether this vendor prepends a synthetic "search preamble" text block (a
+   * leading text block immediately followed by a server_tool_use web search)
+   * that should not be shown to the user. Kimi does this on every web-search
+   * turn (e.g. "Search results for query: ..."). When true, `_callStream`
+   * buffers a leading text block and drops it if a server_tool_use follows.
+   *
+   * Note: the non-streaming `_parseResponse` and the streaming finalText
+   * re-derivation already drop this block from the stored text via a
+   * server_tool_use lookahead; this hook only governs the *live* stream so the
+   * preamble never reaches `onTextChunk`.
+   */
+  protected _dropsLeadingSearchPreamble(): boolean {
     return false;
   }
 
@@ -524,6 +556,22 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
     const blockNameById = new Map<string, string>();
     const toolJsonById = new Map<string, string>();
 
+    // Leading-search-preamble suppression (e.g. Kimi). We buffer a leading text
+    // block and only release it once we see the following block: if that block
+    // is a server_tool_use web search, the text was a synthetic preamble and we
+    // drop it; otherwise we flush it. Only the very first block is ever buffered,
+    // so the real answer (which follows thinking / search) always streams live.
+    const dropLeadingPreamble = this._dropsLeadingSearchPreamble();
+    let forwardedFirstBlock = false;
+    let pendingLeading: { index: number; text: string } | null = null;
+    const flushPendingLeading = () => {
+      if (pendingLeading && pendingLeading.text) {
+        textParts.push(pendingLeading.text);
+        if (onTextChunk) onTextChunk(pendingLeading.text);
+      }
+      pendingLeading = null;
+    };
+
     const stream = this._client.messages.stream(
       kwargs as unknown as Anthropic.MessageCreateParamsStreaming,
       signal ? { signal } : undefined,
@@ -537,6 +585,27 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
         const block = (event as unknown as Record<string, unknown>)[
           "content_block"
         ] as Record<string, unknown> | undefined;
+        const blockType = block?.["type"] as string | undefined;
+
+        // Resolve a buffered leading text block now that we know what follows it.
+        if (pendingLeading !== null) {
+          if (blockType === "server_tool_use") {
+            // Leading text immediately followed by a server web search → it was
+            // a synthetic preamble. Drop it (never reached onTextChunk).
+            pendingLeading = null;
+          } else {
+            flushPendingLeading();
+          }
+          forwardedFirstBlock = true;
+        }
+
+        // Begin buffering a brand-new leading text block (candidate preamble).
+        if (dropLeadingPreamble && !forwardedFirstBlock && blockType === "text") {
+          pendingLeading = { index: index ?? -1, text: "" };
+        } else if (blockType !== undefined) {
+          forwardedFirstBlock = true;
+        }
+
         if (block?.["type"] === "thinking") {
           currentThinking = emitSignature
             ? { type: "thinking", thinking: "", signature: "" }
@@ -577,8 +646,13 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
         } else if (deltaType === "text_delta") {
           const text = (delta["text"] as string) || "";
           if (text) {
-            textParts.push(text);
-            if (onTextChunk) onTextChunk(text);
+            if (pendingLeading !== null && index === pendingLeading.index) {
+              // Buffer instead of emitting — may be a search preamble.
+              pendingLeading.text += text;
+            } else {
+              textParts.push(text);
+              if (onTextChunk) onTextChunk(text);
+            }
           }
         } else if (deltaType === "signature_delta") {
           if (emitSignature) {
@@ -619,6 +693,10 @@ export abstract class BaseAnthropicProvider extends BaseProvider {
         }
       }
     }
+
+    // A leading text block that was never followed by another block (i.e. it is
+    // the whole message, not a preamble) is still buffered — release it now.
+    flushPendingLeading();
 
     const response = await stream.finalMessage();
 
