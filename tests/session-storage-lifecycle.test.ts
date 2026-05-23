@@ -63,7 +63,7 @@ function makeSession(
 
   const primaryAgent = {
     name: "Primary",
-    systemPrompt: "ROOT=[project]\nART=[session]\nSYS=[system]",
+    systemPrompt: "ROOT={PROJECT_ROOT}\nART={SESSION_ARTIFACTS}\nSYS={SYSTEM_DATA}",
     tools: [],
     modelConfig: { ...initialModelConfig },
     _provider: {
@@ -153,7 +153,6 @@ describe("session storage lifecycle", () => {
       const systemContent = getSystemPromptContent(session);
 
       expect(store.sessionDir).toBeUndefined();
-      expect(systemContent).toContain("ART=[session]");
       expect(systemContent).toContain("# Session Configuration");
       expect(systemContent).toContain("/artifacts");
       expect(systemContent).not.toContain("{SESSION_ARTIFACTS}");
@@ -180,7 +179,6 @@ describe("session storage lifecycle", () => {
       expect(result).toBe("first-response");
       expect(store.sessionDir).toBeTruthy();
       expect(artifactsDir).toBeTruthy();
-      expect(systemContent).toContain("ART=[session]");
       expect(systemContent).toContain("# Session Configuration");
       expect(systemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(systemContent).toContain(artifactsDir as string);
@@ -208,7 +206,6 @@ describe("session storage lifecycle", () => {
 
       const resetSystemContent = getSystemPromptContent(session);
       expect(store.sessionDir).toBeUndefined();
-      expect(resetSystemContent).toContain("ART=[session]");
       expect(resetSystemContent).toContain("# Session Configuration");
       expect(resetSystemContent).toContain("/artifacts");
       expect(resetSystemContent).not.toContain("{SESSION_ARTIFACTS}");
@@ -223,7 +220,6 @@ describe("session storage lifecycle", () => {
       expect(secondSessionDir).toBeTruthy();
       expect(secondSessionDir).not.toBe(firstSessionDir);
       expect(secondArtifactsDir).toBeTruthy();
-      expect(hydratedSystemContent).toContain("ART=[session]");
       expect(hydratedSystemContent).toContain("# Session Configuration");
       expect(hydratedSystemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(hydratedSystemContent).toContain(secondArtifactsDir as string);
@@ -683,7 +679,7 @@ describe("session storage lifecycle", () => {
       };
       const templateAgent = {
         name: "explorer",
-        systemPrompt: "Explorer template rooted at [project].",
+        systemPrompt: "Explorer rooted at {PROJECT_ROOT}; artifacts at {SESSION_ARTIFACTS}.",
         tools: [],
         maxToolRounds: 100,
         modelConfig: { ...modelConfig },
@@ -701,8 +697,9 @@ describe("session storage lifecycle", () => {
       const handle = session._instantiateChildSession("explorer-1", "explorer", "oneshot", agent);
       const childSystemContent = getSystemPromptContent(handle.session);
 
-      expect(childSystemContent).toContain("Explorer template rooted at [project].");
-      expect(childSystemContent).toContain(`- \`[session]\`  = ${handle.artifactsDir}`);
+      expect(childSystemContent).not.toContain("{PROJECT_ROOT}");
+      expect(childSystemContent).not.toContain("{SESSION_ARTIFACTS}");
+      expect(childSystemContent).toContain(`artifacts at ${handle.artifactsDir}`);
       expect(countOccurrences(childSystemContent, "# Session Configuration")).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });

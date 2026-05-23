@@ -25,7 +25,7 @@ function buildSession(projectRoot: string, store: SessionStore): Session {
   };
   const primaryAgent = {
     name: "Primary",
-    systemPrompt: "ROOT=[project]",
+    systemPrompt: "ROOT={PROJECT_ROOT}",
     tools: [],
     modelConfig: { ...modelConfig },
     _provider: { budgetCalcMode: "full_context" },

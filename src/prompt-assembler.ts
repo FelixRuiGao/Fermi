@@ -8,7 +8,8 @@
  *     agent.prompt                    ← from template (role + tools + knowledge)
  *     + memory layer (AGENTS.md)      ← from disk, refreshed per-reload
  *     + agent model pins              ← from config
- *     + Session Configuration (dynamic, appended last for cache stability)
+ *     + variable rendering            ← {PROJECT_ROOT}/{SESSION_ARTIFACTS}/{SYSTEM_DATA} → real paths
+ *     + Session Configuration         ← session start timestamp, appended last
  *
  * All layers are assembled here — Session no longer does ad-hoc string concatenation.
  */
@@ -75,49 +76,33 @@ function formatSessionStartLine(iso: string | undefined): string | null {
 }
 
 /**
- * Normalize legacy `{PROJECT_ROOT}`-style placeholders (from older custom
- * templates) to the static `[project]` / `[session]` / `[system]` form.
+ * Substitute path variables with the session's real absolute paths.
  *
- * This is a pure text transform — it does NOT substitute real paths. Real paths
- * appear only in the Session Configuration appendix, so the normalized body
- * stays identical across sessions and fully cacheable. Idempotent: running it on
- * an already-normalized prompt is a no-op.
+ * Renders `{PROJECT_ROOT}` / `{SESSION_ARTIFACTS}` / `{SYSTEM_DATA}` in the
+ * prompt body, so the model sees concrete paths in tool-call examples and
+ * instructions rather than a token it might paste verbatim. Within a session
+ * (and across sessions in the same project) the rendered body is stable, so it
+ * stays cache-friendly turn-to-turn.
  */
-function normalizeLegacyPathPlaceholders(prompt: string): string {
+export function renderPromptVariables(prompt: string, vars: PromptVariables): string {
   return prompt
-    .replace(/\{PROJECT_ROOT\}/g, "[project]")
-    .replace(/\{SESSION_ARTIFACTS\}/g, "[session]")
-    .replace(/\{SYSTEM_DATA\}/g, "[system]");
+    .replace(/\{PROJECT_ROOT\}/g, vars.projectRoot)
+    .replace(/\{SESSION_ARTIFACTS\}/g, vars.sessionArtifacts)
+    .replace(/\{SYSTEM_DATA\}/g, vars.systemData);
 }
 
 /**
  * Build the Session Configuration appendix.
  *
- * This is the ONLY place where session-specific values (paths, start time)
- * appear in the system prompt. The body uses static placeholders (`[project]`,
- * `[session]`, `[system]`) that are identical across all sessions.
- * Appending this section last keeps the entire body cacheable.
+ * Path variables are substituted inline in the prompt body (see
+ * renderPromptVariables), so this trailing section carries only the session
+ * start timestamp — a small piece of ambient context kept at the very end.
+ * Returns "" when no valid start time is available.
  */
 export function buildSessionConfigSection(vars: PromptVariables): string {
-  const lines = [
-    "",
-    "---",
-    "",
-    "# Session Configuration",
-    "",
-    "In the prompt above, placeholder references like `[project]`, `[session]`, and `[system]` refer to the following directories. These are the only session-specific values in this prompt — everything above this section is identical across sessions.",
-    "",
-    `- \`[project]\`  = ${vars.projectRoot}  — Target project directory. Read/write project source files here.`,
-    `- \`[session]\`  = ${vars.sessionArtifacts}  — Session-local storage for call files, scratch files, and custom sub-agent templates. Does not persist across sessions. Always use absolute paths with this directory.`,
-    `- \`[system]\`   = ${vars.systemData}  — Cross-session persistent storage. Managed by the system; do not access directly.`,
-  ];
-
   const startedLine = formatSessionStartLine(vars.sessionStartedAt);
-  if (startedLine) {
-    lines.push("", startedLine);
-  }
-
-  return lines.join("\n");
+  if (!startedLine) return "";
+  return ["", "---", "", "# Session Configuration", "", startedLine].join("\n");
 }
 
 // ------------------------------------------------------------------
@@ -231,18 +216,19 @@ export function assembleFullSystemPrompt(opts: AssembleOptions): string {
     }
   }
 
-  // Normalize legacy {PROJECT_ROOT}-style placeholders (from older custom
-  // templates) to the static [project]/[session]/[system] form. Runs on the
-  // whole body but BEFORE the config appendix, so real paths are never touched.
-  prompt = normalizeLegacyPathPlaceholders(prompt);
-
-  // Session Configuration (dynamic, appended last for prompt cache stability)
-  prompt += buildSessionConfigSection({
+  // Substitute path variables ({PROJECT_ROOT} etc.) with the session's real
+  // absolute paths. Runs last so variables in any layer (AGENTS.md, hooks) are
+  // also resolved.
+  const vars = {
     projectRoot: opts.projectRoot,
     sessionArtifacts: opts.sessionArtifacts,
     systemData: opts.systemData,
     sessionStartedAt: opts.sessionStartedAt,
-  });
+  };
+  prompt = renderPromptVariables(prompt, vars);
+
+  // Session Configuration (session start timestamp, appended last).
+  prompt += buildSessionConfigSection(vars);
 
   return prompt;
 }

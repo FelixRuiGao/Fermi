@@ -17,7 +17,7 @@ Returns `mtime_ms` metadata for optional optimistic concurrency checks.
 Create or overwrite a file. Parent directories are created automatically.
 
 ```
-write_file(path="[project]/example.py", content="print('Hello, world!')")
+write_file(path="{PROJECT_ROOT}/example.py", content="print('Hello, world!')")
 ```
 
 Prefer `write_file` over `edit_file` when you intend to replace the **entire** file contents — you skip echoing the existing content into `old_str`, which saves tokens.
@@ -35,7 +35,7 @@ Apply a patch by replacing one or more strings. By default each `old_str` must a
 **Single replacement:**
 
 ```
-edit_file(path="[project]/example.py", edits=[
+edit_file(path="{PROJECT_ROOT}/example.py", edits=[
   { old_str: "Hello", new_str: "Hi" }
 ])
 ```
@@ -43,7 +43,7 @@ edit_file(path="[project]/example.py", edits=[
 **Replace every occurrence (e.g. for renames):**
 
 ```
-edit_file(path="[project]/example.py", edits=[
+edit_file(path="{PROJECT_ROOT}/example.py", edits=[
   { old_str: "OldName", new_str: "NewName", replace_all: true }
 ])
 ```
@@ -51,7 +51,7 @@ edit_file(path="[project]/example.py", edits=[
 **Multiple replacements in one call:**
 
 ```
-edit_file(path="[project]/example.py", edits=[
+edit_file(path="{PROJECT_ROOT}/example.py", edits=[
   { old_str: "Hello", new_str: "Hi" },
   { old_str: "World", new_str: "Earth" }
 ])
@@ -64,13 +64,13 @@ All edits must not overlap and are applied atomically.
 To append content to the end of a file, use `append_str`:
 
 ```
-edit_file(path="[project]/log.txt", append_str="\nNew entry")
+edit_file(path="{PROJECT_ROOT}/log.txt", append_str="\nNew entry")
 ```
 
 `append_str` can be combined with `edits` — all replacements execute first, then append:
 
 ```
-edit_file(path="[project]/example.py", edits=[
+edit_file(path="{PROJECT_ROOT}/example.py", edits=[
   { old_str: "v1.0", new_str: "v1.1" }
 ], append_str="\n# Updated to v1.1")
 ```
@@ -236,7 +236,7 @@ spawn(
   id="explorer-1",
   template="explorer",
   mode="oneshot",
-  task="Explore the providers/ directory at [project]/src/providers/ ..."
+  task="Explore the providers/ directory at {PROJECT_ROOT}/src/providers/ ..."
 )
 ```
 
@@ -317,13 +317,13 @@ Items 1 and 3 are the spec the reviewer judges against — without them it can't
 
 ### Creating Reusable Custom Templates
 
-Create a custom template in `[session]`:
+Create a custom template in `{SESSION_ARTIFACTS}`:
 
 **Step 1.** Create a template directory with two files:
 
 ```
-write_file(path="[session]/my-template/agent.yaml", content=...)
-write_file(path="[session]/my-template/system_prompt.md", content=...)
+write_file(path="{SESSION_ARTIFACTS}/my-template/agent.yaml", content=...)
+write_file(path="{SESSION_ARTIFACTS}/my-template/system_prompt.md", content=...)
 ```
 
 `agent.yaml` structure:
@@ -357,7 +357,7 @@ Packs and individual tool names can be mixed: `tools: [read, bash, time]`
 spawn(id="analyst-1", template_path="my-template", mode="oneshot", task="Analyze the database schema at ...")
 ```
 
-The template persists in `[session]` for the entire session — you can reuse it across multiple `spawn` calls without recreating it.
+The template persists in `{SESSION_ARTIFACTS}` for the entire session — you can reuse it across multiple `spawn` calls without recreating it.
 
 ### Writing Effective Sub-Agent Prompts
 
@@ -376,7 +376,7 @@ The quality of sub-agent results depends almost entirely on your prompt. A well-
 > Produces unfocused noise. You'll waste context reading it and probably re-investigate yourself.
 
 > ```
-> Analyze the authentication middleware at [project]/src/middleware/auth/.
+> Analyze the authentication middleware at {PROJECT_ROOT}/src/middleware/auth/.
 >
 > Context: We're refactoring to support OAuth2 PKCE. Current system uses a strategy pattern.
 >
@@ -394,7 +394,7 @@ The quality of sub-agent results depends almost entirely on your prompt. A well-
 **Orient, don't contaminate.** "Everything the sub-agent needs" means what it needs to find its *own* way — the goal, the constraints, the relevant facts. It does **not** mean your conclusions, your current hypothesis, or the paths you already tried and abandoned. Handing those over transplants your blind spots and dead ends into a context whose whole value was being free of them. This matters most exactly when you delegate *because you're stuck* (a bug you can't locate) or *because you want a fresh take* (review): give the symptom and the goal, and let the sub-agent build its own model.
 
 > **Example — Explore.** You're hunting a memory leak and can't find it.
-> - *Orienting (good):* "Heap grows ~50 MB/hour under sustained load and never drops. Find what's retaining memory. Start in the WebSocket subsystem at `[project]/src/ws/`, but trace the actual retained objects — don't assume that's where it is."
+> - *Orienting (good):* "Heap grows ~50 MB/hour under sustained load and never drops. Find what's retaining memory. Start in the WebSocket subsystem at `{PROJECT_ROOT}/src/ws/`, but trace the actual retained objects — don't assume that's where it is."
 > - *Contaminating (bad):* "I'm pretty sure it's the WebSocket reconnect handler — I've been staring at `ws/reconnect.ts` and the listener cleanup looks wrong. Go confirm it's the reconnect logic."
 >
 > The first gives the symptom, the goal, and a starting point. The second hands over your hypothesis and your dead end — the explorer will tunnel on reconnect and most likely get stuck exactly where you did. Background is fair game; your conclusions are not.
@@ -764,7 +764,7 @@ This is a soft reminder to use `summarize_context`. Prioritize: completed subtas
 
 ## Plan File (a.k.a. the "Todo List")
 
-You have a plan file at `[session]/plan.md` for organizing your work.
+You have a plan file at `{SESSION_ARTIFACTS}/plan.md` for organizing your work.
 
 **The user's TUI displays this file as a "todo list" in a sidebar panel.** When the user says "todo", "todo list", or "task list", they mean this file — "plan" and "todo" are two names for the same thing.
 

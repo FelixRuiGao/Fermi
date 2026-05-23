@@ -75,7 +75,7 @@ function makeSession(
 
   const primaryAgent = {
     name: "Primary",
-    systemPrompt: "ROOT=[project]\nART=[session]\nSYS=[system]",
+    systemPrompt: "ROOT={PROJECT_ROOT}\nART={SESSION_ARTIFACTS}\nSYS={SYSTEM_DATA}",
     tools: [],
     modelConfig: { ...modelConfigs[initialModelConfigName as keyof typeof modelConfigs] },
     _provider: { budgetCalcMode: "full_context" },
