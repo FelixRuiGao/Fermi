@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.3
+
 - TUI: added `/diff` to choose write/edit diff display. Compact remains the default; Full persists globally and expands file-modify blocks inline instead of showing the earlier-lines fold prompt.
 - TUI: markdown H1/H2 heading colors changed from orange/gold to blue tones (closer to the accent palette).
 - Fixed: model selection was not remembered across restarts — switching with `/model` always reverted to the model picked during first-time setup. The init wizard wrote that initial pick into `settings.json` as `default_model`, which is a *declarative pin* that overrides `state/model-selection.json` (the system-managed last-used memory) on every startup; `/model` only updates the latter, so the pin always won. The wizard no longer writes `default_model` — the initial selection is still persisted to `model-selection.json`, and `default_model` is now purely opt-in for users who want to hard-pin a model by hand. Existing `settings.json` files that already contain an auto-written `default_model` should remove that line for model memory to take effect.
