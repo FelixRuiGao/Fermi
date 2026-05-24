@@ -62,8 +62,8 @@ export const LIGHT_TOKENS: DisplayThemeTokens = {
       operator: "#656d76",      // cool gray (was dark #9098a8) — flipped
       literal: "#0a4f4a",       // teal (was dark #6aa8a0)
       variable: "#1f2328",      // default text (was dark #b0b8c4) — flipped
-      headingPrimary: "#bc4c00",
-      headingSecondary: "#9a6700",
+      headingPrimary: "#0a5db8",
+      headingSecondary: "#1a7ce0",
       raw: "#6f42c1",           // purple (was dark #b4a0ec)
     },
     hljs: {
@@ -86,7 +86,7 @@ export const LIGHT_TOKENS: DisplayThemeTokens = {
       "hljs-meta": "#656d76",
       "hljs-meta-keyword": "#b35900",
       "hljs-meta-string": "#1a7f37",
-      "hljs-section": "#bc4c00",
+      "hljs-section": "#0a5db8",
       "hljs-tag": "#b35900",
       "hljs-name": "#cf222e",
       "hljs-attr": "#9a6700",
