@@ -1233,6 +1233,188 @@ describe("session storage lifecycle", () => {
       expect(toolResult).toBeTruthy();
       expect(toolResult.content.content).toContain("Tool execution was interrupted.");
       expect(toolResult.content.content).not.toContain("partial effects");
+      expect(toolResult.meta.interrupt).toEqual({
+        kind: "execution_interrupted",
+        partialEffectsPossible: false,
+      });
+      expect((session as any)._collectInterruptHints()).not.toContain("Some tools may have had partial effects.");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("denies and finalizes a pending approval ask as interrupted work", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._beginWorkIfNeeded();
+      (session as any)._log.push(
+        createToolCall(
+          "tc-approval",
+          1,
+          0,
+          "edit_file src/a.ts",
+          { id: "approval-call", name: "edit_file", arguments: { path: "src/a.ts" } },
+          { toolCallId: "approval-call", toolName: "edit_file", agentName: "Primary", contextId: "ctx-a" },
+        ),
+        createToolCall(
+          "tc-bash",
+          1,
+          0,
+          "bash npm install",
+          { id: "bash-call", name: "bash", arguments: { command: "npm install" } },
+          { toolCallId: "bash-call", toolName: "bash", agentName: "Primary", contextId: "ctx-b" },
+        ),
+      );
+      const bashCall = ((session as any)._log as any[]).find((entry) =>
+        entry.type === "tool_call" && entry.meta?.toolCallId === "bash-call"
+      );
+      bashCall.meta.toolExecState = "running";
+      (session as any)._activeAsk = {
+        id: "approval-ask",
+        kind: "approval",
+        createdAt: new Date().toISOString(),
+        source: { agentId: "primary", agentName: "Primary", toolName: "edit_file" },
+        summary: "Approve edit_file",
+        roundIndex: 0,
+        payload: {
+          toolCallId: "approval-call",
+          toolName: "edit_file",
+          toolSummary: "edit_file src/a.ts",
+          permissionClass: "write_potent",
+          offers: [],
+        },
+        options: ["Deny"],
+      };
+      (session as any)._pendingTurnState = { stage: "activation" };
+
+      const decision = session.denyAndInterruptPendingAsk();
+
+      expect(decision).toEqual({ accepted: true, turnFinished: true });
+      expect(session.getPendingAsk()).toBeNull();
+      expect(session.hasPendingTurnToResume()).toBe(false);
+      const log = session.log as any[];
+      const denied = log.find((entry) => entry.type === "tool_result" && entry.meta?.toolCallId === "approval-call");
+      expect(denied?.content.content).toBe("ERROR: Tool execution denied by user.");
+      const interruptedSibling = log.find((entry) => entry.type === "tool_result" && entry.meta?.toolCallId === "bash-call");
+      expect(interruptedSibling?.content.content).toContain("partial effects");
+      expect(interruptedSibling?.meta.interrupt.partialEffectsPossible).toBe(true);
+      const workEnd = log.find((entry) => entry.type === "work_end");
+      expect(workEnd?.meta.status).toBe("interrupted");
+      expect(workEnd?.meta.interruptHints).toContain("Some tools may have had partial effects.");
+      const tuiEntries = projectToTuiEntries(log);
+      expect(tuiEntries.some((entry) =>
+        entry.kind === "status" && entry.meta?.turnEndStatus === "interrupted"
+      )).toBe(true);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("denies and finalizes a pending agent question as interrupted work", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._beginWorkIfNeeded();
+      (session as any)._log.push(createToolCall(
+        "tc-ask",
+        1,
+        0,
+        "ask user",
+        { id: "ask-call", name: "ask", arguments: { questions: [] } },
+        { toolCallId: "ask-call", toolName: "ask", agentName: "Primary", contextId: "ctx-ask" },
+      ));
+      (session as any)._activeAsk = {
+        id: "agent-question",
+        kind: "agent_question",
+        createdAt: new Date().toISOString(),
+        source: { agentId: "primary", agentName: "Primary", toolName: "ask" },
+        summary: "Question",
+        roundIndex: 0,
+        payload: { toolCallId: "ask-call", questions: [] },
+        options: ["Decline"],
+      };
+      (session as any)._pendingTurnState = { stage: "activation" };
+
+      const decision = session.denyAndInterruptPendingAsk();
+
+      expect(decision).toEqual({ accepted: true, turnFinished: true });
+      expect(session.getPendingAsk()).toBeNull();
+      expect(session.hasPendingTurnToResume()).toBe(false);
+      const log = session.log as any[];
+      const declined = log.find((entry) => entry.type === "tool_result" && entry.meta?.toolCallId === "ask-call");
+      expect(declined?.content.content).toBe("ERROR: User declined to answer the question.");
+      const workEnd = log.find((entry) => entry.type === "work_end");
+      expect(workEnd?.meta.status).toBe("interrupted");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses structured interrupt metadata for partial-effect hints", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._log = [
+        createSystemPrompt("sys-001", "prompt"),
+        createToolCall(
+          "tc-001",
+          1,
+          0,
+          "edit_file src/a.ts",
+          { id: "edit-1", name: "edit_file", arguments: { path: "src/a.ts" } },
+          { toolCallId: "edit-1", toolName: "edit_file", agentName: "Primary", contextId: "ctx-edit" },
+        ),
+      ];
+      ((session as any)._log[1].meta as Record<string, unknown>).toolExecState = "running";
+
+      (session as any)._completeMissingToolResultsFromLog(1);
+
+      const toolResult = ((session as any)._log as any[]).find((entry) => entry.type === "tool_result");
+      expect(toolResult.meta.interrupt).toEqual({
+        kind: "execution_interrupted",
+        partialEffectsPossible: true,
+      });
+      expect((session as any)._collectInterruptHints()).toContain("Some tools may have had partial effects.");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports incomplete arguments for partial tool calls", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._log = [
+        createSystemPrompt("sys-001", "prompt"),
+        createToolCall(
+          "tc-partial",
+          1,
+          0,
+          "edit_file partial",
+          { id: "partial-1", name: "edit_file", rawArguments: "{\"path\":", parseError: "Incomplete arguments" },
+          { toolCallId: "partial-1", toolName: "edit_file", agentName: "Primary", contextId: "ctx-partial" },
+          null,
+        ),
+      ];
+
+      expect((session as any)._collectInterruptHints()).toContain("Some tools had incomplete arguments and were not executed.");
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });

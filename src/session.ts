@@ -349,10 +349,6 @@ const SAFE_INTERRUPT_TOOLS = new Set([
   "bash_output",
 ]);
 
-const LONG_RUNNING_TOOLS = new Set([
-  "bash",
-]);
-
 // ------------------------------------------------------------------
 // InlineImageInput — clipboard / drag-drop image passed to turn()
 // ------------------------------------------------------------------
@@ -1648,6 +1644,34 @@ export class Session {
     this._activeAsk = null;
     this._pendingTurnState = null;
     return { accepted: true };
+  }
+
+  denyAndInterruptPendingAsk(): { accepted: boolean; reason?: string; turnFinished?: boolean } {
+    const ask = this._activeAsk;
+    if (!ask) {
+      const pendingAsk = this.getPendingAsk();
+      if (!pendingAsk) return { accepted: false, reason: "no_pending_ask" };
+      const child = this._findChildWithPendingAsk(pendingAsk.id);
+      if (!child) return { accepted: false, reason: "ask_owner_not_found" };
+
+      const decision = child.session.denyAndInterruptPendingAsk();
+      if (!decision.accepted) return decision;
+
+      child.terminationCause = "user_targeted_kill";
+      this._finishChildTurn(child);
+      this._notifyLogListeners();
+      this.onSaveRequest?.();
+      // Root turn is still running (child was killed, root continues with its result).
+      return { accepted: true, turnFinished: false };
+    }
+
+    const interruptionStartIdx = this._findEarliestPendingToolCallLogIndex();
+    if (!this.denyPendingAsk()) {
+      return { accepted: false, reason: "deny_failed" };
+    }
+    this._currentTurnAbortController?.abort();
+    this._finalizeDrainInterruptedWork(interruptionStartIdx);
+    return { accepted: true, turnFinished: true };
   }
 
   /**
@@ -5078,6 +5102,19 @@ export class Session {
       if (e.type === "reasoning" && e.discarded) {
         hasDiscardedReasoning = true;
       }
+      if (e.type === "tool_call" && e.apiRole === null && !e.discarded) {
+        hasIncompleteArgs = true;
+      }
+      if (e.type === "tool_result") {
+        const interrupt = (e.meta as Record<string, unknown>)["interrupt"] as Record<string, unknown> | undefined;
+        if (interrupt?.["partialEffectsPossible"] === true) {
+          hasPartialEffects = true;
+        }
+        if (interrupt?.["incompleteArguments"] === true) {
+          hasIncompleteArgs = true;
+        }
+      }
+      // Legacy string matching for log entries created before structured interrupt metadata.
       if (e.type === "tool_result" && typeof e.display === "string") {
         if (e.display.includes("may have had partial effects")) {
           hasPartialEffects = true;
@@ -5140,8 +5177,10 @@ export class Session {
       if (resolvedToolCallIds.has(tc.id)) continue;
       if (!tc.id) continue;
       let detail: string;
+      const executionInterrupted = tc.execState === "running";
+      const partialEffectsPossible = executionInterrupted && this._toolMayHavePartialEffects(tc.name);
       if (tc.execState === "running") {
-        detail = LONG_RUNNING_TOOLS.has(tc.name)
+        detail = partialEffectsPossible
           ? "Tool execution was interrupted and may have had partial effects."
           : "Tool execution was interrupted.";
       } else {
@@ -5158,7 +5197,16 @@ export class Session {
           content,
           toolSummary: detail,
         },
-        { isError: false, contextId: tc.contextId, previewText: detail, previewDim: true },
+        {
+          isError: false,
+          contextId: tc.contextId,
+          interrupt: {
+            kind: executionInterrupted ? "execution_interrupted" : "not_started",
+            partialEffectsPossible,
+          },
+          previewText: detail,
+          previewDim: true,
+        },
       ), false);
     }
   }

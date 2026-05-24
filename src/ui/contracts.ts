@@ -103,6 +103,7 @@ export interface Session {
   interruptAllChildAgents?(): void;
   hasRunningChildAgents?(): boolean;
   denyPendingAsk?(): boolean;
+  denyAndInterruptPendingAsk?(): { accepted: boolean; reason?: string; turnFinished?: boolean };
   killAllShells?(): void;
   primaryAgent: {
     name: string;

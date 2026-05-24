@@ -456,6 +456,11 @@ export function createToolResult(
     contextId?: string;
     toolMetadata?: Record<string, unknown>;
     execStartMs?: number;
+    interrupt?: {
+      kind: "not_started" | "execution_interrupted";
+      partialEffectsPossible?: boolean;
+      incompleteArguments?: boolean;
+    };
     previewText?: string;
     /** When true, TUI renders the preview in dim/gray style. */
     previewDim?: boolean;
@@ -471,6 +476,7 @@ export function createToolResult(
     meta.toolMetadata = opts.toolMetadata;
   }
   if (opts.execStartMs !== undefined) meta.execStartMs = opts.execStartMs;
+  if (opts.interrupt) meta.interrupt = opts.interrupt;
   if (opts.previewDim) meta.tuiDim = true;
   const hasDisplay = Boolean(opts.previewText) || opts.isError;
   return baseEntry(id, "tool_result", turnIndex, {

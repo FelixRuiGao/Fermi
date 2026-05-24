@@ -372,5 +372,6 @@ export const FileModifyBody = React.memo(
     && prev.colors === next.colors
     && prev.contentWidth === next.contentWidth
     && prev.streaming === next.streaming
-    && prev.maxVisibleLines === next.maxVisibleLines,
+    && prev.maxVisibleLines === next.maxVisibleLines
+    && prev.onOpenDetail === next.onOpenDetail,
 );

@@ -241,6 +241,34 @@ describe("child approval routing", () => {
     expect(root._hasActiveAgents()).toBe(false);
   });
 
+  it("denies and finalizes a child-owned pending ask as interrupted", () => {
+    const root = makeSessionLike();
+    let pendingAsk: PendingAskUi | null = makePendingApproval();
+    const child = makeChildSession({ pendingAsk: null, lastTurnEndStatus: null });
+    child.getPendingAsk = mock(() => pendingAsk);
+    child.denyAndInterruptPendingAsk = mock(() => {
+      pendingAsk = null;
+      child.lastTurnEndStatus = "interrupted";
+      return { accepted: true };
+    });
+    const handle = makeHandle(child);
+    handle.lifecycle = "blocked";
+    handle.status = "idle";
+    handle.phase = "waiting";
+    handle.turnPromise = null;
+    handle.abortController = null;
+    root._childSessions.set("worker-1", handle);
+
+    const decision = root.denyAndInterruptPendingAsk();
+
+    expect(decision).toEqual({ accepted: true, turnFinished: false });
+    expect(child.denyAndInterruptPendingAsk).toHaveBeenCalledOnce();
+    expect(handle.lifecycle).toBe("archived");
+    expect(handle.lastOutcome).toBe("interrupted");
+    expect(root._log.some((entry: any) => entry.type === "agent_result")).toBe(true);
+    expect(root._notifyLogListeners).toHaveBeenCalled();
+  });
+
   it("rejects sends to blocked children until approval is resolved", () => {
     const root = makeSessionLike();
     const child = makeChildSession();

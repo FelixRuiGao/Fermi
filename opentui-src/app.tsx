@@ -2579,6 +2579,26 @@ export function OpenTuiApp({
     // Unified interrupt helper: deny pending ask (if any) + abort main turn.
     const performInterrupt = (): boolean => {
       if (pendingAsk) {
+        const decision = session.denyAndInterruptPendingAsk?.();
+        if (decision && !decision.accepted) {
+          showHint(`Interrupt failed: ${decision.reason ?? "unknown"}`);
+          return false;
+        }
+        if (decision?.accepted) {
+          setPendingAsk(null);
+          if (decision.turnFinished) {
+            // Root turn was ended by the session; go idle immediately.
+            abortControllerRef.current?.abort();
+            setProcessing(false);
+            setPhase("idle");
+          } else {
+            // Only a child was killed; root turn resumes — stay in working state.
+            setPhase("Working");
+          }
+          return true;
+        }
+        // Fallback: session doesn't support the combined method; deny the ask
+        // and fall through so the processing interrupt path handles the abort.
         session.denyPendingAsk?.();
         setPendingAsk(null);
       }
