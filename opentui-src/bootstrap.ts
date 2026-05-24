@@ -84,6 +84,8 @@ export interface OpenTuiRuntime {
   verbose: boolean;
   /** Persisted user preference for theme mode. main.tsx feeds this into the resolver. */
   themeModePref: "auto" | "light" | "dark";
+  /** Persisted global preference for inline write/edit diff display. */
+  diffDisplay: "compact" | "full";
 }
 
 export async function bootstrapOpenTuiRuntime(opts?: {
@@ -261,6 +263,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   registerSkillCommands(commandRegistry, session.skills);
 
   const themeModePref: "auto" | "light" | "dark" = settings.theme_mode ?? "auto";
+  const diffDisplay: "compact" | "full" = globalSettings.diff_display === "full" ? "full" : "compact";
 
   return {
     session,
@@ -268,5 +271,6 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     commandRegistry,
     verbose,
     themeModePref,
+    diffDisplay,
   };
 }

@@ -263,6 +263,7 @@ export async function launchTui(): Promise<void> {
         themeMode: currentThemeMode,
         themeModePref: currentThemeModePref,
         terminalDefaultFg: currentTerminalFg,
+        diffDisplay: runtime.diffDisplay,
       }),
     );
   };

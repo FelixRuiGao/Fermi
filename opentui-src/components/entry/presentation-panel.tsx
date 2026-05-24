@@ -37,6 +37,7 @@ function PresentationPanelInner(
     theme,
     contentWidth,
     markdownMode,
+    diffDisplayMode,
     markdownStyle,
     selectedChildId,
     showLogoInScroll,
@@ -68,6 +69,7 @@ function PresentationPanelInner(
           theme={theme}
           contentWidth={contentWidth}
           markdownMode={markdownMode}
+          diffDisplayMode={diffDisplayMode}
           markdownStyle={markdownStyle}
           onEntryClick={onEntryClick}
           onAgentClick={onAgentClick}
@@ -84,6 +86,7 @@ export const PresentationPanel = React.memo(
     && previous.processing === next.processing
     && previous.contentWidth === next.contentWidth
     && previous.markdownMode === next.markdownMode
+    && previous.diffDisplayMode === next.diffDisplayMode
     && previous.colors === next.colors
     && previous.theme === next.theme
     && previous.markdownStyle === next.markdownStyle

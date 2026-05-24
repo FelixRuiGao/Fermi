@@ -1231,6 +1231,56 @@ async function cmdAddProvider(ctx: CommandContext): Promise<boolean> {
 }
 
 // ------------------------------------------------------------------
+// /diff — configure inline write/edit diff display
+// ------------------------------------------------------------------
+
+type DiffDisplayMode = NonNullable<FermiSettings["diff_display"]>;
+
+function normalizeDiffDisplayMode(value: unknown): DiffDisplayMode {
+  return value === "full" ? "full" : "compact";
+}
+
+function diffDisplayOptions(_ctx: CommandOptionsContext): CommandOption[] {
+  const current = normalizeDiffDisplayMode(loadGlobalSettings().diff_display);
+  const mark = (mode: DiffDisplayMode) => mode === current ? " (current)" : "";
+  return [
+    {
+      label: `Compact${mark("compact")}`,
+      value: "compact",
+      detail: "Short previews",
+    },
+    {
+      label: `Full${mark("full")}`,
+      value: "full",
+      detail: "Expand inline",
+    },
+  ];
+}
+
+async function cmdDiff(ctx: CommandContext, args: string): Promise<void> {
+  const hint = ctx.showHint ?? ctx.showMessage;
+  let choice = args.trim().toLowerCase();
+
+  if (!choice && ctx.promptCommandPicker) {
+    const picked = await ctx.promptCommandPicker(
+      diffDisplayOptions({ session: ctx.session, store: ctx.store }),
+    );
+    if (!picked) return;
+    choice = picked;
+  }
+
+  if (choice === "compact" || choice === "full") {
+    persistSettingsPatch({ diff_display: choice }, ctx.fermiHomeDir);
+    ctx.showMessage(`__diff_display__:${choice}`);
+    hint(`Diff display: ${choice}`);
+    return;
+  }
+
+  const current = normalizeDiffDisplayMode(loadGlobalSettings(ctx.fermiHomeDir).diff_display);
+  ctx.showMessage(`Diff display is "${current}".\nUsage: /diff compact | full`);
+}
+
+// ------------------------------------------------------------------
 // /autoupdate — toggle automatic update checks
 // ------------------------------------------------------------------
 
@@ -1687,6 +1737,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/copy", description: "Copy the agent's most recent text response", handler: cmdCopy });
   registry.register({ name: "/fork", description: "Fork the current session into a new branch", handler: cmdFork });
   registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme, options: themeModeOptions });
+  registry.register({ name: "/diff", description: "Set write/edit diff display (compact / full)", handler: cmdDiff, options: diffDisplayOptions, pickerTitle: "Diff Display" });
   registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate, options: autoUpdateOptions });
   return registry;
 }

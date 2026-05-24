@@ -16,6 +16,7 @@ export interface PresentationEntryItemProps {
   theme: DisplayTheme;
   contentWidth: number;
   markdownMode: "rendered" | "raw";
+  diffDisplayMode: "compact" | "full";
   markdownStyle: SyntaxStyle;
   onEntryClick?: (entry: PresentationEntry) => void;
   onAgentClick?: (agentId: string) => void;
@@ -27,6 +28,7 @@ export interface PresentationPanelProps {
   theme: DisplayTheme;
   contentWidth: number;
   markdownMode: "rendered" | "raw";
+  diffDisplayMode: "compact" | "full";
   markdownStyle: SyntaxStyle;
   processing: boolean;
   selectedChildId: string | null;

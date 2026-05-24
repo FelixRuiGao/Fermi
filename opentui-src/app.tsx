@@ -137,6 +137,8 @@ export interface OpenTuiAppProps {
   themeMode: ThemeMode;
   /** User's theme preference. "auto" means follow live terminal theme_mode events. */
   themeModePref: "auto" | ThemeMode;
+  /** Global write/edit diff display preference. */
+  diffDisplay: "compact" | "full";
   /**
    * Terminal's default foreground (OSC 10 query at startup). Used as body
    * text colour when the user is in auto mode so the TUI matches their
@@ -256,12 +258,14 @@ export function OpenTuiApp({
   themeMode: initialThemeMode,
   themeModePref: initialThemeModePref,
   terminalDefaultFg: initialTerminalFg = null,
+  diffDisplay: initialDiffDisplay,
 }: OpenTuiAppProps): React.ReactNode {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [themeModePref, setThemeModePref] = useState<"auto" | ThemeMode>(initialThemeModePref);
   const [terminalFg, setTerminalFg] = useState<string | null>(initialTerminalFg);
+  const [diffDisplayMode, setDiffDisplayMode] = useState<"compact" | "full">(initialDiffDisplay);
   const theme = useMemo<DisplayTheme>(() => {
     // Only apply the terminal-fg override in auto mode. When the user pins a
     // mode (FERMI_THEME=dark|light or /theme), assume they want the canonical
@@ -1457,6 +1461,11 @@ export function OpenTuiApp({
             const oscMode = renderer.themeMode;
             if (oscMode === "light" || oscMode === "dark") setThemeMode(oscMode);
           }
+          return;
+        }
+        if (message.startsWith("__diff_display__:")) {
+          const value = message.slice("__diff_display__:".length);
+          setDiffDisplayMode(value === "full" ? "full" : "compact");
           return;
         }
         if (message === "__help_panel__") {
@@ -2904,6 +2913,7 @@ export function OpenTuiApp({
       presentationEntries={effectiveEntries}
       processing={effectiveProcessing}
       markdownMode={markdownMode}
+      diffDisplayMode={diffDisplayMode}
       mainScrollRef={mainScrollRef}
       detailScrollRef={detailScrollRef}
       selectedChildId={selectedChildId}

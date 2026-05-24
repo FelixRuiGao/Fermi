@@ -526,6 +526,8 @@ export interface FermiSettings {
   accent_color?: string;
   /** Theme mode: "auto" (follow terminal) | "light" | "dark". Default: "auto". */
   theme_mode?: "auto" | "light" | "dark";
+  /** Inline write/edit diff display mode. Default: "compact". */
+  diff_display?: "compact" | "full";
 
   // -- Permissions --
   /** Default permission mode: "read_only" | "reversible" | "yolo". */
@@ -1373,6 +1375,7 @@ export function saveSettings(settings: FermiSettings, filePath: string): void {
   if (settings.providers !== undefined) clean.providers = settings.providers;
   if (settings.accent_color !== undefined) clean.accent_color = settings.accent_color;
   if (settings.theme_mode !== undefined) clean.theme_mode = settings.theme_mode;
+  if (settings.diff_display !== undefined) clean.diff_display = settings.diff_display;
   if (settings.permission_mode !== undefined) clean.permission_mode = settings.permission_mode;
   if (settings.disabled_skills !== undefined) clean.disabled_skills = settings.disabled_skills;
   if (settings.mcp_servers !== undefined) clean.mcp_servers = settings.mcp_servers;

@@ -116,12 +116,13 @@ interface ToolOperationEntryProps {
   colors: ConversationPalette;
   theme: DisplayTheme;
   contentWidth: number;
+  diffDisplayMode: "compact" | "full";
   onEntryClick?: (entry: PresentationEntry) => void;
   onAgentClick?: (agentId: string) => void;
 }
 
 function ToolOperationEntryInner(
-  { entry, colors, theme, contentWidth, onEntryClick, onAgentClick }: ToolOperationEntryProps,
+  { entry, colors, theme, contentWidth, diffDisplayMode, onEntryClick, onAgentClick }: ToolOperationEntryProps,
 ): React.ReactNode {
   const active = entry.state === "active";
 
@@ -227,6 +228,7 @@ function ToolOperationEntryInner(
                 colors={colors}
                 contentWidth={contentWidth - 6}
                 streaming={entry.state === "active"}
+                maxVisibleLines={diffDisplayMode === "full" ? Infinity : undefined}
                 onOpenDetail={onEntryClick ? () => onEntryClick(entry) : undefined}
               />
             ) : showStreamBody ? (
@@ -272,5 +274,6 @@ export const ToolOperationEntry = React.memo(
     prev.entry === next.entry
     && prev.colors === next.colors
     && prev.theme === next.theme
-    && prev.contentWidth === next.contentWidth,
+    && prev.contentWidth === next.contentWidth
+    && prev.diffDisplayMode === next.diffDisplayMode,
 );
