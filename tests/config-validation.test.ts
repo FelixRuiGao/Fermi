@@ -76,6 +76,24 @@ describe("Config model validation", () => {
     expect(cfg.getModel("kimiCode").baseUrl).toBe("https://api.kimi.com/coding");
   });
 
+  it("applies the documented DashScope Responses base URLs for direct Qwen providers", () => {
+    const cases = [
+      ["qwenChina", "qwen", "https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"],
+      ["qwenIntl", "qwen-intl", "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"],
+      ["qwenUs", "qwen-us", "https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"],
+    ] as const;
+
+    for (const [name, provider, baseUrl] of cases) {
+      const cfg = makeConfigWithRaw(name, {
+        provider,
+        model: "qwen3.7-max",
+        api_key: "sk-test",
+      });
+
+      expect(cfg.getModel(name).baseUrl).toBe(baseUrl);
+    }
+  });
+
   it("treats Kimi as Anthropic transport with non-encrypted thinking", () => {
     const cfg = makeConfigWithRaw("kimiGlobal", {
       provider: "kimi",
@@ -85,6 +103,18 @@ describe("Config model validation", () => {
 
     const model = cfg.getModel("kimiGlobal");
     expect(model.transportProtocol).toBe("anthropic");
+    expect(model.thinkingEncryption).toBe("none");
+  });
+
+  it("treats Qwen as Responses transport with non-encrypted thinking", () => {
+    const cfg = makeConfigWithRaw("qwenIntl", {
+      provider: "qwen-intl",
+      model: "qwen3.6-plus",
+      api_key: "sk-test",
+    });
+
+    const model = cfg.getModel("qwenIntl");
+    expect(model.transportProtocol).toBe("responses");
     expect(model.thinkingEncryption).toBe("none");
   });
 

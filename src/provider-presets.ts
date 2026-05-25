@@ -42,6 +42,11 @@ const KIMI_MODELS = [
   { key: "kimi-k2-instruct", id: "kimi-k2-instruct", label: "Kimi K2 Instruct" },
 ] satisfies ProviderPresetModel[];
 
+const QWEN_MODELS = [
+  { key: "qwen3.6-plus", id: "qwen3.6-plus", label: "Qwen3.6 Plus" },
+  { key: "qwen3.7-max", id: "qwen3.7-max", label: "Qwen3.7 Max" },
+] satisfies ProviderPresetModel[];
+
 const GLM_MODELS = [
   { key: "glm-5.1", id: "glm-5.1", label: "GLM-5.1" },
   { key: "glm-5", id: "glm-5", label: "GLM-5" },
@@ -169,6 +174,22 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
         config: { store: false, supports_web_search: false } },
     ],
   },
+  // ── Qwen / DashScope — three-level: group → region → model ──
+  {
+    id: "qwen", name: "Qwen / DashScope (China)", envVar: getManagedCredentialEnvVar("qwen")!,
+    group: "qwen", groupLabel: "Qwen", subLabel: "Qwen-China",
+    models: QWEN_MODELS,
+  },
+  {
+    id: "qwen-intl", name: "Qwen / DashScope (Singapore)", envVar: getManagedCredentialEnvVar("qwen-intl")!,
+    group: "qwen", groupLabel: "Qwen", subLabel: "Qwen-Intl",
+    models: QWEN_MODELS,
+  },
+  {
+    id: "qwen-us", name: "Qwen / DashScope (US)", envVar: getManagedCredentialEnvVar("qwen-us")!,
+    group: "qwen", groupLabel: "Qwen", subLabel: "Qwen-US",
+    models: QWEN_MODELS,
+  },
   // ── Moonshot (Kimi) — three-level: group → region/plan → model ──
   {
     id: "kimi", name: "Moonshot (Kimi) Global", envVar: getManagedCredentialEnvVar("kimi")!,
@@ -289,6 +310,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { key: "openai/gpt-5.3-codex", id: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
       { key: "openai/gpt-5.4", id: "openai/gpt-5.4", label: "GPT-5.4" },
       { key: "openai/gpt-5.5", id: "openai/gpt-5.5", label: "GPT-5.5" },
+      // Qwen
+      { key: "qwen/qwen3.6-plus", id: "qwen/qwen3.6-plus", label: "Qwen3.6 Plus" },
+      { key: "qwen/qwen3.7-max", id: "qwen/qwen3.7-max", label: "Qwen3.7 Max" },
       // DeepSeek
       { key: "deepseek/deepseek-v4-flash", id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
       { key: "deepseek/deepseek-v4-pro", id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro" },

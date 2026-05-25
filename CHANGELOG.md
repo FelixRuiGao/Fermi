@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Providers / model picker: added native Qwen / DashScope support on the OpenAI-compatible Responses path with three managed regional endpoints (`qwen` China, `qwen-intl` Singapore, `qwen-us` Virginia), plus OpenRouter presets for `qwen/qwen3.6-plus` and `qwen/qwen3.7-max`. Qwen direct defaults now use DashScope's documented Responses base URLs under `/api/v2/apps/protocols/compatible-mode/v1`; request shaping uses DashScope Responses controls (`enable_thinking` and built-in `{ type: "web_search" }`), replays prior plaintext thinking as Responses `reasoning` items, captures streamed `web_search_call` sources as citations, routes detected `DASHSCOPE_*` / `QWEN_*` keys through the managed import flow before treating the provider as configured, capability tables know the two models (1M context, thinking, Qwen3.6 Plus multimodal), and TUI model labels/vendor buckets render them with beautified `Qwen` names instead of raw ids.
+
 ## v0.3.3
 
 - TUI: added `/diff` to choose write/edit diff display. Compact remains the default; Full persists globally and expands file-modify blocks inline instead of showing the earlier-lines fold prompt.

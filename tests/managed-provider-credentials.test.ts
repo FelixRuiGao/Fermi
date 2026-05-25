@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Config } from "../src/config.js";
+import { detectManagedCredentialCandidates } from "../src/managed-provider-credentials.js";
 
 const ENV_VARS = [
+  "DASHSCOPE_API_KEY",
+  "QWEN_API_KEY",
+  "FERMI_QWEN_API_KEY",
+  "FERMI_QWEN_INTL_API_KEY",
+  "FERMI_QWEN_US_API_KEY",
   "FERMI_GLM_API_KEY",
   "FERMI_GLM_INTL_API_KEY",
   "FERMI_GLM_CODE_API_KEY",
@@ -52,5 +58,30 @@ describe("managed provider credentials", () => {
 
     expect(cfg.modelNames).toContain("glm:glm-5");
     expect(cfg.modelNames).not.toContain("glm-code:glm-5");
+  });
+
+  it("keeps Qwen regional credentials scoped to the configured endpoint", () => {
+    process.env["FERMI_QWEN_US_API_KEY"] = "qwen-us-secret";
+
+    const cfg = new Config({});
+
+    expect(cfg.modelNames).toContain("qwen-us:qwen3.6-plus");
+    expect(cfg.modelNames).toContain("qwen-us:qwen3.7-max");
+    expect(cfg.modelNames).not.toContain("qwen:qwen3.6-plus");
+    expect(cfg.modelNames).not.toContain("qwen-intl:qwen3.6-plus");
+    expect(cfg.getModel("qwen-us:qwen3.6-plus").apiKey).toBe("qwen-us-secret");
+  });
+
+  it("treats external Qwen keys as import candidates, not runtime credentials", () => {
+    process.env["DASHSCOPE_API_KEY"] = "qwen-external-secret";
+
+    expect(detectManagedCredentialCandidates("qwen")).toEqual([
+      { envVar: "DASHSCOPE_API_KEY", value: "qwen-external-secret" },
+    ]);
+
+    const cfg = new Config({});
+
+    expect(cfg.modelNames).not.toContain("qwen:qwen3.6-plus");
+    expect(cfg.modelNames).not.toContain("qwen:qwen3.7-max");
   });
 });

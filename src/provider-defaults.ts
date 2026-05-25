@@ -13,6 +13,10 @@ export const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
   "omlx": "http://localhost:8000/v1",
   "lmstudio": "http://localhost:1234/v1",
   "openai-codex": "https://chatgpt.com/backend-api/codex",
+  // Qwen / DashScope — OpenAI-compatible Responses
+  "qwen": "https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
+  "qwen-intl": "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
+  "qwen-us": "https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
   // Kimi / Moonshot — Anthropic protocol
   "kimi": "https://api.moonshot.ai/anthropic",
   "kimi-cn": "https://api.moonshot.cn/anthropic",

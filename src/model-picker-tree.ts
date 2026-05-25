@@ -52,7 +52,7 @@ export interface ModelPickerTreeContext {
   includeLocalDiscoverActions?: boolean;
 }
 
-const OPENROUTER_VENDOR_ORDER = ["anthropic", "openai", "moonshotai", "minimax", "z-ai"];
+const OPENROUTER_VENDOR_ORDER = ["anthropic", "openai", "qwen", "moonshotai", "minimax", "z-ai"];
 
 function modelCredentialInfo(providerId: string, providerHasKey: Map<string, boolean>): {
   credentialState: ModelCredentialState;

@@ -28,7 +28,6 @@ import {
   loadGlobalSettings,
 } from "./persistence.js";
 import {
-  detectManagedCredentialCandidates,
   hasAnyManagedCredential,
   hasManagedCredential,
   isManagedProvider,
@@ -107,7 +106,7 @@ function isProviderConfigured(preset: ProviderPreset, configuredProviders: Map<s
   if (configuredProviders.has(preset.id)) return true;
   if (preset.localServer) return false;
   if (isManagedProvider(preset.id)) {
-    return hasManagedCredential(preset.id) || detectManagedCredentialCandidates(preset.id).length > 0;
+    return hasManagedCredential(preset.id);
   }
   return Boolean(process.env[preset.envVar]);
 }
@@ -174,7 +173,7 @@ function createInitialWizardProviders(): Map<string, ProviderEntry> {
   for (const preset of PROVIDER_PRESETS) {
     if (preset.localServer) continue;
     if (isManagedProvider(preset.id)) {
-      if (hasManagedCredential(preset.id) || detectManagedCredentialCandidates(preset.id).length > 0) {
+      if (hasManagedCredential(preset.id)) {
         providers.set(preset.id, { api_key_env: preset.envVar });
       }
       continue;

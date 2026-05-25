@@ -7,6 +7,7 @@ import type { BaseProvider } from "./base.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAIResponsesProvider } from "./openai-responses.js";
 import { OpenAIChatProvider } from "./openai-chat.js";
+import { QwenResponsesProvider } from "./qwen-responses.js";
 import { GLMProvider } from "./glm.js";
 import { OpenRouterProvider } from "./openrouter.js";
 import { CopilotProvider } from "./copilot.js";
@@ -40,6 +41,10 @@ export function createProvider(config: ModelConfig): BaseProvider {
     return new OpenAIChatProvider(config);
   }
 
+  if (provider === "qwen" || provider === "qwen-intl" || provider === "qwen-us") {
+    return new QwenResponsesProvider(config);
+  }
+
   // Kimi / Moonshot — migrated to Anthropic protocol (2026-05).
   if (provider === "kimi-cn" || provider === "kimi-ai" || provider === "kimi" || provider === "kimi-code") {
     return new KimiAnthropicProvider(config);
@@ -71,6 +76,7 @@ export function createProvider(config: ModelConfig): BaseProvider {
   throw new Error(
     `Unknown provider '${config.provider}'. ` +
       "Supported: anthropic, openai, openai-codex, copilot, openai-chat, ollama, omlx, lmstudio, " +
+      "qwen, qwen-intl, qwen-us, " +
       "kimi, kimi-cn, kimi-ai, kimi-code, " +
       "glm, glm-intl, glm-code, glm-intl-code, minimax, minimax-cn, " +
       "deepseek, xiaomi, openrouter",

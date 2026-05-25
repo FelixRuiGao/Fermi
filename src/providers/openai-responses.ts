@@ -250,6 +250,8 @@ export class OpenAIResponsesProvider extends BaseProvider {
             ? this._sanitizeStatelessRoundtripItems(transmission.payload)
             : (transmission.payload as Record<string, unknown>[]);
           items.push(...roundtripItems);
+        } else if (transmission?.kind === "plain") {
+          items.push(...this._plainThinkingInputItems(transmission.plainReplayText, m));
         }
 
         if (m["tool_calls"]) {
@@ -375,6 +377,8 @@ export class OpenAIResponsesProvider extends BaseProvider {
             parseError: null,
           });
         }
+      } else if (itemType === "web_search_call") {
+        this._appendWebSearchCallCitations(item, citations);
       }
     }
 
@@ -427,7 +431,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
   // Thinking / reasoning params
   // ------------------------------------------------------------------
 
-  private _applyThinkingParams(kwargs: Record<string, unknown>, options?: SendMessageOptions): void {
+  protected _applyThinkingParams(kwargs: Record<string, unknown>, options?: SendMessageOptions): void {
     if (!this._config.supportsThinking) return;
 
     const level = options?.thinkingLevel;
@@ -452,6 +456,66 @@ export class OpenAIResponsesProvider extends BaseProvider {
       }
     }
     kwargs["reasoning"] = { effort, summary: "auto" };
+  }
+
+  protected _nativeWebSearchTool(): Record<string, unknown> {
+    return { type: "web_search_preview" };
+  }
+
+  protected _supportsMaxOutputTokens(): boolean {
+    return true;
+  }
+
+  protected _supportsPromptCacheKey(): boolean {
+    return true;
+  }
+
+  protected _forceStream(_options?: SendMessageOptions): boolean {
+    return false;
+  }
+
+  protected _plainThinkingInputItems(
+    _plainReplayText: string,
+    _message: Record<string, unknown>,
+  ): Record<string, unknown>[] {
+    return [];
+  }
+
+  private _appendWebSearchCallCitations(
+    item: Record<string, unknown> | undefined,
+    citations: Citation[],
+  ): void {
+    if (!item || item["type"] !== "web_search_call") return;
+
+    const action = item["action"] as Record<string, unknown> | undefined;
+    const query = typeof action?.["query"] === "string" ? action["query"] : "";
+    const sources = action?.["sources"] as Record<string, unknown>[] | undefined;
+    if (!Array.isArray(sources)) return;
+
+    for (const source of sources) {
+      const url = typeof source["url"] === "string" ? source["url"] : "";
+      if (!url) continue;
+      this._appendUniqueCitation(citations, {
+        url,
+        title: typeof source["title"] === "string" ? source["title"] : "",
+        citedText: query || undefined,
+      });
+    }
+  }
+
+  private _appendUniqueCitation(citations: Citation[], citation: Citation): void {
+    const exists = citations.some((existing) =>
+      existing.url === citation.url
+      && existing.title === citation.title
+      && existing.citedText === citation.citedText
+    );
+    if (!exists) citations.push(citation);
+  }
+
+  private _mergeCitations(target: Citation[], source: Citation[]): void {
+    for (const citation of source) {
+      this._appendUniqueCitation(target, citation);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -506,14 +570,14 @@ export class OpenAIResponsesProvider extends BaseProvider {
       }
     }
 
-    if (!isCodex && (options?.maxTokens || this._config.maxTokens)) {
+    if (!isCodex && this._supportsMaxOutputTokens() && (options?.maxTokens || this._config.maxTokens)) {
       kwargs["max_output_tokens"] = options?.maxTokens || this._config.maxTokens;
     }
 
     if (tools && tools.length > 0) {
       const { toolsList, hasNativeWebSearch } = this._convertTools(tools);
       if (hasNativeWebSearch) {
-        toolsList.push({ type: "web_search_preview" });
+        toolsList.push(this._nativeWebSearchTool());
       }
       if (toolsList.length > 0) {
         kwargs["tools"] = toolsList;
@@ -527,7 +591,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
     this._ensureStatelessInclude(kwargs);
 
     // Prompt cache optimization
-    if (options?.promptCacheKey) {
+    if (this._supportsPromptCacheKey() && options?.promptCacheKey) {
       kwargs["prompt_cache_key"] = options.promptCacheKey;
     }
     // prompt_cache_retention: stateless backends (Codex, Copilot) reject it — they
@@ -537,7 +601,13 @@ export class OpenAIResponsesProvider extends BaseProvider {
     }
 
     // Codex backend requires stream=true for all requests.
-    if (options?.onTextChunk || options?.onReasoningChunk || options?.onToolCallPartial || this._config.provider === "openai-codex") {
+    if (
+      options?.onTextChunk
+      || options?.onReasoningChunk
+      || options?.onToolCallPartial
+      || this._config.provider === "openai-codex"
+      || this._forceStream(options)
+    ) {
       return this._callStream(
         kwargs,
         requestOptions,
@@ -578,6 +648,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
     const toolAcc: Map<string, StreamToolAcc> = new Map();
     const itemIdToCallId: Map<string, string> = new Map();
     const outputIndexToCallId: Map<number, string> = new Map();
+    const streamCitations: Citation[] = [];
     let activeFunctionCallId: string | null = null;
     let finalResponse: Record<string, unknown> | null = null;
 
@@ -732,6 +803,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
             }
           }
         }
+        this._appendWebSearchCallCitations(item, streamCitations);
       } else if (
         eventType === "response.output_item.done"
         || eventType === "response.output_item.completed"
@@ -748,6 +820,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
             : (acc?.rawArguments ?? "");
           closeToolCall(acc?.callId ?? (callId || itemId || activeFunctionCallId), argsStr);
         }
+        this._appendWebSearchCallCitations(item, streamCitations);
       } else if (
         eventType === "response.function_call_arguments.done"
         || eventType === "response.function_call.done"
@@ -790,7 +863,10 @@ export class OpenAIResponsesProvider extends BaseProvider {
           );
         }
       }
-      result.toolCalls = [];
+      this._mergeCitations(result.citations, streamCitations);
+      if (onToolCallClosed) {
+        result.toolCalls = [];
+      }
       return result;
     }
 
@@ -804,6 +880,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
       reasoningContent: reasoningText,
       reasoningState: reasoningText || null,
       thinkingArtifact: this._buildThinkingArtifact(reasoningText, reasoningText || null),
+      citations: streamCitations,
     });
   }
 }

@@ -12,6 +12,9 @@ export interface ManagedProviderCredentialSpec {
 }
 
 export const MANAGED_PROVIDER_CREDENTIAL_SPECS: ManagedProviderCredentialSpec[] = [
+  { providerId: "qwen", internalEnvVar: "FERMI_QWEN_API_KEY", externalEnvVars: ["DASHSCOPE_API_KEY", "QWEN_API_KEY"] },
+  { providerId: "qwen-intl", internalEnvVar: "FERMI_QWEN_INTL_API_KEY", externalEnvVars: ["DASHSCOPE_INTL_API_KEY", "QWEN_INTL_API_KEY"] },
+  { providerId: "qwen-us", internalEnvVar: "FERMI_QWEN_US_API_KEY", externalEnvVars: ["DASHSCOPE_US_API_KEY", "QWEN_US_API_KEY"] },
   { providerId: "glm", internalEnvVar: "FERMI_GLM_API_KEY", externalEnvVars: ["GLM_API_KEY"] },
   { providerId: "glm-intl", internalEnvVar: "FERMI_GLM_INTL_API_KEY", externalEnvVars: ["GLM_INTL_API_KEY"] },
   { providerId: "glm-code", internalEnvVar: "FERMI_GLM_CODE_API_KEY", externalEnvVars: ["GLM_CODE_API_KEY"] },

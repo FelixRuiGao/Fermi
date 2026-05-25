@@ -106,6 +106,9 @@ export const KNOWN_CONTEXT_LENGTHS: Record<string, number> = {
   "claude-opus-4.6": 200_000,
   "claude-sonnet-4.6": 200_000,
   "claude-opus-4.7": 1_000_000,
+  // Qwen / DashScope
+  "qwen3.6-plus": 1_000_000,
+  "qwen3.7-max": 1_000_000,
   // Kimi
   "kimi-k2.6": 256_000,
   "kimi-k2.5": 256_000,
@@ -143,6 +146,8 @@ export const KNOWN_MULTIMODAL_MODELS: Set<string> = new Set([
   "claude-opus-4-7",
   "claude-haiku-4.5", "claude-opus-4.6", "claude-sonnet-4.6",
   "claude-opus-4.7",
+  // Qwen
+  "qwen3.6-plus",
   // GLM (Zhipu AI) — vision
   "glm-5v-turbo",
   // Kimi
@@ -163,6 +168,8 @@ export const KNOWN_THINKING_MODELS: Set<string> = new Set([
   "claude-opus-4-7",
   "claude-haiku-4.5", "claude-opus-4.6", "claude-sonnet-4.6",
   "claude-opus-4.7",
+  // Qwen
+  "qwen3.6-plus", "qwen3.7-max",
   // Kimi
   "kimi-k2.6", "kimi-k2.5",
   // GLM
@@ -232,6 +239,9 @@ export const KNOWN_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "claude-opus-4.6": 128_000,
   "claude-sonnet-4.6": 64_000,
   "claude-opus-4.7": 128_000,
+  // Qwen
+  "qwen3.6-plus": 65_536,
+  "qwen3.7-max": 65_536,
   // Kimi
   "kimi-k2.6": 65_536,
   "kimi-k2.5": 65_536,
@@ -292,6 +302,9 @@ export const KNOWN_THINKING_LEVELS: Record<string, string[]> = {
   "claude-haiku-4-5": ["off", "low", "medium", "high"],
   "claude-haiku-4.5": ["off", "low", "medium", "high"],
   "claude-opus-4-5-20251101":   ["off", "low", "medium", "high"],
+  // Qwen
+  "qwen3.6-plus": ["off", "on"],
+  "qwen3.7-max": ["off", "on"],
   // GLM
   "glm-5.1": ["off", "on"], "glm-5": ["off", "on"], "glm-5-turbo": ["off", "on"], "glm-5v-turbo": ["off", "on"],
   "glm-4.7": ["off", "on"], "glm-4.7-flash": ["off", "on"],

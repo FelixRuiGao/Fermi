@@ -18,6 +18,7 @@ describe("normalizeModelId", () => {
     expect(normalizeModelId("anthropic/claude-haiku-4.5")).toBe("claude-haiku-4.5");
     expect(normalizeModelId("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-4.6");
     expect(normalizeModelId("openai/gpt-5.2")).toBe("gpt-5.2");
+    expect(normalizeModelId("qwen/qwen3.6-plus")).toBe("qwen3.6-plus");
     expect(normalizeModelId("moonshotai/kimi-k2.5")).toBe("kimi-k2.5");
     expect(normalizeModelId("minimax/minimax-m2.5")).toBe("minimax-m2.5");
   });
@@ -36,11 +37,13 @@ describe("normalizeModelId", () => {
 describe("OpenRouter display formatting", () => {
   it("normalizes OpenRouter model names for short UI labels", () => {
     expect(formatDisplayModelName("openrouter", "moonshotai/kimi-k2.5")).toBe("openrouter/kimi-k2.5");
+    expect(formatDisplayModelName("openrouter", "qwen/qwen3.7-max")).toBe("openrouter/qwen3.7-max");
     expect(formatDisplayModelName("anthropic", "claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
   });
 
   it("formats provider-scoped labels without leaking OpenRouter vendor prefixes", () => {
     expect(formatScopedModelName("openrouter", "moonshotai/kimi-k2.5")).toBe("openrouter/kimi-k2.5");
+    expect(formatScopedModelName("openrouter", "qwen/qwen3.6-plus")).toBe("openrouter/qwen3.6-plus");
     expect(formatScopedModelName("openai", "gpt-5.2")).toBe("openai/gpt-5.2");
   });
 });
@@ -55,6 +58,8 @@ describe("getContextLength with OpenRouter model IDs", () => {
     expect(getContextLength("openai/gpt-5.4-nano")).toBe(400_000);
     expect(getContextLength("openai/gpt-5.2-codex")).toBe(400_000);
     expect(getContextLength("openai/gpt-5.3-codex")).toBe(400_000);
+    expect(getContextLength("qwen/qwen3.6-plus")).toBe(1_000_000);
+    expect(getContextLength("qwen/qwen3.7-max")).toBe(1_000_000);
     expect(getContextLength("moonshotai/kimi-k2.5")).toBe(256_000);
     expect(getContextLength("minimax/minimax-m2.5")).toBe(204_800);
   });
@@ -65,6 +70,7 @@ describe("getContextLength with OpenRouter model IDs", () => {
     expect(getContextLength("gpt-5.4")).toBe(1_050_000);
     expect(getContextLength("gpt-5.4-mini")).toBe(400_000);
     expect(getContextLength("gpt-5.4-nano")).toBe(400_000);
+    expect(getContextLength("qwen3.7-max")).toBe(1_000_000);
   });
 
   it("returns 0 for unknown models", () => {
@@ -86,10 +92,12 @@ describe("getMultimodalSupport with OpenRouter model IDs", () => {
     expect(getMultimodalSupport("openai/gpt-5.4-nano")).toBe(true);
     expect(getMultimodalSupport("openai/gpt-5.2-codex")).toBe(true);
     expect(getMultimodalSupport("openai/gpt-5.3-codex")).toBe(true);
+    expect(getMultimodalSupport("qwen/qwen3.6-plus")).toBe(true);
     expect(getMultimodalSupport("moonshotai/kimi-k2.5")).toBe(true);
   });
 
   it("returns false for non-multimodal models", () => {
+    expect(getMultimodalSupport("qwen/qwen3.7-max")).toBe(false);
     expect(getMultimodalSupport("moonshotai/kimi-k2-instruct")).toBe(false);
   });
 
@@ -109,6 +117,8 @@ describe("getThinkingSupport with OpenRouter model IDs", () => {
     expect(getThinkingSupport("openai/gpt-5.4-nano")).toBe(true);
     expect(getThinkingSupport("openai/gpt-5.2-codex")).toBe(true);
     expect(getThinkingSupport("openai/gpt-5.3-codex")).toBe(true);
+    expect(getThinkingSupport("qwen/qwen3.6-plus")).toBe(true);
+    expect(getThinkingSupport("qwen/qwen3.7-max")).toBe(true);
     expect(getThinkingSupport("minimax/minimax-m2.5")).toBe(true);
     expect(getThinkingSupport("moonshotai/kimi-k2.5")).toBe(true);
     expect(getThinkingSupport("z-ai/glm-5")).toBe(true);
@@ -157,6 +167,12 @@ describe("getThinkingLevels with OpenRouter model IDs", () => {
     expect(getThinkingLevels("openai/gpt-5.4-nano")).toEqual(
       ["none", "low", "medium", "high", "xhigh"],
     );
+    expect(getThinkingLevels("qwen/qwen3.6-plus")).toEqual(
+      ["off", "on"],
+    );
+    expect(getThinkingLevels("qwen/qwen3.7-max")).toEqual(
+      ["off", "on"],
+    );
     expect(getThinkingLevels("minimax/minimax-m2.5")).toEqual(
       ["on"],
     );
@@ -183,6 +199,8 @@ describe("getModelMaxOutputTokens", () => {
     expect(getModelMaxOutputTokens("gpt-5.2")).toBe(128_000);
     expect(getModelMaxOutputTokens("gpt-5.4-mini")).toBe(128_000);
     expect(getModelMaxOutputTokens("gpt-5.4-nano")).toBe(128_000);
+    expect(getModelMaxOutputTokens("qwen3.6-plus")).toBe(65_536);
+    expect(getModelMaxOutputTokens("qwen3.7-max")).toBe(65_536);
     expect(getModelMaxOutputTokens("MiniMax-M2.5")).toBe(196_608);
     expect(getModelMaxOutputTokens("kimi-k2.5")).toBe(65_536);
     expect(getModelMaxOutputTokens("glm-5")).toBe(128_000);
@@ -194,6 +212,8 @@ describe("getModelMaxOutputTokens", () => {
     expect(getModelMaxOutputTokens("openai/gpt-5.2")).toBe(128_000);
     expect(getModelMaxOutputTokens("openai/gpt-5.4-mini")).toBe(128_000);
     expect(getModelMaxOutputTokens("openai/gpt-5.4-nano")).toBe(128_000);
+    expect(getModelMaxOutputTokens("qwen/qwen3.6-plus")).toBe(65_536);
+    expect(getModelMaxOutputTokens("qwen/qwen3.7-max")).toBe(65_536);
     expect(getModelMaxOutputTokens("minimax/minimax-m2.5")).toBe(196_608);
     expect(getModelMaxOutputTokens("moonshotai/kimi-k2.5")).toBe(65_536);
   });

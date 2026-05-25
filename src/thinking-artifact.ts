@@ -380,6 +380,7 @@ export function resolveTransportProtocol(
   const id = provider.toLowerCase();
 
   if (id === "openai" || id === "openai-codex") return "responses";
+  if (id === "qwen" || id === "qwen-intl" || id === "qwen-us") return "responses";
   if (id === "anthropic") return "anthropic";
   if (id === "copilot") {
     return isAnthropicFamilyModel(model) ? "anthropic" : "responses";

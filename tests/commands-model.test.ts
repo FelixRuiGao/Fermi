@@ -8,6 +8,12 @@ const MODEL_TEST_ENV_VARS = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "OPENROUTER_API_KEY",
+  "QWEN_API_KEY",
+  "QWEN_INTL_API_KEY",
+  "QWEN_US_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "DASHSCOPE_INTL_API_KEY",
+  "DASHSCOPE_US_API_KEY",
   "MOONSHOT_API_KEY",
   "KIMI_API_KEY",
   "KIMI_CN_API_KEY",
@@ -21,6 +27,9 @@ const MODEL_TEST_ENV_VARS = [
   "FERMI_KIMI_API_KEY",
   "FERMI_KIMI_CN_API_KEY",
   "FERMI_KIMI_CODE_API_KEY",
+  "FERMI_QWEN_API_KEY",
+  "FERMI_QWEN_INTL_API_KEY",
+  "FERMI_QWEN_US_API_KEY",
   "FERMI_GLM_API_KEY",
   "FERMI_GLM_INTL_API_KEY",
   "FERMI_GLM_CODE_API_KEY",
@@ -95,10 +104,12 @@ describe("/model command", () => {
 
     const opts = cmd!.options!({ session });
     const anthropic = opts.find((o) => o.value === "anthropic");
+    const qwenGroup = opts.find((o) => o.value === "qwen");
     const kimiGlobal = opts.find((o) => o.value === "kimi");
     const openai = opts.find((o) => o.value === "openai");
 
     expect(anthropic).toBeTruthy();
+    expect(qwenGroup).toBeTruthy();
     expect(kimiGlobal).toBeTruthy();
     expect(openai).toBeTruthy();
     expect(anthropic!.children?.some((c) => c.label.includes("Claude Haiku 4.5"))).toBe(true);
@@ -107,6 +118,14 @@ describe("/model command", () => {
     expect(
       openai!.children?.some((c) => c.label.includes("GPT-5.2  (key missing: run fermi init)")),
     ).toBe(true);
+    const qwenChina = qwenGroup!.children?.find((o) => o.value === "qwen");
+    const qwenIntl = qwenGroup!.children?.find((o) => o.value === "qwen-intl");
+    const qwenUs = qwenGroup!.children?.find((o) => o.value === "qwen-us");
+    expect(qwenChina?.label).toBe("Qwen China");
+    expect(qwenIntl?.label).toBe("Qwen Intl");
+    expect(qwenUs?.label).toBe("Qwen US");
+    expect(qwenChina!.children?.some((c) => c.label.includes("Qwen3.6 Plus"))).toBe(true);
+    expect(qwenChina!.children?.some((c) => c.label.includes("Qwen3.7 Max"))).toBe(true);
     expect(openai!.children?.some((c) => c.label.includes("gpt-5.1"))).toBe(false);
     expect(openai!.children?.some((c) => c.label.includes("gpt-4o"))).toBe(false);
     expect(openai!.children?.some((c) => c.label.includes("GPT-5.4"))).toBe(true);
@@ -174,6 +193,7 @@ describe("/model command", () => {
     // OpenRouter children are now vendor sub-groups.
     const vendorAnthro = openrouter!.children?.find((c) => c.value === "openrouter-anthropic");
     const vendorOpenAI = openrouter!.children?.find((c) => c.value === "openrouter-openai");
+    const vendorQwen = openrouter!.children?.find((c) => c.value === "openrouter-qwen");
     const vendorKimi = openrouter!.children?.find((c) => c.value === "openrouter-moonshotai");
     const vendorMiniMax = openrouter!.children?.find((c) => c.value === "openrouter-minimax");
     const vendorGLM = openrouter!.children?.find((c) => c.value === "openrouter-z-ai");
@@ -187,6 +207,11 @@ describe("/model command", () => {
     expect(vendorOpenAI!.label).toBe("OpenAI");
     expect(vendorOpenAI!.children?.some((c) => c.label.startsWith("GPT-5.4"))).toBe(true);
     expect(vendorOpenAI!.children?.some((c) => c.label.startsWith("GPT-5.3 Codex"))).toBe(true);
+
+    expect(vendorQwen).toBeTruthy();
+    expect(vendorQwen!.label).toBe("Qwen");
+    expect(vendorQwen!.children?.some((c) => c.label.startsWith("Qwen3.6 Plus"))).toBe(true);
+    expect(vendorQwen!.children?.some((c) => c.label.startsWith("Qwen3.7 Max"))).toBe(true);
 
     expect(vendorKimi).toBeTruthy();
     expect(vendorKimi!.label).toBe("Kimi");

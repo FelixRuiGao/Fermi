@@ -169,6 +169,20 @@ describe("transport and encryption classification", () => {
       model: "openai/gpt-5.4",
     })).toBe(SEALED_SCHEMA_OPENROUTER_CHAT);
 
+    // Qwen direct: Responses transport, but thinking remains non-encrypted.
+    expect(effectiveTransportProtocol({
+      provider: "qwen-intl",
+      model: "qwen3.6-plus",
+    })).toBe("responses");
+    expect(effectiveThinkingEncryption({
+      provider: "qwen-intl",
+      model: "qwen3.6-plus",
+    })).toBe("none");
+    expect(effectiveSealedSchema({
+      provider: "qwen-intl",
+      model: "qwen3.6-plus",
+    })).toBeNull();
+
     // Anthropic direct + Copilot Anthropic share the schema (verified empirically).
     expect(resolveSealedSchema("anthropic", "claude-sonnet-4-6")).toBe(SEALED_SCHEMA_ANTHROPIC_MESSAGES);
     expect(resolveSealedSchema("copilot", "claude-sonnet-4.6")).toBe(SEALED_SCHEMA_ANTHROPIC_MESSAGES);
