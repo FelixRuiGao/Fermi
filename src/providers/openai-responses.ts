@@ -73,20 +73,26 @@ export class OpenAIResponsesProvider extends BaseProvider {
   }
 
   /**
-   * Stateless Responses backends that require `include: reasoning.encrypted_content`
-   * and sanitized reasoning round-trip items (type + summary + encrypted_content only).
+   * Responses backends we drive client-side (we never send `previous_response_id`).
+   * Reasoning is carried across turns ONLY by replaying sanitized reasoning round-trip
+   * items (type + summary + encrypted_content) together with
+   * `include: ["reasoning.encrypted_content"]` and `store: false`.
    *
    * Includes:
+   *   - openai (platform.openai.com/responses) — we manage the conversation ourselves
+   *     and never chain via previous_response_id, so server-side store=true would never
+   *     be read back; the only way to preserve the chain of thought (and the cache wins
+   *     from replaying it) is to request encrypted reasoning and echo it ourselves.
    *   - openai-codex (chatgpt.com/backend-api/codex) — rejects store=true
    *   - copilot (api.individual.githubcopilot.com/responses) — rejects store=true
    *
-   * Both backends drop echoed reasoning items that lack encrypted_content, producing
-   * 400 invalid_request_body on the follow-up turn. Verified by experiments under
-   * `experiments/copilot-probe/`.
+   * Without encrypted_content these backends drop the echoed reasoning items, losing the
+   * chain of thought (and on codex/copilot producing 400 invalid_request_body) on the
+   * follow-up turn. Verified by experiments under `experiments/copilot-probe/`.
    */
   private _isStatelessResponsesBackend(): boolean {
     const p = this._config.provider;
-    return p === "openai-codex" || p === "copilot";
+    return p === "openai" || p === "openai-codex" || p === "copilot";
   }
 
   private _buildRequestOptions(
@@ -164,6 +170,19 @@ export class OpenAIResponsesProvider extends BaseProvider {
     }
 
     return sanitized;
+  }
+
+  /**
+   * Shape captured reasoning items into the round-trip state we replay next turn.
+   * Reasoning-only: function_call items are replayed separately via `tool_calls`
+   * (see `_buildInput`), so bundling them here would duplicate them on the wire.
+   * Stateless backends get the sanitized form (encrypted_content preserved, id dropped).
+   */
+  private _reasoningRoundtripState(reasoningItems: Record<string, unknown>[]): unknown[] | null {
+    if (reasoningItems.length === 0) return null;
+    return this._isStatelessResponsesBackend()
+      ? this._sanitizeStatelessRoundtripItems(reasoningItems)
+      : reasoningItems;
   }
 
   private _buildThinkingArtifact(
@@ -399,21 +418,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
       ? reasoningTextParts.join("\n")
       : "";
 
-    let reasoningState: unknown = null;
-    if (reasoningItems.length > 0) {
-      const outputItemsForRoundtrip: unknown[] = [];
-      for (const item of output) {
-        const itemType = (item as Record<string, unknown>)["type"] as string;
-        if (itemType === "reasoning" || itemType === "function_call") {
-          outputItemsForRoundtrip.push(item);
-        }
-      }
-      if (outputItemsForRoundtrip.length > 0) {
-        reasoningState = this._isStatelessResponsesBackend()
-          ? this._sanitizeStatelessRoundtripItems(outputItemsForRoundtrip)
-          : outputItemsForRoundtrip;
-      }
-    }
+    const reasoningState = this._reasoningRoundtripState(reasoningItems as Record<string, unknown>[]);
 
     return new ProviderResponse({
       text: textParts.join("\n"),
@@ -590,6 +595,13 @@ export class OpenAIResponsesProvider extends BaseProvider {
     this._applyThinkingParams(kwargs, options);
     this._ensureStatelessInclude(kwargs);
 
+    // Client-managed conversation (no previous_response_id): force stateless so the
+    // backend relies on our replayed encrypted reasoning items rather than server state.
+    // openai defaults to store=true; codex/copilot reject store=true outright.
+    if (this._isStatelessResponsesBackend()) {
+      kwargs["store"] = false;
+    }
+
     // Prompt cache optimization
     if (this._supportsPromptCacheKey() && options?.promptCacheKey) {
       kwargs["prompt_cache_key"] = options.promptCacheKey;
@@ -649,6 +661,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
     const itemIdToCallId: Map<string, string> = new Map();
     const outputIndexToCallId: Map<number, string> = new Map();
     const streamCitations: Citation[] = [];
+    const streamedReasoningItems: Record<string, unknown>[] = [];
     let activeFunctionCallId: string | null = null;
     let finalResponse: Record<string, unknown> | null = null;
 
@@ -819,6 +832,11 @@ export class OpenAIResponsesProvider extends BaseProvider {
             ? item["arguments"] as string
             : (acc?.rawArguments ?? "");
           closeToolCall(acc?.callId ?? (callId || itemId || activeFunctionCallId), argsStr);
+        } else if (item?.["type"] === "reasoning") {
+          // Reasoning items (carrying encrypted_content) arrive here for both openai
+          // and codex. The codex backend leaves response.completed.output empty, so this
+          // is the only place the encrypted reasoning is observable — capture it now.
+          streamedReasoningItems.push(item);
         }
         this._appendWebSearchCallCitations(item, streamCitations);
       } else if (
@@ -851,7 +869,16 @@ export class OpenAIResponsesProvider extends BaseProvider {
       if (textParts.length > 0 && !result.text) {
         result.text = textParts.join("");
       }
-      if (reasoningParts.length > 0 && !result.reasoningContent) {
+      // The streamed output_item.done events are the universal source of reasoning
+      // items (with encrypted_content) for both openai and codex. Prefer them over
+      // response.completed.output, which the codex backend returns empty.
+      const streamedReasoningState = this._reasoningRoundtripState(streamedReasoningItems);
+      if (streamedReasoningState) {
+        const reasoningText = reasoningParts.join("") || result.reasoningContent || "";
+        result.reasoningContent = reasoningText;
+        result.reasoningState = streamedReasoningState;
+        result.thinkingArtifact = this._buildThinkingArtifact(reasoningText, streamedReasoningState);
+      } else if (reasoningParts.length > 0 && !result.reasoningContent) {
         result.reasoningContent = reasoningParts.join("");
         if (!result.reasoningState) {
           result.reasoningState = result.reasoningContent || null;

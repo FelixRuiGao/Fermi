@@ -123,7 +123,7 @@ describe("OpenAIResponsesProvider openai-codex request shaping", () => {
     });
   });
 
-  it("does not add codex affinity headers for normal openai responses", async () => {
+  it("openai is stateless (include + store:false) but gets no codex affinity headers", async () => {
     const { body, requestOptions } = await captureCreateCall(
       {
         provider: "openai",
@@ -134,7 +134,11 @@ describe("OpenAIResponsesProvider openai-codex request shaping", () => {
     );
 
     expect(body["prompt_cache_key"]).toBe("session-123");
-    expect(body["include"]).toBeUndefined();
+    // openai is now a client-managed stateless backend: request encrypted reasoning
+    // and force store=false so we replay the chain of thought ourselves.
+    expect(body["include"]).toEqual(["reasoning.encrypted_content"]);
+    expect(body["store"]).toBe(false);
+    // Codex affinity headers (conversation_id/session_id) remain codex-only.
     expect(requestOptions?.["headers"]).toBeUndefined();
   });
 
@@ -543,5 +547,96 @@ describe("OpenAIResponsesProvider streamed tool-call lifecycle", () => {
     );
 
     expect(resp.text).toBe("review complete");
+  });
+});
+
+describe("OpenAIResponsesProvider streamed reasoning capture", () => {
+  it("captures encrypted reasoning from output_item.done when completed.output is empty (codex)", async () => {
+    const provider = new OpenAIResponsesProvider(
+      modelConfig({ provider: "openai-codex", model: "gpt-5.4" }),
+    );
+
+    (provider as any)._client = {
+      responses: {
+        create: mock(async () =>
+          streamOf([
+            {
+              type: "response.output_item.added",
+              item: { type: "reasoning", id: "rs_1", summary: [], encrypted_content: "ENC_PARTIAL" },
+            },
+            {
+              type: "response.reasoning_summary_text.delta",
+              item_id: "rs_1",
+              summary_index: 0,
+              delta: "Let me think.",
+            },
+            {
+              type: "response.output_item.done",
+              item: {
+                type: "reasoning",
+                id: "rs_1",
+                summary: [{ type: "summary_text", text: "Let me think." }],
+                encrypted_content: "ENC_FINAL",
+              },
+            },
+            {
+              type: "response.output_item.added",
+              item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "list_dir" },
+            },
+            {
+              type: "response.function_call_arguments.delta",
+              item_id: "fc_1",
+              delta: "{\"path\":\".\"}",
+            },
+            {
+              type: "response.output_item.done",
+              item: {
+                type: "function_call",
+                id: "fc_1",
+                call_id: "call_1",
+                name: "list_dir",
+                arguments: "{\"path\":\".\"}",
+              },
+            },
+            // Codex backend returns an EMPTY completed.output — reasoning is only
+            // observable via the output_item.done events above.
+            {
+              type: "response.completed",
+              response: {
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 1, input_tokens_details: { cached_tokens: 0 } },
+              },
+            },
+          ]),
+        ),
+      },
+    };
+
+    const closed: string[] = [];
+    const resp = await provider.sendMessage(
+      [{ role: "user", content: "hi" } as any],
+      undefined,
+      { onToolCallClosed: (c) => closed.push(c.id) },
+    );
+
+    // Summary text captured from reasoning_summary_text.delta
+    expect(resp.reasoningContent).toContain("Let me think.");
+
+    // Encrypted reasoning captured into the sealed payload, using the FINAL
+    // encrypted_content from output_item.done (not the partial from .added).
+    const artifact = resp.thinkingArtifact as {
+      encryption: string;
+      sealedPayload: Array<Record<string, unknown>>;
+    } | null;
+    expect(artifact?.encryption).toBe("openai");
+    expect(artifact?.sealedPayload).toEqual([
+      { type: "reasoning", summary: [{ type: "summary_text", text: "Let me think." }], encrypted_content: "ENC_FINAL" },
+    ]);
+    // Reasoning-only: the function_call is replayed via tool_calls, not bundled here.
+    expect(artifact?.sealedPayload.some((i) => i["type"] === "function_call")).toBe(false);
+
+    // Tool call still surfaced through the streaming callback.
+    expect(closed).toEqual(["call_1"]);
+    expect(resp.toolCalls).toEqual([]);
   });
 });
