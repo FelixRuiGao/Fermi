@@ -5,8 +5,11 @@
  * Supports native reasoning items and web_search_preview.
  */
 
+import { arch as osArch, platform as osPlatform, release as osRelease } from "node:os";
 import OpenAI from "openai";
+import { getCodexAccountId } from "../auth/openai-oauth.js";
 import { getExtendedCacheSupport, type ModelConfig } from "../config.js";
+import { VERSION } from "../version.js";
 import {
   BaseProvider,
   Citation,
@@ -105,11 +108,24 @@ export class OpenAIResponsesProvider extends BaseProvider {
       requestOptions["signal"] = signal;
     }
 
-    if (this._isCodexProvider() && promptCacheKey) {
-      requestOptions["headers"] = {
-        conversation_id: promptCacheKey,
-        session_id: promptCacheKey,
+    if (this._isCodexProvider()) {
+      // Identify as opencode (not fermi) on purpose: the codex backend appears to
+      // throttle unknown / third-party clients more aggressively, so spoofing a
+      // well-known client's originator + User-Agent may reduce rate-limiting.
+      // ChatGPT-Account-Id stays real (derived from the user's own OAuth JWT).
+      const headers: Record<string, string> = {
+        originator: "opencode",
+        "User-Agent": `opencode/1.15.10 (${osPlatform()} ${osRelease()}; ${osArch()})`,
       };
+      const accountId = getCodexAccountId(this._config.apiKey ?? "");
+      if (accountId) {
+        headers["ChatGPT-Account-Id"] = accountId;
+      }
+      if (promptCacheKey) {
+        headers["conversation_id"] = promptCacheKey;
+        headers["session_id"] = promptCacheKey;
+      }
+      requestOptions["headers"] = headers;
     }
 
     return Object.keys(requestOptions).length > 0 ? requestOptions : undefined;

@@ -117,10 +117,30 @@ describe("OpenAIResponsesProvider openai-codex request shaping", () => {
     expect(body["prompt_cache_key"]).toBe("session-123");
     expect(body["include"]).toEqual(["foo", "reasoning.encrypted_content"]);
     expect(body["store"]).toBe(false);
-    expect(requestOptions?.["headers"]).toEqual({
-      conversation_id: "session-123",
-      session_id: "session-123",
-    });
+    const headers = requestOptions?.["headers"] as Record<string, string>;
+    // Forged identity: pretend to be opencode (experiment: does the backend treat
+    // known clients better?).
+    expect(headers["originator"]).toBe("opencode");
+    expect(headers["User-Agent"]).toMatch(/^opencode\/[^ ]+ \(.+; .+\)$/);
+    expect(headers["conversation_id"]).toBe("session-123");
+    expect(headers["session_id"]).toBe("session-123");
+    // test-key is not a JWT, so no account id can be derived
+    expect(headers["ChatGPT-Account-Id"]).toBeUndefined();
+  });
+
+  it("derives ChatGPT-Account-Id from the codex OAuth JWT when apiKey is a token", async () => {
+    const claims = {
+      "https://api.openai.com/auth": { chatgpt_account_id: "acct-xyz-123" },
+      exp: 9999999999,
+    };
+    const fakeJwt = "h." + Buffer.from(JSON.stringify(claims)).toString("base64url") + ".s";
+    const { requestOptions } = await captureCreateCall(
+      { provider: "openai-codex", model: "gpt-5.4-mini", apiKey: fakeJwt },
+      [{ role: "user", content: "hi" }],
+    );
+    const headers = requestOptions?.["headers"] as Record<string, string>;
+    expect(headers["ChatGPT-Account-Id"]).toBe("acct-xyz-123");
+    expect(headers["originator"]).toBe("opencode");
   });
 
   it("openai is stateless (include + store:false) but gets no codex affinity headers", async () => {

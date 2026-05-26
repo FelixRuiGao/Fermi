@@ -164,6 +164,29 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 }
 
 /**
+ * Extract the ChatGPT account id from a codex OAuth access token. ChatGPT users
+ * can belong to multiple accounts (personal / workspace / org); the codex backend
+ * uses the `ChatGPT-Account-Id` request header to pick which one bills + applies
+ * its quota. The id lives in the `chatgpt_account_id` claim, nested under either
+ * `https://api.openai.com/auth` or at the top level depending on token shape.
+ */
+export function getCodexAccountId(accessToken: string): string | undefined {
+  if (typeof accessToken !== "string" || !accessToken) return undefined;
+  const claims = decodeJwtPayload(accessToken);
+  const auth = claims["https://api.openai.com/auth"];
+  const fromAuth = (auth && typeof auth === "object")
+    ? (auth as Record<string, unknown>)["chatgpt_account_id"]
+    : undefined;
+  const fromTop = claims["chatgpt_account_id"];
+  const orgs = claims["organizations"];
+  const fromOrg = (Array.isArray(orgs) && orgs[0] && typeof orgs[0] === "object")
+    ? (orgs[0] as Record<string, unknown>)["id"]
+    : undefined;
+  const id = fromAuth ?? fromTop ?? fromOrg;
+  return typeof id === "string" && id ? id : undefined;
+}
+
+/**
  * Check whether an OAuth access token is about to expire.
  * Returns true if the token will expire within `skewSeconds` seconds,
  * or if the expiry cannot be determined.
