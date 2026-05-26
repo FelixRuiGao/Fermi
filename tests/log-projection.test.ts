@@ -110,7 +110,6 @@ describe("projectToTuiEntries", () => {
         "natural",
         12300,
         "[Agent \"reviewer-1\" failed]\nBoom",
-        "Boom",
         "c-ar-1",
       ),
     ];
@@ -119,7 +118,7 @@ describe("projectToTuiEntries", () => {
     expect(tui).toEqual([
       {
         kind: "agent_result",
-        text: "",
+        text: "[Agent \"reviewer-1\" failed]\nBoom",
         id: "ar-001",
         fullText: "[Agent \"reviewer-1\" failed]\nBoom",
         meta: {
@@ -130,7 +129,6 @@ describe("projectToTuiEntries", () => {
           outcome: "failed",
           cause: "natural",
           elapsedMs: 12300,
-          preview: "Boom",
         },
       },
     ]);
@@ -436,7 +434,6 @@ describe("projectToApiMessages", () => {
       "natural",
       1000,
       "[Agent \"worker-1\" completed]\nDone",
-      "Done",
       "agent-result-ctx",
     );
     legacyAgentResult.apiRole = "user";
@@ -507,7 +504,6 @@ describe("projectToApiMessages", () => {
         "user_targeted_kill",
         4200,
         "[Agent \"reviewer-1\" interrupted by the user]\n(no output)",
-        "",
         "c-ar-1",
       ),
     ]);

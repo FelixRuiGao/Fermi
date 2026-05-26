@@ -21,6 +21,8 @@ export interface InlineResultData {
   text: string;
   dim: boolean;
   maxLines: number;
+  /** Text is a preview of a longer full result; render a detail affordance even when preview line count fits. */
+  truncated?: boolean;
   toolMetadata?: Record<string, unknown>;
   /** When true, diff lines are rendered without red/green background (for Create/Overwrite). */
   noDiffBackground?: boolean;

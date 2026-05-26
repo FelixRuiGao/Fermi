@@ -260,7 +260,7 @@ function InlineResultInner(
       const truncated = truncateStyledText(first.content, availableWidth, dimFg);
       const wasTruncated = truncated !== first.content;
       const moreCount = artifacts.length - 1;
-      const hasMore = moreCount > 0 || wasTruncated;
+      const hasMore = moreCount > 0 || wasTruncated || data.truncated === true;
       const foldText = moreCount > 0
         ? `${LINE_PREFIX}... (${moreCount} more ${moreCount === 1 ? "line" : "lines"}${onOpenDetail ? ", CLICK to open" : ""})`
         : `${LINE_PREFIX}${FOLD_TEXT}`;
@@ -288,6 +288,10 @@ function InlineResultInner(
 
     const visibleArtifacts = artifacts.slice(0, data.maxLines);
     const artifactHiddenCount = Math.max(0, artifacts.length - data.maxLines);
+    const hasHiddenArtifacts = artifactHiddenCount > 0 || data.truncated === true;
+    const artifactFoldText = artifactHiddenCount > 0
+      ? `${LINE_PREFIX}... (${artifactHiddenCount} more lines${onOpenDetail ? ", CLICK to open" : ""})`
+      : `${LINE_PREFIX}${FOLD_TEXT}`;
 
     return (
       <box flexDirection="column" gap={0}>
@@ -305,9 +309,9 @@ function InlineResultInner(
             <text content={artifact.content} wrapMode="none" />
           </box>
         ))}
-        {artifactHiddenCount > 0 && (
+        {hasHiddenArtifacts && (
           <FoldIndicator
-            text={`${LINE_PREFIX}... (${artifactHiddenCount} more lines${onOpenDetail ? ", CLICK to open" : ""})`}
+            text={artifactFoldText}
             colors={colors}
             onClick={onOpenDetail}
           />
@@ -327,7 +331,7 @@ function InlineResultInner(
     const truncated = truncateString(firstLine, availableWidth);
     const wasTruncated = truncated !== firstLine;
     const moreCount = lines.length - 1;
-    const hasMore = moreCount > 0 || wasTruncated;
+    const hasMore = moreCount > 0 || wasTruncated || data.truncated === true;
     const foldText = moreCount > 0
       ? `${LINE_PREFIX}... (${moreCount} more ${moreCount === 1 ? "line" : "lines"}${onOpenDetail ? ", CLICK to open" : ""})`
       : `${LINE_PREFIX}${FOLD_TEXT}`;
@@ -351,6 +355,10 @@ function InlineResultInner(
 
   const visibleLines = lines.slice(0, data.maxLines);
   const hiddenCount = Math.max(0, lines.length - data.maxLines);
+  const hasHiddenLines = hiddenCount > 0 || data.truncated === true;
+  const foldText = hiddenCount > 0
+    ? `${LINE_PREFIX}... (${hiddenCount} more lines${onOpenDetail ? ", CLICK to open" : ""})`
+    : `${LINE_PREFIX}${FOLD_TEXT}`;
 
   return (
     <box flexDirection="column" gap={0}>
@@ -363,9 +371,9 @@ function InlineResultInner(
           <text fg={textColor} content={line} wrapMode="none" />
         </box>
       ))}
-      {hiddenCount > 0 && (
+      {hasHiddenLines && (
         <FoldIndicator
-          text={`${LINE_PREFIX}... (${hiddenCount} more lines${onOpenDetail ? ", CLICK to open" : ""})`}
+          text={foldText}
           colors={colors}
           onClick={onOpenDetail}
         />

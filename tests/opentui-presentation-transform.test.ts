@@ -70,13 +70,13 @@ describe("OpenTUI presentation transform", () => {
       reconciled("ar-001", {
         id: "ar-001",
         kind: "agent_result",
-        text: "",
+        text: "[Agent \"reviewer-1\" interrupted by the user]\nline 1\nline 2",
+        fullText: "[Agent \"reviewer-1\" interrupted by the user]\nline 1\nline 2",
         meta: {
           agentId: "reviewer-1",
           outcome: "interrupted",
           cause: "user_mass_interrupt",
           elapsedMs: 4200,
-          preview: "line 1\nline 2",
         },
       }),
     ];
@@ -96,13 +96,54 @@ describe("OpenTUI presentation transform", () => {
         toolInterrupted: true,
         toolAgentName: "reviewer-1",
         toolInlineResult: {
-          text: "line 1\nline 2",
+          text: "[Agent \"reviewer-1\" interrupted by the user]\nline 1\nline 2",
           dim: false,
           maxLines: 8,
         },
-        toolResultFullText: "line 1\nline 2",
+        toolResultFullText: "[Agent \"reviewer-1\" interrupted by the user]\nline 1\nline 2",
       },
     ]);
+  });
+
+  it("marks truncated agent_result previews as expandable while preserving received message text", () => {
+    const receivedMessage = Array.from(
+      { length: 12 },
+      (_, idx) => idx === 0 ? "[Agent \"docs-explorer\" completed]" : `line ${idx}`,
+    ).join("\n");
+    const preview = receivedMessage.split("\n").slice(0, 8).join("\n");
+
+    const entries: ReconciledConversationEntry[] = [
+      reconciled("ar-002", {
+        id: "ar-002",
+        kind: "agent_result",
+        text: preview,
+        fullText: receivedMessage,
+        meta: {
+          agentId: "docs-explorer",
+          outcome: "completed",
+          cause: "natural",
+          elapsedMs: 196900,
+          tuiPreviewTruncated: true,
+        },
+      }),
+    ];
+
+    const result = presentationTransform(entries, [], false, null);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: "tool_operation",
+      toolDisplayName: "Agent Complete",
+      toolText: "docs-explorer",
+      toolSuffix: "(196.9s)",
+      toolInlineResult: {
+        text: preview,
+        dim: false,
+        maxLines: 8,
+        truncated: true,
+      },
+      toolResultFullText: receivedMessage,
+    });
   });
 
   it("does not truncate ask inline previews", () => {

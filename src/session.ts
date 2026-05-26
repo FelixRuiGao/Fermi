@@ -6736,10 +6736,6 @@ export class Session {
           ? "interrupted"
           : "completed";
     const cause = handle.terminationCause ?? "natural";
-    const trimmedResult = (handle.resultText ?? "").trim();
-    const resultLines = trimmedResult ? trimmedResult.split("\n") : [];
-    const previewBody = resultLines.slice(0, 3).join("\n");
-    const preview = previewBody + (resultLines.length > 3 ? "\n..." : "");
     const agentResult = this._buildAgentResultApiContent(handle, outcome, cause);
     this._appendEntry(createAgentResult(
       this._nextLogId("agent_result"),
@@ -6751,7 +6747,6 @@ export class Session {
       cause,
       Math.round((handle.elapsed ?? 0) * 1000),
       agentResult.content,
-      preview,
       this._allocateContextId(),
       agentResult.fullOutputPath,
     ), false);

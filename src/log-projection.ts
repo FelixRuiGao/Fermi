@@ -6,6 +6,7 @@
  */
 
 import type { LogEntry, TuiDisplayKind } from "./log-entry.js";
+import { buildAgentResultTuiPreview } from "./log-entry.js";
 import type { ConversationEntry, ConversationEntryKind } from "./ui/contracts.js";
 import { mergeConsecutiveSameRole } from "./context-rendering.js";
 import { truncateSummarizeContextContent } from "./summarize-context.js";
@@ -174,12 +175,23 @@ function toConversationEntry(
   }
 
   if (entry.type === "agent_result") {
+    const fullText = typeof entry.content === "string" ? entry.content : undefined;
+    const meta = { ...(entry.meta as Record<string, unknown>) };
+    delete meta.preview; // legacy display-only preview; display/fullText are authoritative.
+
+    let text = entry.display;
+    if (!text && fullText) {
+      const preview = buildAgentResultTuiPreview(fullText);
+      text = preview.text;
+      if (preview.truncated) meta.tuiPreviewTruncated = true;
+    }
+
     return {
       kind: "agent_result",
-      text: "",
+      text,
       id: entry.id,
-      fullText: typeof entry.content === "string" ? entry.content : undefined,
-      meta: { ...(entry.meta as Record<string, unknown>) },
+      fullText,
+      meta,
     };
   }
 

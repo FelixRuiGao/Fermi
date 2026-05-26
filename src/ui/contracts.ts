@@ -210,7 +210,7 @@ export interface ConversationEntry {
   queued?: boolean;
   dim?: boolean;
   meta?: Record<string, unknown>;
-  /** Full untruncated result text (tool_result only). */
+  /** Full untruncated result text for preview/detail entries. */
   fullText?: string;
 }
 

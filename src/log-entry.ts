@@ -124,6 +124,25 @@ export interface ToolCallLogContent {
   parseError?: string | null;
 }
 
+export const AGENT_RESULT_TUI_PREVIEW_LINES = 8;
+
+export function buildAgentResultTuiPreview(
+  content: string,
+  maxLines = AGENT_RESULT_TUI_PREVIEW_LINES,
+): { text: string; truncated: boolean } {
+  if (!content) {
+    return { text: "", truncated: false };
+  }
+  const lines = content.split("\n");
+  if (lines.length <= maxLines) {
+    return { text: content, truncated: false };
+  }
+  return {
+    text: lines.slice(0, maxLines).join("\n"),
+    truncated: true,
+  };
+}
+
 // ------------------------------------------------------------------
 // ID Allocator
 // ------------------------------------------------------------------
@@ -347,10 +366,10 @@ export function createAgentResult(
   cause: "natural" | "parent_kill" | "user_targeted_kill" | "user_mass_interrupt",
   elapsedMs: number,
   content: string,
-  preview: string,
   contextId: string,
   fullOutputPath?: string,
 ): LogEntry {
+  const preview = buildAgentResultTuiPreview(content);
   const meta: Record<string, unknown> = {
     contextId,
     agentId,
@@ -359,13 +378,13 @@ export function createAgentResult(
     outcome,
     cause,
     elapsedMs,
-    preview,
   };
+  if (preview.truncated) meta.tuiPreviewTruncated = true;
   if (fullOutputPath) meta.fullOutputPath = fullOutputPath;
   return baseEntry(id, "agent_result", turnIndex, {
     tuiVisible: true,
     displayKind: "agent_result",
-    display: "",
+    display: preview.text,
     apiRole: null,
     content,
     meta,

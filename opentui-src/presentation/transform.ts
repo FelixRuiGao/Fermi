@@ -198,8 +198,9 @@ function transformAgentResult(entry: ReconciledConversationEntry): PresentationE
     : "sub-agent";
   const outcome = typeof meta.outcome === "string" ? meta.outcome : "completed";
   const elapsedMs = typeof meta.elapsedMs === "number" ? meta.elapsedMs : 0;
-  const preview = typeof meta.preview === "string" ? meta.preview.trimEnd() : "";
+  const preview = entry.entry.text;
   const fullText = entry.entry.fullText ?? preview;
+  const previewTruncated = meta.tuiPreviewTruncated === true;
 
   const state: PresentationState = outcome === "failed" ? "error" : "done";
   const elapsedStr = elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(1)}s` : "";
@@ -215,7 +216,7 @@ function transformAgentResult(entry: ReconciledConversationEntry): PresentationE
       : "";
 
   const inlineResult: InlineResultData | null = preview.length > 0
-    ? { text: preview, dim: false, maxLines: 8 }
+    ? { text: preview, dim: false, maxLines: 8, truncated: previewTruncated || undefined }
     : null;
 
   return {

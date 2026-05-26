@@ -149,14 +149,13 @@ describe("Factory functions", () => {
       "user_mass_interrupt",
       4200,
       "[Agent \"reviewer-1\" interrupted by the user]\n(no output)",
-      "",
       "c-ar-1",
       "artifacts/agent-outputs/reviewer-1.md",
     );
     expect(e.type).toBe("agent_result");
     expect(e.tuiVisible).toBe(true);
     expect(e.displayKind).toBe("agent_result");
-    expect(e.display).toBe("");
+    expect(e.display).toBe("[Agent \"reviewer-1\" interrupted by the user]\n(no output)");
     expect(e.apiRole).toBeNull();
     expect(e.meta.contextId).toBe("c-ar-1");
     expect(e.meta.agentId).toBe("reviewer-1");
@@ -166,6 +165,31 @@ describe("Factory functions", () => {
     expect(e.meta.cause).toBe("user_mass_interrupt");
     expect(e.meta.elapsedMs).toBe(4200);
     expect(e.meta.fullOutputPath).toBe("artifacts/agent-outputs/reviewer-1.md");
+  });
+
+  it("createAgentResult stores a preview derived from the delivered message", () => {
+    const content = Array.from(
+      { length: 10 },
+      (_, idx) => idx === 0 ? "[Agent \"agent-1\" completed]" : `line ${idx}`,
+    ).join("\n");
+
+    const e = createAgentResult(
+      "ar-002",
+      1,
+      "agent-1",
+      1,
+      "reviewer",
+      "completed",
+      "natural",
+      1200,
+      content,
+      "c-ar-2",
+    );
+
+    expect(e.content).toBe(content);
+    expect(e.display).toBe(content.split("\n").slice(0, 8).join("\n"));
+    expect(e.meta.tuiPreviewTruncated).toBe(true);
+    expect(e.meta.preview).toBeUndefined();
   });
 
   it("createAssistantText", () => {
@@ -383,7 +407,7 @@ describe("All entry types", () => {
       createTurnStart("ts-001", 1),
       createTurnEnd("te-001", 1, "completed", 100),
       createUserMessage("user-001", 1, "hi", "hi", "c1"),
-      createAgentResult("ar-001", 1, "agent-1", 1, "reviewer", "completed", "natural", 1200, "[Agent \"agent-1\" completed]\nok", "ok", "c-ar"),
+      createAgentResult("ar-001", 1, "agent-1", 1, "reviewer", "completed", "natural", 1200, "[Agent \"agent-1\" completed]\nok", "c-ar"),
       createAssistantText("asst-001", 1, 0, "reply", "reply"),
       createReasoning("rsn-001", 1, 0, "thinking", "thinking"),
       createToolCall("tc-001", 1, 0, "summary", { id: "1", name: "t", arguments: {} }, { toolCallId: "1", toolName: "t", agentName: "a" }),
