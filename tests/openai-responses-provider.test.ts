@@ -118,14 +118,42 @@ describe("OpenAIResponsesProvider openai-codex request shaping", () => {
     expect(body["include"]).toEqual(["foo", "reasoning.encrypted_content"]);
     expect(body["store"]).toBe(false);
     const headers = requestOptions?.["headers"] as Record<string, string>;
-    // Forged identity: pretend to be opencode (experiment: does the backend treat
-    // known clients better?).
-    expect(headers["originator"]).toBe("opencode");
-    expect(headers["User-Agent"]).toMatch(/^opencode\/[^ ]+ \(.+; .+\)$/);
-    expect(headers["conversation_id"]).toBe("session-123");
+    // Honest identity that mirrors the official Codex CLI wire contract shape.
+    expect(headers["originator"]).toBe("fermi");
+    expect(headers["User-Agent"]).toMatch(/^fermi\/[^ ]+ \(.+; .+\)$/);
+    // The CLI sends session_id but no conversation_id and no version header.
     expect(headers["session_id"]).toBe("session-123");
+    expect(headers["conversation_id"]).toBeUndefined();
+    expect(headers["version"]).toBeUndefined();
     // test-key is not a JWT, so no account id can be derived
     expect(headers["ChatGPT-Account-Id"]).toBeUndefined();
+  });
+
+  it("strips fields the Codex backend never sends even when leaked via extra", async () => {
+    const { body } = await captureCreateCall(
+      {
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        extra: {
+          temperature: 0.5,
+          top_p: 0.9,
+          max_output_tokens: 4096,
+          metadata: { foo: "bar" },
+          prompt_cache_retention: "24h",
+        },
+      },
+      [{ role: "user", content: "hi" }],
+      { promptCacheKey: "session-123" },
+    );
+
+    expect(body["temperature"]).toBeUndefined();
+    expect(body["top_p"]).toBeUndefined();
+    expect(body["max_output_tokens"]).toBeUndefined();
+    expect(body["metadata"]).toBeUndefined();
+    expect(body["prompt_cache_retention"]).toBeUndefined();
+    // Legitimate codex fields are preserved.
+    expect(body["prompt_cache_key"]).toBe("session-123");
+    expect(body["store"]).toBe(false);
   });
 
   it("derives ChatGPT-Account-Id from the codex OAuth JWT when apiKey is a token", async () => {
@@ -140,7 +168,7 @@ describe("OpenAIResponsesProvider openai-codex request shaping", () => {
     );
     const headers = requestOptions?.["headers"] as Record<string, string>;
     expect(headers["ChatGPT-Account-Id"]).toBe("acct-xyz-123");
-    expect(headers["originator"]).toBe("opencode");
+    expect(headers["originator"]).toBe("fermi");
   });
 
   it("openai is stateless (include + store:false) but gets no codex affinity headers", async () => {
@@ -158,7 +186,7 @@ describe("OpenAIResponsesProvider openai-codex request shaping", () => {
     // and force store=false so we replay the chain of thought ourselves.
     expect(body["include"]).toEqual(["reasoning.encrypted_content"]);
     expect(body["store"]).toBe(false);
-    // Codex affinity headers (conversation_id/session_id) remain codex-only.
+    // Codex affinity headers (session_id) remain codex-only.
     expect(requestOptions?.["headers"]).toBeUndefined();
   });
 

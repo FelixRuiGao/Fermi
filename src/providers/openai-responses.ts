@@ -109,20 +109,21 @@ export class OpenAIResponsesProvider extends BaseProvider {
     }
 
     if (this._isCodexProvider()) {
-      // Identify as opencode (not fermi) on purpose: the codex backend appears to
-      // throttle unknown / third-party clients more aggressively, so spoofing a
-      // well-known client's originator + User-Agent may reduce rate-limiting.
-      // ChatGPT-Account-Id stays real (derived from the user's own OAuth JWT).
+      // Mirror the official Codex CLI wire contract (codex_cli_rs): an honest
+      // originator, a `<name>/<version> (<os> <release>; <arch>)` User-Agent, the
+      // real ChatGPT-Account-Id from the user's OAuth JWT, and `session_id`
+      // carrying the prompt-cache key. The CLI embeds its version only in the
+      // User-Agent (no separate `version` header) and sends `session_id` but no
+      // `conversation_id` header, so we match that exactly.
       const headers: Record<string, string> = {
-        originator: "opencode",
-        "User-Agent": `opencode/1.15.10 (${osPlatform()} ${osRelease()}; ${osArch()})`,
+        originator: "fermi",
+        "User-Agent": `fermi/${VERSION} (${osPlatform()} ${osRelease()}; ${osArch()})`,
       };
       const accountId = getCodexAccountId(this._config.apiKey ?? "");
       if (accountId) {
         headers["ChatGPT-Account-Id"] = accountId;
       }
       if (promptCacheKey) {
-        headers["conversation_id"] = promptCacheKey;
         headers["session_id"] = promptCacheKey;
       }
       requestOptions["headers"] = headers;
@@ -626,6 +627,23 @@ export class OpenAIResponsesProvider extends BaseProvider {
     // never persist responses in the first place. Other models gated by capability table.
     if (!this._isStatelessResponsesBackend() && getExtendedCacheSupport(this._config.model)) {
       kwargs["prompt_cache_retention"] = "24h";
+    }
+
+    // The Codex backend (chatgpt.com) silently degrades — not 4xx — on fields the
+    // official Codex CLI never sends, which is one suspected source of fixed-latency
+    // slow paths (cf. openclaw #65260). Strip them last, after `extra` is merged, so
+    // nothing reintroduces them. We keep what the CLI does send (prompt_cache_key,
+    // service_tier, text, reasoning, include, store).
+    if (isCodex) {
+      for (const field of [
+        "temperature",
+        "max_output_tokens",
+        "top_p",
+        "metadata",
+        "prompt_cache_retention",
+      ]) {
+        delete kwargs[field];
+      }
     }
 
     // Codex backend requires stream=true for all requests.
