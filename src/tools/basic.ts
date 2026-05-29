@@ -42,6 +42,7 @@ import {
   truncateMiddle,
   truncateLine,
 } from "./shared.js";
+import { coercePathString } from "./arg-repair.js";
 import {
   type FileModifyDisplayData,
   type MatchInfo,
@@ -2228,6 +2229,34 @@ function optionalStringArg(
   return v;
 }
 
+/**
+ * Like `requiredStringArg` but for filesystem paths: after the type check, it
+ * unwraps the degenerate markdown auto-link some models emit into a path field
+ * (`"[notes.md](http://notes.md)"` → `"notes.md"`). Only the degenerate case
+ * is touched; genuine links are left for the path validator to reject. Apply
+ * to path/file arguments only — never to `content`, which may legitimately
+ * contain markdown links.
+ */
+function requiredPathArg(
+  toolName: string,
+  args: Record<string, unknown>,
+  key: string,
+  opts?: { nonEmpty?: boolean; maxLen?: number },
+): string {
+  return coercePathString(toolName, key, requiredStringArg(toolName, args, key, opts));
+}
+
+/** Optional-path variant of `requiredPathArg` (see its doc). */
+function optionalPathArg(
+  toolName: string,
+  args: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
+  const v = optionalStringArg(toolName, args, key, fallback);
+  return v === fallback ? v : coercePathString(toolName, key, v);
+}
+
 function optionalIntegerArg(
   toolName: string,
   args: Record<string, unknown>,
@@ -2853,7 +2882,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
     read_file: (args) => {
       try {
         const a = expectArgsObject("read_file", args);
-        const requestedPath = requiredStringArg("read_file", a, "path", { nonEmpty: true });
+        const requestedPath = requiredPathArg("read_file", a, "path", { nonEmpty: true });
         let startLine = optionalPositiveIntegerArg("read_file", a, "start_line");
         let endLine = optionalIntegerArg("read_file", a, "end_line");
         const offset = optionalPositiveIntegerArg("read_file", a, "offset");
@@ -2884,7 +2913,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
     list_dir: async (args) => {
       try {
         const a = expectArgsObject("list_dir", args);
-        const requestedPath = optionalStringArg("list_dir", a, "path", ".");
+        const requestedPath = optionalPathArg("list_dir", a, "path", ".");
         const maxDepth = optionalPositiveIntegerArg("list_dir", a, "max_depth");
         const maxEntries = optionalPositiveIntegerArg("list_dir", a, "max_entries");
         const includeHidden = a["include_hidden"] === true;
@@ -2902,7 +2931,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
     edit_file: (args) => {
       try {
         const a = expectArgsObject("edit_file", args);
-        const requestedPath = requiredStringArg("edit_file", a, "path", { nonEmpty: true });
+        const requestedPath = requiredPathArg("edit_file", a, "path", { nonEmpty: true });
         const expectedMtimeMs = optionalIntegerArg("edit_file", a, "expected_mtime_ms");
         const appendStr = optionalStringArg("edit_file", a, "append_str", "");
         const editsRaw = a.edits;
@@ -2957,7 +2986,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
     write_file: (args) => {
       try {
         const a = expectArgsObject("write_file", args);
-        const requestedPath = requiredStringArg("write_file", a, "path", { nonEmpty: true });
+        const requestedPath = requiredPathArg("write_file", a, "path", { nonEmpty: true });
         const content = requiredStringArg("write_file", a, "content");
         const expectedMtimeMs = optionalIntegerArg("write_file", a, "expected_mtime_ms");
         const filePath = scopedPath(
@@ -2976,7 +3005,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         const a = expectArgsObject("bash", args);
         const command = requiredStringArg("bash", a, "command", { nonEmpty: true, maxLen: 20_000 });
         const timeout = requiredIntegerArg("bash", a, "timeout");
-        const cwdArg = optionalStringArg("bash", a, "cwd", "");
+        const cwdArg = optionalPathArg("bash", a, "cwd", "");
         let cwd = "";
         if (cwdArg.trim()) {
           cwd = scopedPath(
@@ -3062,7 +3091,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
       try {
         const a = expectArgsObject("glob", args);
         const pattern = requiredStringArg("glob", a, "pattern", { nonEmpty: true });
-        const requestedPath = optionalStringArg("glob", a, "path", ".");
+        const requestedPath = optionalPathArg("glob", a, "path", ".");
         const limit = optionalPositiveIntegerArg("glob", a, "limit") ?? GLOB_DEFAULT_LIMIT;
         const globPath = scopedPath(
           requestedPath,
@@ -3101,7 +3130,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
           return "ERROR: Invalid arguments for grep: 'pattern' must be a string or array of strings.";
         }
 
-        const requestedPath = optionalStringArg("grep", a, "path", ".");
+        const requestedPath = optionalPathArg("grep", a, "path", ".");
         const searchPath = scopedPath(
           requestedPath,
           "search",

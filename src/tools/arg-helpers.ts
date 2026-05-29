@@ -7,6 +7,7 @@
  */
 
 import { ToolResult } from "../providers/base.js";
+import { coerceStringArray, coercePathString } from "./arg-repair.js";
 
 export function toolArgError(toolName: string, message: string): ToolResult {
   return new ToolResult({ content: `Error: invalid arguments for ${toolName}: ${message}` });
@@ -46,9 +47,19 @@ export function argRequiredStringArray(
   args: Record<string, unknown>,
   key: string,
 ): string[] | ToolResult {
-  const value = args[key];
-  if (!Array.isArray(value)) {
-    return toolArgError(toolName, `'${key}' must be an array of strings.`);
+  const raw = args[key];
+  // validate-then-repair: only attempt coercion once the as-is value fails the
+  // array check. Covers '["a","b"]' JSON strings, {} placeholders, and bare
+  // strings — the recoverable shapes open models emit. See arg-repair.ts.
+  let value: unknown[];
+  if (Array.isArray(raw)) {
+    value = raw;
+  } else {
+    const repaired = coerceStringArray(toolName, key, raw);
+    if (repaired === null) {
+      return toolArgError(toolName, `'${key}' must be an array of strings.`);
+    }
+    value = repaired;
   }
   for (let i = 0; i < value.length; i++) {
     if (typeof value[i] !== "string") {
@@ -56,6 +67,22 @@ export function argRequiredStringArray(
     }
   }
   return value as string[];
+}
+
+/**
+ * Optional path/file argument: like `argOptionalString` but unwraps the
+ * degenerate markdown auto-link some models emit into a path field
+ * (`"[notes.md](http://notes.md)"` → `"notes.md"`). Use for path arguments
+ * only — never for free-text fields, which may contain genuine markdown links.
+ */
+export function argOptionalPath(
+  toolName: string,
+  args: Record<string, unknown>,
+  key: string,
+): string | undefined | ToolResult {
+  const value = argOptionalString(toolName, args, key);
+  if (typeof value !== "string") return value;
+  return coercePathString(toolName, key, value);
 }
 
 export function argOptionalInteger(

@@ -244,7 +244,10 @@ describe("Phase 2 tool validation and grep limits", () => {
     fake._turnCount = 0;
     fake._hasActiveAgents = () => false;
 
-    const killBad = Session.prototype["_execKillAgent"].call(fake, { ids: "a" });
+    // A bare string ids:"a" is now REPAIRED to ["a"] (tool-input repair, see
+    // arg-repair.ts), so use a genuinely unrepairable value to hit the error
+    // path. Bare-string→array repair is covered in arg-repair.test.ts.
+    const killBad = Session.prototype["_execKillAgent"].call(fake, { ids: 5 });
     expect(killBad.content).toContain("invalid arguments for kill_agent");
 
     const askBad = Session.prototype["_execAsk"].call(fake, { questions: "bad" });

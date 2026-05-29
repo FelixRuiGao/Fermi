@@ -21,6 +21,7 @@ import {
   createSystemPrompt,
   createUserMessage,
   createAssistantText,
+  createReasoning,
   createToolCall,
   createToolResult,
   createCompactMarker,
@@ -249,6 +250,49 @@ describe("validateAndRepairLog", () => {
     expect(result.repaired).toBe(true);
     expect(entries[3].type).toBe("tool_result");
     expect(String((entries[3].content as any).content)).toContain("unknown real-world effects");
+  });
+
+  it("re-stamps reasoning split from its round by a stale turnIndex", () => {
+    // Bug signature: round 4's reasoning got turnIndex 6 (queued message drained
+    // mid-activation) while its tool_call/result stayed at turnIndex 5.
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("user-001", 5, "do it", "do it", "c1"),
+      createReasoning("rsn-001", 6, 4, "thinking…", "thinking…"),
+      createToolCall("tc-001", 5, 4, "bash ls", { id: "call_1", name: "bash", arguments: { command: "ls" } }, { toolCallId: "call_1", toolName: "bash", agentName: "a" }),
+      createToolResult("tr-001", 5, 4, { toolCallId: "call_1", toolName: "bash", content: "ok", toolSummary: "ls" }, { isError: false }),
+    ];
+
+    const result = validateAndRepairLog(entries);
+    expect(result.repaired).toBe(true);
+    expect(entries.find((e) => e.id === "rsn-001")!.turnIndex).toBe(5);
+    expect(result.warnings.some((w) => w.includes("rsn-001"))).toBe(true);
+  });
+
+  it("leaves a legitimate reasoning-only round untouched", () => {
+    // No action sibling under ANY turn (e.g. interrupted before tool calls) →
+    // ambiguous, must not be re-stamped.
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("user-001", 5, "do it", "do it", "c1"),
+      createReasoning("rsn-001", 6, 4, "thinking…", "thinking…"),
+    ];
+
+    const result = validateAndRepairLog(entries);
+    expect(entries.find((e) => e.id === "rsn-001")!.turnIndex).toBe(6);
+  });
+
+  it("does not touch reasoning that already has its own round's action", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("user-001", 5, "do it", "do it", "c1"),
+      createReasoning("rsn-001", 5, 4, "thinking…", "thinking…"),
+      createToolCall("tc-001", 5, 4, "bash ls", { id: "call_1", name: "bash", arguments: { command: "ls" } }, { toolCallId: "call_1", toolName: "bash", agentName: "a" }),
+      createToolResult("tr-001", 5, 4, { toolCallId: "call_1", toolName: "bash", content: "ok", toolSummary: "ls" }, { isError: false }),
+    ];
+
+    const result = validateAndRepairLog(entries);
+    expect(entries.find((e) => e.id === "rsn-001")!.turnIndex).toBe(5);
   });
 
   it("discards orphan ask_resolution", () => {

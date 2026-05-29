@@ -1026,6 +1026,47 @@ export function validateAndRepairLog(
     }
   }
 
+  // --- 4. Heal reasoning entries split from their round by a stale turnIndex ---
+  // Pre-fix (see Session._runActivation / activationTurnIndex), a queued
+  // message draining mid-activation could advance `_turnCount` so a round's
+  // streamed `reasoning` got a higher turnIndex than its sibling tool_call /
+  // tool_result entries. projectToApiMessages groups by (turnIndex, roundIndex),
+  // so such reasoning becomes an orphan → a degenerate "thinking-only" assistant
+  // message that strict backends (DeepSeek /anthropic) reject. Re-stamp an
+  // orphaned reasoning entry to the turnIndex of its own round's action
+  // entries. Tightly scoped: only fires when the reasoning's (turn,round) has
+  // NO action sibling AND the round's real entries live under one other turn.
+  {
+    const ACTION_TYPES = new Set(["tool_call", "tool_result", "assistant_text", "no_reply"]);
+    for (const entry of entries) {
+      if (entry.type !== "reasoning" || entry.discarded) continue;
+      if (entry.roundIndex === undefined) continue;
+
+      // Is this reasoning's own (turnIndex, roundIndex) missing any action? If
+      // an action sibling shares its exact turn+round, it is not orphaned.
+      let hasOwnAction = false;
+      const roundTurns = new Set<number>();
+      for (const e of entries) {
+        if (e.discarded || e.roundIndex !== entry.roundIndex) continue;
+        if (!ACTION_TYPES.has(e.type)) continue;
+        if (e.turnIndex === entry.turnIndex) { hasOwnAction = true; break; }
+        roundTurns.add(e.turnIndex);
+      }
+      if (hasOwnAction) continue;
+      // The round's action entries must all live under exactly one other turn,
+      // otherwise we can't unambiguously pick the correct turnIndex.
+      if (roundTurns.size !== 1) continue;
+
+      const targetTurn = [...roundTurns][0];
+      warnings.push(
+        `Re-stamped orphaned reasoning ${entry.id} turnIndex ${entry.turnIndex} → ${targetTurn} ` +
+        `(round ${entry.roundIndex}; split by mid-activation turn drift).`,
+      );
+      entry.turnIndex = targetTurn;
+      repaired = true;
+    }
+  }
+
   return { entries, repaired, warnings };
 }
 

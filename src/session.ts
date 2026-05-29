@@ -92,6 +92,7 @@ import type { HookManifest } from "./hooks/types.js";
 import { assembleFullSystemPrompt } from "./prompt-assembler.js";
 import {
   argOptionalString,
+  argOptionalPath,
   argRequiredString,
   argRequiredStringArray,
   toolArgError,
@@ -1196,12 +1197,12 @@ export class Session {
     );
   }
 
-  /** Compute the next roundIndex for the current turn based on existing entries. */
-  private _computeNextRoundIndex(): number {
+  /** Compute the next roundIndex for the given turn based on existing entries. */
+  private _computeNextRoundIndex(turnIndex: number = this._turnCount): number {
     let maxRound = -1;
     for (let i = this._log.length - 1; i >= 0; i--) {
       const e = this._log[i];
-      if (e.turnIndex !== this._turnCount) break;
+      if (e.turnIndex !== turnIndex) break;
       if (e.roundIndex !== undefined && e.roundIndex > maxRound) {
         maxRound = e.roundIndex;
       }
@@ -4550,13 +4551,22 @@ export class Session {
         this._agentState = "working";
         this._setSelfPhase("thinking");
 
+        // Capture the turn index ONCE per activation. Every log entry produced
+        // by this activation (streamed/finalized reasoning + text, tool calls,
+        // ask, status) must share it. `this._turnCount` can advance mid-flight
+        // when a queued user message is drained into this same work lifecycle;
+        // reading it live would split a single provider round's reasoning from
+        // its tool_calls across two turn indices (see projectToApiMessages
+        // grouping), producing a degenerate assistant message.
+        const activationTurnIndex = this._turnCount;
+
         if (this._progress) {
-          this._progress.onAgentStart(this._turnCount, this.primaryAgent.name);
+          this._progress.onAgentStart(activationTurnIndex, this.primaryAgent.name);
         }
 
         let result: ToolLoopResult;
         try {
-          result = await this._runActivation(activeSignal, textAccumulator, reasoningAccumulator);
+          result = await this._runActivation(activationTurnIndex, activeSignal, textAccumulator, reasoningAccumulator);
         } catch (err: unknown) {
           if ((err as any)?.name === "AbortError" || activeSignal.aborted) {
             this._handleInterruption(logLenBeforeActivation, textAccumulator.text, {
@@ -4596,7 +4606,7 @@ export class Session {
           this._emitAskRequestedProgress(this._activeAsk);
           this._appendEntry(createAskRequest(
             this._nextLogId("ask_request"),
-            this._turnCount,
+            activationTurnIndex,
             this._activeAsk.payload,
             this._activeAsk.id,
             this._activeAsk.kind,
@@ -4656,16 +4666,16 @@ export class Session {
           // v2 log: create final assistant_text + optional reasoning entries
           {
             const finalRound = (result.textHandledInLog || result.reasoningHandledInLog)
-              ? Math.max(0, this._computeNextRoundIndex() - 1)
-              : this._computeNextRoundIndex();
-            const finalContextId = this._resolveOutputRoundContextId(this._turnCount, finalRound);
+              ? Math.max(0, this._computeNextRoundIndex(activationTurnIndex) - 1)
+              : this._computeNextRoundIndex(activationTurnIndex);
+            const finalContextId = this._resolveOutputRoundContextId(activationTurnIndex, finalRound);
             if (result.textHandledInLog || result.reasoningHandledInLog) {
-              this._retagRoundEntries(this._turnCount, finalRound, finalContextId);
+              this._retagRoundEntries(activationTurnIndex, finalRound, finalContextId);
             }
             if (result.reasoningContent && !result.reasoningHandledInLog) {
               this._appendEntry(createReasoning(
                 this._nextLogId("reasoning"),
-                this._turnCount,
+                activationTurnIndex,
                 finalRound,
                 result.reasoningContent,
                 result.reasoningContent,
@@ -4678,7 +4688,7 @@ export class Session {
               const displayText = stripContextTags(result.text);
               this._appendEntry(createAssistantText(
                 this._nextLogId("assistant_text"),
-                this._turnCount,
+                activationTurnIndex,
                 finalRound,
                 displayText,
                 stripContextTags(result.text),
@@ -5233,12 +5243,13 @@ export class Session {
   // ==================================================================
 
   private async _runActivation(
+    activationTurnIndex: number,
     signal?: AbortSignal,
     textAccumulator?: { text: string },
     reasoningAccumulator?: { text: string },
     suppressStreaming?: boolean,
   ): Promise<ToolLoopResult> {
-    const baseRoundIndex = this._computeNextRoundIndex();
+    const baseRoundIndex = this._computeNextRoundIndex(activationTurnIndex);
     const streamedAssistantEntries = new Map<number, LogEntry>();
     const streamedReasoningEntries = new Map<number, LogEntry>();
     const textBuffers = new Map<number, NoReplyStreamBuffer>();
@@ -5304,7 +5315,7 @@ export class Session {
             if (!entry) {
               const nextEntry = createAssistantText(
                 this._nextLogId("assistant_text"),
-                this._turnCount,
+                activationTurnIndex,
                 roundIndex,
                 cleanChunk,
                 cleanChunk,
@@ -5347,7 +5358,7 @@ export class Session {
         if (!entry) {
           const nextEntry = createReasoning(
             this._nextLogId("reasoning"),
-            this._turnCount,
+            activationTurnIndex,
             roundIndex,
             chunk,
             chunk,
@@ -5455,7 +5466,7 @@ export class Session {
       this._appendEntry(
         createTokenUpdate(
           this._nextLogId("token_update"),
-          this._turnCount,
+          activationTurnIndex,
           inputTokens,
           usage?.cacheReadTokens,
           usage?.cacheCreationTokens,
@@ -5488,7 +5499,7 @@ export class Session {
         this._appendEntry(
           createStatus(
             this._nextLogId("status"),
-            this._turnCount,
+            activationTurnIndex,
             `[Network retry ${attempt}/${max}] waiting ${delaySec}s: ${errMsg}`,
             "retry_attempt",
           ),
@@ -5502,7 +5513,7 @@ export class Session {
         this._appendEntry(
           createStatus(
             this._nextLogId("status"),
-            this._turnCount,
+            activationTurnIndex,
             `[Network retry succeeded] attempt ${attempt}`,
             "retry_success",
           ),
@@ -5516,7 +5527,7 @@ export class Session {
         this._appendEntry(
           createErrorEntry(
             this._nextLogId("error"),
-            this._turnCount,
+            activationTurnIndex,
             `[Network retry exhausted after ${max} attempts] ${errMsg}`,
             "retry_exhausted",
           ),
@@ -5630,7 +5641,7 @@ export class Session {
       getMessages,
       appendEntry,
       allocId,
-      this._turnCount,
+      activationTurnIndex,
       baseRoundIndex,
       this._toolExecutors,
       onToolCall,
@@ -6333,18 +6344,23 @@ export class Session {
           throw new DOMException("Compact phase aborted.", "AbortError");
         }
 
-        const result = await this._runActivation(signal, undefined, undefined, true);
+        // Same per-activation turn-index invariant as _runTurnActivationLoop:
+        // capture once so the tool-loop entries and the finalized reasoning/
+        // text below can't be split across turnIndices if a queued message
+        // drains mid-activation. See _runActivation / Docs/session.md.
+        const compactTurnIndex = this._turnCount;
+        const result = await this._runActivation(compactTurnIndex, signal, undefined, undefined, true);
         if (signal?.aborted) {
           throw new DOMException("Compact phase aborted.", "AbortError");
         }
 
         if (result.text) {
-          const compactRound = this._computeNextRoundIndex();
+          const compactRound = this._computeNextRoundIndex(compactTurnIndex);
           const compactContextId = this._allocateContextId();
           if (result.reasoningContent) {
             const compactReasoningEntry = createReasoning(
               this._nextLogId("reasoning"),
-              this._turnCount,
+              compactTurnIndex,
               compactRound,
               "",
               result.reasoningContent,
@@ -6359,7 +6375,7 @@ export class Session {
           }
           const compactReplyEntry = createAssistantText(
             this._nextLogId("assistant_text"),
-            this._turnCount,
+            compactTurnIndex,
             compactRound,
             "",
             result.text,
@@ -6936,7 +6952,7 @@ export class Session {
     if (modeArg instanceof ToolResult) return modeArg;
     const templateArg = this._argOptionalString("spawn", args, "template");
     if (templateArg instanceof ToolResult) return templateArg;
-    const templatePathArg = this._argOptionalString("spawn", args, "template_path");
+    const templatePathArg = argOptionalPath("spawn", args, "template_path");
     if (templatePathArg instanceof ToolResult) return templatePathArg;
 
     const template = (templateArg ?? "").trim();

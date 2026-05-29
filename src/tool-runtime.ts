@@ -32,6 +32,16 @@ import {
 import type { SessionCapabilities } from "./session-capabilities.js";
 import type { SkillMeta } from "./skills/loader.js";
 import type { MCPClientManager } from "./mcp-client.js";
+import { setArgRepairSink } from "./tools/arg-repair.js";
+
+// Wire tool-input repair telemetry once. Gated behind an env var so it stays
+// silent by default; enable to watch per-(tool,key) repair shapes — a leading
+// indicator that a model is drifting on a specific tool contract.
+if (process.env.FERMI_TOOL_REPAIR_DEBUG === "1") {
+  setArgRepairSink(({ tool, key, kind }) => {
+    console.error(`tool_input_repaired:${tool} key=${key} kind=${kind}`);
+  });
+}
 import type { Agent } from "./agents/agent.js";
 
 // ------------------------------------------------------------------
