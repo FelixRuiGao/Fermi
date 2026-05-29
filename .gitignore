@@ -15,6 +15,7 @@ config.local.yaml
 .venv/
 .claude/
 Docs/
+AGENTS.md
 .archive/
 *.cast
 *.mp4
