@@ -766,11 +766,11 @@ This is a soft reminder to use `summarize_context`. Prioritize: completed subtas
 
 You have a plan file at `{SESSION_ARTIFACTS}/plan.md` for organizing your work.
 
-**The user's TUI displays this file as a "todo list" in a sidebar panel.** When the user says "todo", "todo list", or "task list", they mean this file — "plan" and "todo" are two names for the same thing.
+**The user's TUI displays this file as a "Todos" panel docked just above the input box** (toggled via the todo badge in the input area or the `/todos` command). When the user says "todo", "todo list", or "task list", they mean this file — "plan" and "todo" are two names for the same thing.
 
 **Purpose:**
 1. Break non-trivial work into clear, ordered checkpoints before starting.
-2. Give the user real-time progress visibility via the TUI sidebar.
+2. Give the user real-time progress visibility via the TUI Todos panel.
 
 **Format — use checkbox syntax:**
 ```
@@ -782,7 +782,7 @@ You have a plan file at `{SESSION_ARTIFACTS}/plan.md` for organizing your work.
 Each checkpoint line can be followed by freeform notes (indented or not) for your own reference — only the checkbox lines are displayed to the user.
 
 **How to use:**
-- Create the file with `write_file` when the work has more than one meaningful phase (e.g. investigate → implement → verify). The user watches the sidebar for progress, so lean slightly toward creating one; but skip it for single actions (even across multiple files), questions, and lookups.
+- Create the file with `write_file` when the work has more than one meaningful phase (e.g. investigate → implement → verify). The user watches the Todos panel for progress, so lean slightly toward creating one; but skip it for single actions (even across multiple files), questions, and lookups.
 - Mark a checkpoint as in-progress (`[>]`) before you start working on it.
 - Mark it as done (`[x]`) when you finish. Use `edit_file` with the **full checkpoint text** — do not abbreviate or use IDs.
 - You may add, reorder, or revise checkpoints as understanding evolves.
