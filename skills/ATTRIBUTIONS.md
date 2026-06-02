@@ -22,20 +22,11 @@ verified against PyPI metadata 2026-05-17.
 
 | Skill | Library / tool | License | Bundled? | Purpose |
 |-------|----------------|---------|----------|---------|
-| pdf | pypdf | BSD-3-Clause | no (user-installed) | merge/split/rotate/encrypt/metadata |
-| pdf | pdfplumber | MIT | no (optional) | text/table extraction |
-| pdf | Pillow | MIT-CMU (HPND) | no (optional) | image extraction/render |
-| pdf | ocrmypdf | MPL-2.0 | no (optional, only if user already has it) | OCR scanned PDFs |
 | docx | python-docx | MIT | no (user-installed) | read/create/edit Word |
 | xlsx | openpyxl | MIT | no (user-installed) | read/create/edit Excel |
 | xlsx | pandas | BSD-3-Clause | no (optional) | bulk tabular analysis |
 | pptx | python-pptx | MIT | no (user-installed) | create/edit slides |
 | csv-data | pandas | BSD-3-Clause | no (optional; stdlib csv default) | tabular transform/clean |
-
-> A tiny helper script ships only with `pdf` (`skills/pdf/scripts/pdftool.py`) —
-> it is **original code written for Fermi** that calls pypdf; it is not derived
-> from pypdf or any third-party source. MPL-2.0 tools (ocrmypdf) are only
-> *invoked if the user already has them*, never bundled or required.
 
 ## Idea sources (surveyed, not copied)
 
