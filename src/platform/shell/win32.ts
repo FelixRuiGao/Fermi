@@ -1,22 +1,15 @@
 /**
- * Windows shell provider — uses Git For Windows' bash (a.k.a. Git Bash).
+ * Windows shell provider — multi-shell with automatic fallback.
  *
- * Rationale: LLMs are trained on bash. Running their commands through
- * cmd.exe or PowerShell means bashisms ([[ ... ]], <( ... ), arrays,
- * etc.) silently fail. Git For Windows ships an MSYS2-backed bash that
- * understands the same syntax used on macOS and Linux, plus the
- * existing tree-sitter-bash permission classifier keeps working
- * unchanged.
+ * Detection priority:
+ *   1. Git Bash (MSYS2-backed bash from Git for Windows)
+ *   2. pwsh (PowerShell 7+, cross-platform)
+ *   3. powershell (Windows PowerShell 5.1, ships with Windows 10+)
  *
- * Detection strategy (mirrors opencode's approach):
- *   1. `FERMI_RESOLVED_PATH` env override (advanced users / CI)
- *   2. Locate `git.exe` on PATH, then probe `<git-dir>/../../bin/bash.exe`
- *   3. Probe well-known install paths under Program Files
- *
- * If none of those find a bash, we throw at module load with a clear
- * message rather than fall back to cmd/PowerShell. A bashism-rich LLM
- * running through cmd is worse UX than a clean "install Git for
- * Windows" prompt.
+ * Git Bash is preferred because LLMs are trained on bash syntax and the
+ * existing tree-sitter-bash permission classifier works unchanged.
+ * When Git Bash is unavailable, we fall back to PowerShell so users
+ * without Git for Windows can still use Fermi.
  *
  * Process-tree termination uses `taskkill /T /F /PID <pid>`, which
  * walks the descendant tree by parent-pid relationships.
@@ -25,14 +18,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ShellProvider, ShellSpawnRequest } from "../types.js";
+import type { ShellKind, ShellProvider, ShellSpawnRequest } from "../types.js";
 
-// Windows-specific env allowlist. The "user-shell-needs-these" set is
-// different from POSIX — there's no SSH_AUTH_SOCK or DBus equivalent
-// here, but Windows tools rely on a handful of system paths that we
-// must forward (otherwise running `git` or `npm` blows up because they
-// can't find their installation roots).
-const WIN32_ENV_ALLOWLIST = new Set([
+// ------------------------------------------------------------------
+// Env allowlists
+// ------------------------------------------------------------------
+
+// Shared Windows env vars needed by all shell types.
+const WIN32_ENV_BASE = new Set([
   // Core paths
   "PATH", "PATHEXT", "HOME",
   // Windows installation roots
@@ -49,22 +42,30 @@ const WIN32_ENV_ALLOWLIST = new Set([
   "TERM", "COLORTERM", "TZ",
   // Color / CI
   "NO_COLOR", "FORCE_COLOR", "CI",
-  // Username / login (some tools read these)
+  // Username / login
   "USER", "USERNAME", "LOGONSERVER",
-  // MSYS2 / Git Bash signalling (Fermi launched from Git Bash inherits
-  // these; passing them through keeps the child's bash consistent)
+]);
+
+// Extra vars only relevant when the shell is Git Bash (MSYS2).
+const MSYS2_EXTRAS = new Set([
   "MSYSTEM", "MSYS", "MSYS2_ARG_CONV_EXCL", "SHELL",
 ]);
+
+// Extra vars only relevant when the shell is PowerShell.
+const POWERSHELL_EXTRAS = new Set([
+  "PSMODULEPATH",
+]);
+
+// ------------------------------------------------------------------
+// Detection: Git Bash
+// ------------------------------------------------------------------
 
 function detectGitBash(): string | null {
   // 1. Explicit override
   const override = process.env["FERMI_GIT_BASH_PATH"];
   if (override && existsSync(override)) return override;
 
-  // 2. git.exe on PATH → derive <git-dir>/../../bin/bash.exe.
-  //    `where git` returns the first match; we take that, then walk up
-  //    two levels (typical layout: C:\Program Files\Git\cmd\git.exe →
-  //    C:\Program Files\Git\bin\bash.exe).
+  // 2. git.exe on PATH → derive <git-dir>/../../bin/bash.exe
   try {
     const result = spawnSync("where", ["git"], { encoding: "utf8", windowsHide: true });
     if (result.status === 0 && typeof result.stdout === "string") {
@@ -76,8 +77,7 @@ function detectGitBash(): string | null {
       }
     }
   } catch {
-    // `where` may fail under unusual environments; fall through to
-    // path probing.
+    // `where` may fail under unusual environments; fall through.
   }
 
   // 3. Common install locations
@@ -98,64 +98,125 @@ function detectGitBash(): string | null {
   return null;
 }
 
-// Only resolve Git Bash when actually running on Windows. The module
-// is statically imported by shell/index.ts on every platform; running
-// the probe on macOS/Linux would needlessly hit `where git` and the
-// throw below would prevent the runtime from even reaching the
-// posixShell selector.
-function resolveOrThrow(): string {
-  if (process.platform !== "win32") {
-    // Deliberately not a real path. shell/index.ts only returns this
-    // provider on win32, so nothing should ever read `path` here on
-    // macOS/Linux. If something accidentally does, the value below
-    // self-identifies in the resulting ENOENT and is grep-friendly.
-    return "win32-shell-not-active-on-this-platform";
-  }
-  const found = detectGitBash();
-  if (!found) {
-    // Fail loud at module load. The diagnostic at first use would
-    // otherwise surface deep inside a tool invocation, far from the
-    // root cause.
-    throw new Error(
-      "Fermi on Windows requires Git for Windows (bash.exe). " +
-        "Install from https://git-scm.com/download/win, " +
-        "or set FERMI_GIT_BASH_PATH to your bash.exe location.",
-    );
-  }
-  return found;
+// ------------------------------------------------------------------
+// Detection: PowerShell
+// ------------------------------------------------------------------
+
+function detectPwsh(): string | null {
+  try {
+    const result = spawnSync("where", ["pwsh"], { encoding: "utf8", windowsHide: true });
+    if (result.status === 0 && typeof result.stdout === "string") {
+      const path = result.stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+      if (path && existsSync(path)) return path;
+    }
+  } catch { /* fall through */ }
+  return null;
 }
 
-const RESOLVED_PATH: string = resolveOrThrow();
+function detectPowerShell(): string | null {
+  try {
+    const result = spawnSync("where", ["powershell"], { encoding: "utf8", windowsHide: true });
+    if (result.status === 0 && typeof result.stdout === "string") {
+      const path = result.stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+      if (path && existsSync(path)) return path;
+    }
+  } catch { /* fall through */ }
+
+  // powershell.exe ships with Windows 10+ at a well-known path.
+  const systemRoot = process.env["SYSTEMROOT"] ?? "C:\\Windows";
+  const fallback = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  if (existsSync(fallback)) return fallback;
+
+  return null;
+}
+
+// ------------------------------------------------------------------
+// Shell resolution
+// ------------------------------------------------------------------
+
+interface ResolvedShell {
+  kind: ShellKind;
+  path: string;
+}
+
+function resolveShell(): ResolvedShell {
+  if (process.platform !== "win32") {
+    return { kind: "bash", path: "win32-shell-not-active-on-this-platform" };
+  }
+
+  const gitBash = detectGitBash();
+  if (gitBash) return { kind: "bash", path: gitBash };
+
+  const pwsh = detectPwsh();
+  if (pwsh) return { kind: "pwsh", path: pwsh };
+
+  const ps = detectPowerShell();
+  if (ps) return { kind: "powershell", path: ps };
+
+  throw new Error(
+    "Fermi on Windows requires one of: Git Bash, PowerShell 7+ (pwsh), or Windows PowerShell.\n" +
+    "  • Git Bash (recommended): https://git-scm.com/download/win\n" +
+    "  • PowerShell 7+: https://aka.ms/powershell\n" +
+    "Tried: git bash (not found), pwsh (not found), powershell (not found).",
+  );
+}
+
+/** Whether the resolved shell is a PowerShell variant. */
+function isPowerShell(kind: ShellKind): boolean {
+  return kind === "pwsh" || kind === "powershell";
+}
+
+const RESOLVED: ResolvedShell = resolveShell();
+
+// ------------------------------------------------------------------
+// Env filtering
+// ------------------------------------------------------------------
 
 function buildEnv(): NodeJS.ProcessEnv {
+  const extras = isPowerShell(RESOLVED.kind) ? POWERSHELL_EXTRAS : MSYS2_EXTRAS;
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value == null) continue;
-    // Windows env names are case-insensitive — we compare uppercase.
     const upper = key.toUpperCase();
-    if (WIN32_ENV_ALLOWLIST.has(upper) || upper.startsWith("LC_")) {
+    if (WIN32_ENV_BASE.has(upper) || extras.has(upper) || upper.startsWith("LC_")) {
       env[key] = value;
     }
   }
   if (!env["PATH"]) {
-    // Last-resort PATH if the parent process had none. Git Bash's own
-    // /usr/bin sits alongside bash.exe.
     env["PATH"] = "C:\\Windows\\System32;C:\\Windows";
   }
   return env;
 }
 
+// ------------------------------------------------------------------
+// Provider
+// ------------------------------------------------------------------
+
 export const win32Shell: ShellProvider = {
-  path: RESOLVED_PATH,
+  kind: RESOLVED.kind,
+  path: RESOLVED.path,
 
   spawn(request: ShellSpawnRequest): ChildProcess {
+    if (isPowerShell(RESOLVED.kind)) {
+      // PowerShell: -NoLogo suppresses the startup banner,
+      // -NoProfile skips user profile scripts (deterministic env),
+      // -NonInteractive prevents prompts blocking the subprocess.
+      return spawn(RESOLVED.path, [
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", request.command,
+      ], {
+        cwd: request.cwd,
+        env: request.env ?? buildEnv(),
+        stdio: request.stdio ?? ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    }
+
+    // Git Bash
     const flag = request.loginShell ? "-lc" : "-c";
-    return spawn(RESOLVED_PATH, [flag, request.command], {
+    return spawn(RESOLVED.path, [flag, request.command], {
       cwd: request.cwd,
       env: request.env ?? buildEnv(),
       stdio: request.stdio ?? ["pipe", "pipe", "pipe"],
-      // Windows has no process groups in the POSIX sense; killTree
-      // uses taskkill /T /F instead. `detached` isn't useful here.
       windowsHide: true,
     });
   },
@@ -164,12 +225,6 @@ export const win32Shell: ShellProvider = {
     const pid = child.pid;
     if (pid != null) {
       try {
-        // /T walks the descendant tree by parent-pid. /F forces
-        // termination — only added when the caller asked for SIGKILL.
-        // Without /F, taskkill sends WM_CLOSE and lets each process
-        // shut down cooperatively, which is the closest Windows
-        // analogue to SIGTERM. Run synchronously so the caller can
-        // rely on the tree being signalled before return.
         const force = signal === "SIGKILL" ? ["/F"] : [];
         spawnSync("taskkill", ["/PID", String(pid), "/T", ...force], {
           stdio: "ignore",
@@ -177,8 +232,7 @@ export const win32Shell: ShellProvider = {
         });
         return;
       } catch {
-        // Fall through to a direct child.kill — handles mocks and the
-        // rare case where taskkill itself is unavailable.
+        // Fall through to direct child.kill.
       }
     }
     try { child.kill(signal); } catch {}

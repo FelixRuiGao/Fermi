@@ -26,6 +26,7 @@ export const binaryAsset = selectBinaryAsset();
 export const osCapabilities = selectOsCapabilities();
 
 export type {
+  ShellKind,
   ShellProvider,
   ShellSpawnRequest,
   ClipboardProvider,

@@ -1,11 +1,11 @@
 /**
  * Tool classification -- maps a tool call to a PermissionClass.
  *
- * Uses tree-sitter-bash exclusively for AST-accurate bash command parsing.
- * The sync classifyTool returns a conservative write_potent for bash;
- * all real bash classification goes through classifyToolAsync.
+ * Uses tree-sitter for AST-accurate command parsing (bash and PowerShell).
+ * The sync classifyTool returns a conservative write_potent for shell tools;
+ * all real classification goes through classifyToolAsync.
  *
- * Bash risk tiers with git subcommand awareness:
+ * Risk tiers with git subcommand awareness:
  *   safe -> write_reversible -> write_potent -> write_danger -> catastrophic
  */
 
@@ -15,6 +15,7 @@ import type { InvocationAssessment, PermissionClass } from "./types.js";
 import type { ParsedBashCommand, ParsedBashSegment } from "./bash/types.js";
 import { parseTrackableBashMutation } from "../tools/basic.js";
 import { osCapabilities } from "../platform/index.js";
+import type { ShellKind } from "../platform/index.js";
 import { resolveCdContextParsed } from "./cd-context.js";
 
 // ------------------------------------------------------------------
@@ -31,10 +32,14 @@ export function initBashParser(): void {
     parserModule = mod;
     return mod;
   }).catch((err) => {
-    console.warn("tree-sitter bash parser failed to load:", err);
+    console.warn("tree-sitter shell parser failed to load:", err);
     parserModule = null;
     return null as any;
   });
+}
+
+function isPowerShellKind(kind?: ShellKind): boolean {
+  return kind === "pwsh" || kind === "powershell";
 }
 
 // ------------------------------------------------------------------
@@ -146,6 +151,111 @@ const PROCESS_WRAPPERS = new Set([
 ]);
 
 // ------------------------------------------------------------------
+// PowerShell command sets (case-insensitive — all entries are lowercase)
+// ------------------------------------------------------------------
+
+const PS_SAFE_COMMANDS = new Set([
+  "get-childitem", "get-content", "get-item", "get-itemproperty",
+  "test-path", "resolve-path", "split-path", "join-path",
+  "get-location", "get-psdrive",
+  "select-string", "select-object", "sort-object", "group-object",
+  "where-object", "foreach-object", "measure-object",
+  "format-table", "format-list", "format-wide", "format-custom",
+  "out-string", "out-null", "out-host",
+  "write-output", "write-host", "write-verbose", "write-debug", "write-warning",
+  "get-process", "get-service",
+  "get-date", "get-random", "get-filehash",
+  "get-command", "get-help", "get-alias", "get-module",
+  "get-variable", "get-host", "get-culture",
+  "compare-object", "measure-command",
+  "convertto-json", "convertfrom-json",
+  "convertto-csv", "convertfrom-csv",
+  "get-acl", "get-executionpolicy",
+]);
+
+// Only filesystem-only operations are reversible. cmdlets that can
+// target non-filesystem providers (registry, env, etc.) are potent.
+const PS_REVERSIBLE_COMMANDS = new Set([
+  "add-content",
+]);
+
+// Set-Location/Push-Location are potent (not reversible) because
+// the cd-context tracker only understands bash `cd` — PowerShell
+// directory changes would bypass external-cwd detection and let
+// subsequent reads from outside projectRoot auto-allow silently.
+const PS_CWD_COMMANDS = new Set([
+  "set-location", "push-location", "pop-location",
+]);
+
+const PS_DANGER_COMMANDS = new Set([
+  "remove-item", "clear-content", "clear-item",
+  "stop-process", "stop-service", "restart-service",
+  "remove-itemproperty",
+  "clear-recyclebin",
+  "restart-computer", "stop-computer",
+  "set-executionpolicy",
+]);
+
+const PS_POTENT_COMMANDS = new Set([
+  "new-item", "copy-item", "move-item", "rename-item",
+  "new-itemproperty", "set-itemproperty",
+  "set-content", "out-file",
+  "invoke-webrequest", "invoke-restmethod",
+  "start-process", "start-job", "start-service",
+  "invoke-command",
+  "new-object",
+  "install-module", "import-module", "save-module",
+  "install-package",
+  "expand-archive", "compress-archive",
+  "register-scheduledjob", "register-scheduledtask",
+  "set-acl",
+]);
+
+/** Dangerous PowerShell patterns: eval-equivalents and code injection vectors. */
+const PS_EVAL_COMMANDS = new Set([
+  "invoke-expression", "iex",
+]);
+
+/** PowerShell common aliases → canonical cmdlet name (lowercase). */
+const PS_ALIASES = new Map<string, string>([
+  // Navigation
+  ["cd", "set-location"], ["chdir", "set-location"],
+  ["pushd", "push-location"], ["popd", "pop-location"],
+  // Files
+  ["ls", "get-childitem"], ["dir", "get-childitem"], ["gci", "get-childitem"],
+  ["cat", "get-content"], ["type", "get-content"], ["gc", "get-content"],
+  ["cp", "copy-item"], ["copy", "copy-item"], ["ci", "copy-item"],
+  ["mv", "move-item"], ["move", "move-item"], ["mi", "move-item"],
+  ["rm", "remove-item"], ["del", "remove-item"], ["rd", "remove-item"],
+  ["rmdir", "remove-item"], ["erase", "remove-item"], ["ri", "remove-item"],
+  ["ren", "rename-item"], ["rni", "rename-item"],
+  ["ni", "new-item"], ["md", "new-item"], ["mkdir", "new-item"],
+  // Output
+  ["echo", "write-output"], ["write", "write-output"],
+  // Search
+  ["sls", "select-string"],
+  // Process
+  ["ps", "get-process"], ["gps", "get-process"],
+  ["kill", "stop-process"], ["spps", "stop-process"],
+  // Filtering / iteration (these execute script blocks!)
+  ["where", "where-object"], ["?", "where-object"],
+  ["foreach", "foreach-object"], ["%", "foreach-object"],
+  // Misc
+  ["cls", "clear-host"], ["clear", "clear-host"],
+  ["iex", "invoke-expression"],
+  ["iwr", "invoke-webrequest"],
+  ["irm", "invoke-restmethod"],
+  ["icm", "invoke-command"],
+  ["sal", "set-alias"],
+  ["sv", "set-variable"],
+  ["sleep", "start-sleep"],
+  ["sc", "set-content"],
+  ["ac", "add-content"],
+  ["ii", "invoke-item"],
+  ["start", "start-process"], ["saps", "start-process"],
+]);
+
+// ------------------------------------------------------------------
 // Git subcommand sets (only for commands NOT handled by classifyGitDetailed)
 // ------------------------------------------------------------------
 
@@ -222,13 +332,14 @@ export function classifyTool(
 }
 
 // ------------------------------------------------------------------
-// classifyToolAsync — tree-sitter bash classification
+// classifyToolAsync — tree-sitter shell classification
 // ------------------------------------------------------------------
 
 export async function classifyToolAsync(
   toolName: string,
   toolArgs: Record<string, unknown>,
   projectRoot?: string,
+  shellKind?: ShellKind,
 ): Promise<InvocationAssessment> {
   if (toolName !== "bash" && toolName !== "bash_background") {
     return classifyTool(toolName, toolArgs);
@@ -248,7 +359,10 @@ export async function classifyToolAsync(
     return { permissionClass: "write_potent", toolName, canMemoize: false };
   }
 
-  const result = await parserModule.parseBashCommand(command);
+  const usePS = isPowerShellKind(shellKind);
+  const result = usePS
+    ? await parserModule.parsePowerShellCommand(command)
+    : await parserModule.parseBashCommand(command);
   if (result.kind === "unsupported") {
     return { permissionClass: "write_potent", toolName, canMemoize: false };
   }
@@ -270,8 +384,12 @@ export async function classifyToolAsync(
     if (rel.startsWith("..") || path.isAbsolute(rel)) {
       isExternal = true;
     }
-    // cd context strips cd segments and tracks cwd changes
-    if (segments.length > 1) {
+    // cd context strips cd segments and tracks cwd changes.
+    // Only for bash — PowerShell's cd (Set-Location) can navigate to
+    // provider paths (HKLM:\, Env:\, etc.) that the bash resolver
+    // doesn't understand. PS cd commands are classified as write_potent
+    // via PS_CWD_COMMANDS instead.
+    if (!usePS && segments.length > 1) {
       const cdCtx = resolveCdContextParsed(segments, projectRoot, effectiveCwd);
       segments = cdCtx.segments as ParsedBashSegment[];
       cdEffectiveCwd = cdCtx.effectiveCwd;
@@ -287,8 +405,8 @@ export async function classifyToolAsync(
   for (const segment of segments) {
     let segClass: PermissionClass = "read";
     for (const cmd of segment.commands) {
-      const stripped = stripWrappersFromParsed(cmd);
-      const cls = classifyParsedCommand(stripped);
+      const stripped = usePS ? cmd : stripWrappersFromParsed(cmd);
+      const cls = usePS ? classifyPSCommand(stripped) : classifyParsedCommand(stripped);
       allCommandNames.push(stripped.name);
       if (CLASS_ORDER[cls] > CLASS_ORDER[segClass]) segClass = cls;
     }
@@ -566,4 +684,129 @@ function buildCanonicalPatternFromParsed(cmd: ParsedBashCommand): string {
   }
 
   return name;
+}
+
+// ------------------------------------------------------------------
+// PowerShell per-command classification
+// ------------------------------------------------------------------
+
+/**
+ * Resolve a PowerShell command name to its canonical cmdlet (lowercase).
+ * Handles aliases and Module\Cmdlet prefix stripping.
+ */
+function resolvePSCommandName(rawName: string): string {
+  let name = rawName.toLowerCase();
+  // Strip surrounding quotes: & "Remove-Item" or & 'rm'
+  if ((name.startsWith('"') && name.endsWith('"')) || (name.startsWith("'") && name.endsWith("'"))) {
+    name = name.slice(1, -1);
+  }
+  // Strip module prefix: Microsoft.PowerShell.Management\Get-ChildItem → get-childitem
+  const backslash = name.lastIndexOf("\\");
+  if (backslash >= 0) name = name.slice(backslash + 1);
+  // Resolve alias
+  return PS_ALIASES.get(name) ?? name;
+}
+
+// PowerShell accepts unambiguous parameter prefixes: -e, -en, -enc, ...
+// all resolve to -EncodedCommand. Minimum 2 chars after dash.
+function isEncodedCommandFlag(value: string): boolean {
+  const lower = value.toLowerCase();
+  return lower.startsWith("-e") && "-encodedcommand".startsWith(lower);
+}
+
+/** Check if `value` is a valid PowerShell prefix of `fullParam` (e.g. "-rec" matches "-recurse"). */
+function isPSParamPrefix(value: string, fullParam: string): boolean {
+  const lower = value.toLowerCase();
+  return lower.length >= 2 && lower.startsWith("-") && fullParam.startsWith(lower);
+}
+
+/** Check if any argv token contains executable PowerShell code:
+ *  script blocks `{ ... }`, subexpressions `$(...)`, or grouped
+ *  command expressions `(...)`. */
+function hasExecutableExpression(cmd: ParsedBashCommand): boolean {
+  return cmd.argv.some(
+    (t) => t.kind === "unresolved_expression" &&
+      (t.text.includes("{") || t.text.includes("$(") || t.text.startsWith("(")),
+  );
+}
+
+function classifyPSCommand(cmd: ParsedBashCommand): PermissionClass {
+  const name = resolvePSCommandName(cmd.name);
+
+  // Eval-equivalent commands are always dangerous.
+  if (PS_EVAL_COMMANDS.has(name)) return "write_danger";
+
+  // Dangerous flags: -EncodedCommand on pwsh/powershell re-invocation.
+  // PowerShell accepts unambiguous parameter prefixes, so -enc, -en, -e
+  // all resolve to -EncodedCommand.
+  if (name === "pwsh" || name === "powershell" || name === "powershell.exe" || name === "pwsh.exe") {
+    const hasEncoded = cmd.argv.some(
+      (t) => t.kind === "literal" && isEncodedCommandFlag(t.value),
+    );
+    if (hasEncoded) return "write_danger";
+    return "write_potent";
+  }
+
+  // Native executables that pass through (git, npm, etc.) use the
+  // same bash classification since they're not PowerShell-specific.
+  if (name === "git") return classifyGitDetailed(cmd);
+
+  // Catastrophic: Remove-Item -Recurse -Force targeting root/home/drive.
+  if (name === "remove-item") {
+    const hasRecurse = cmd.argv.some(
+      (t) => t.kind === "literal" && isPSParamPrefix(t.value, "-recurse"),
+    );
+    const hasForce = cmd.argv.some(
+      (t) => t.kind === "literal" && isPSParamPrefix(t.value, "-force"),
+    );
+    if (hasRecurse && hasForce) {
+      const targetsDangerousPath = cmd.argv.some((t) => {
+        if (t.value.startsWith("-")) return false;
+        // Normalize: strip trailing slashes, backslashes, wildcards, and dots.
+        // This catches C:\, C:\*, C:\., ~\*, etc.
+        const v = t.value.replace(/[\\/]+$/, "").replace(/[\\/][.*]+$/, "").replace(/[\\/]+$/, "");
+        // Drive roots: C:, C:\, /
+        if (/^[a-z]:?$/i.test(v) || v === "/" || v === "\\") return true;
+        // Home references
+        if (v === "~" || v === "$HOME" || /^\$env:USERPROFILE$/i.test(v) || /^\$env:HOME$/i.test(v)) return true;
+        // System paths
+        if (/^\$env:(SYSTEMROOT|WINDIR|PROGRAMFILES)$/i.test(v)) return true;
+        return false;
+      });
+      if (targetsDangerousPath) return "catastrophic";
+    }
+    return "write_danger";
+  }
+
+  // Check PowerShell-specific command sets.
+  if (PS_DANGER_COMMANDS.has(name)) return "write_danger";
+
+  // Add-Type is runtime .NET compilation — potent.
+  if (name === "add-type") return "write_potent";
+
+  // invoke-item / ii is ShellExecute — can run arbitrary executables.
+  if (name === "invoke-item") return "write_danger";
+
+  if (PS_CWD_COMMANDS.has(name)) return "write_potent";
+  if (PS_POTENT_COMMANDS.has(name)) return "write_potent";
+  if (PS_REVERSIBLE_COMMANDS.has(name)) return "write_reversible";
+
+  // Safe commands — but if they receive a script block argument,
+  // that block can contain arbitrary code (e.g. ForEach-Object { rm foo }).
+  // Escalate to write_potent so the user gets prompted.
+  if (PS_SAFE_COMMANDS.has(name)) {
+    // Script blocks and subexpressions can contain arbitrary code
+    // (including catastrophic deletes). We can't inspect their contents
+    // statically, so escalate to write_danger — this ensures yolo mode
+    // still prompts rather than auto-allowing.
+    return hasExecutableExpression(cmd) ? "write_danger" : "read";
+  }
+
+  // Native executables that also appear in the bash sets.
+  if (isDangerCommand(name)) return "write_danger";
+  if (BASH_SAFE_COMMANDS.has(name)) return "read";
+  if (BASH_POTENT_COMMANDS.has(name)) return "write_potent";
+
+  // Unknown commands default to potent (fail-safe).
+  return "write_potent";
 }

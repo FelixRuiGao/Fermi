@@ -83,6 +83,7 @@ function buildEnv(): NodeJS.ProcessEnv {
 }
 
 export const posixShell: ShellProvider = {
+  kind: SHELL_PATH.endsWith("/sh") ? "sh" : "bash",
   path: SHELL_PATH,
 
   spawn(request: ShellSpawnRequest): ChildProcess {

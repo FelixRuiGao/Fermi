@@ -602,50 +602,82 @@ const WRITE: ToolDef = {
   tuiPolicy: { partialReveal: { completeArgs: ["path"] } },
 };
 
-const BASH: ToolDef = {
-  name: "bash",
-  description:
-    "Execute a synchronous shell command and return stdout, stderr, and exit code. " +
-    "On timeout the entire process tree is killed with SIGKILL and the tool returns " +
-    "a timeout error that includes partial output captured so far.\n\n" +
-    "WHEN NOT TO USE bash — prefer bash_background for:\n" +
-    "  (1) Large / long-running jobs you don't want to block the turn on.\n" +
-    "  (2) Persistent tasks that never exit on their own: dev servers, file watchers, " +
-    "daemons, `npm run dev`, `vite`, `next dev`, `cargo watch`, `tail -f`, etc. " +
-    "Under bash these will always hit the timeout and be killed — always use bash_background instead.\n\n" +
-    "TIMEOUT is REQUIRED. Choose it based on the command's actual expected duration, " +
-    "not a padded \"just in case\" value.\n\n" +
-    "For commands with side effects (file writes, installs, migrations, git commits, " +
-    "database operations, build artifacts, etc.), be MORE conservative and pick a TIGHT " +
-    "timeout matching real expected duration. A mutating command killed mid-execution " +
-    "can leave partial state (half-written files, aborted transactions, torn installs). " +
-    "A larger timeout does NOT reduce that risk — it just delays the problem. A tight " +
-    "timeout gives you predictable failure points and limits the uncertainty window.\n\n" +
-    "A timeout is NOT automatically a failure: for commands that perform observable side " +
-    "effects, the effects up to the kill point may have completed successfully. Always " +
-    "inspect the partial output and resulting filesystem / state before deciding to retry.",
-  parameters: {
-    type: "object",
-    properties: {
-      command: { type: "string", description: "Shell command to execute" },
-      timeout: {
-        type: "integer",
-        description:
-          `Required. Timeout in seconds (1-${BASH_MAX_TIMEOUT}). Match actual expected ` +
-          "duration; do not over-pad. On timeout the entire process tree is SIGKILLed " +
-          "and any in-flight side effects become partial.",
+// ------------------------------------------------------------------
+// Shell-aware bash tool description
+// ------------------------------------------------------------------
+
+import type { ShellKind } from "../platform/index.js";
+
+const BASH_DESCRIPTION_BASE =
+  "Execute a synchronous shell command and return stdout, stderr, and exit code. " +
+  "On timeout the entire process tree is killed with SIGKILL and the tool returns " +
+  "a timeout error that includes partial output captured so far.\n\n" +
+  "WHEN NOT TO USE bash — prefer bash_background for:\n" +
+  "  (1) Large / long-running jobs you don't want to block the turn on.\n" +
+  "  (2) Persistent tasks that never exit on their own: dev servers, file watchers, " +
+  "daemons, `npm run dev`, `vite`, `next dev`, `cargo watch`, `tail -f`, etc. " +
+  "Under bash these will always hit the timeout and be killed — always use bash_background instead.\n\n" +
+  "TIMEOUT is REQUIRED. Choose it based on the command's actual expected duration, " +
+  "not a padded \"just in case\" value.\n\n" +
+  "For commands with side effects (file writes, installs, migrations, git commits, " +
+  "database operations, build artifacts, etc.), be MORE conservative and pick a TIGHT " +
+  "timeout matching real expected duration. A mutating command killed mid-execution " +
+  "can leave partial state (half-written files, aborted transactions, torn installs). " +
+  "A larger timeout does NOT reduce that risk — it just delays the problem. A tight " +
+  "timeout gives you predictable failure points and limits the uncertainty window.\n\n" +
+  "A timeout is NOT automatically a failure: for commands that perform observable side " +
+  "effects, the effects up to the kill point may have completed successfully. Always " +
+  "inspect the partial output and resulting filesystem / state before deciding to retry.";
+
+function shellLabel(kind: ShellKind): string {
+  switch (kind) {
+    case "pwsh": return "PowerShell 7+";
+    case "powershell": return "Windows PowerShell 5.1";
+    default: return "bash";
+  }
+}
+
+function shellAwareDescription(kind: ShellKind): string {
+  const label = shellLabel(kind);
+  const prefix = `Shell: ${label}. `;
+  if (kind === "pwsh" || kind === "powershell") {
+    return prefix +
+      "All commands run through PowerShell — write PowerShell syntax, not bash. " +
+      "See the system prompt for full PowerShell syntax guidance.\n\n" +
+      BASH_DESCRIPTION_BASE;
+  }
+  return prefix + BASH_DESCRIPTION_BASE;
+}
+
+function buildBashToolDef(kind: ShellKind): ToolDef {
+  return {
+    name: "bash",
+    description: shellAwareDescription(kind),
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "Shell command to execute" },
+        timeout: {
+          type: "integer",
+          description:
+            `Required. Timeout in seconds (1-${BASH_MAX_TIMEOUT}). Match actual expected ` +
+            "duration; do not over-pad. On timeout the entire process tree is SIGKILLed " +
+            "and any in-flight side effects become partial.",
+        },
+        cwd: {
+          type: "string",
+          description:
+            "Working directory for the command (default: current directory)",
+        },
       },
-      cwd: {
-        type: "string",
-        description:
-          "Working directory for the command (default: current directory)",
-      },
+      required: ["command", "timeout"],
     },
-    required: ["command", "timeout"],
-  },
-  summaryTemplate: "{agent} is running: {command}",
-  tuiPolicy: { partialReveal: { completeArgs: ["command"] } },
-};
+    summaryTemplate: "{agent} is running: {command}",
+    tuiPolicy: { partialReveal: { completeArgs: ["command"] } },
+  };
+}
+
+const BASH: ToolDef = buildBashToolDef(shell.kind);
 
 const TIME: ToolDef = {
   name: "time",

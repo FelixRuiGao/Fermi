@@ -16,8 +16,13 @@ import type { ChildProcess, SpawnOptions } from "node:child_process";
 // Shell
 // --------------------------------------------------------------------
 
+/** Identifies the shell flavour driving the `bash` tool.
+ *  Business code uses this to select parser, prompt wording, and
+ *  spawn arguments — never raw `process.platform` checks. */
+export type ShellKind = "bash" | "sh" | "pwsh" | "powershell";
+
 export interface ShellSpawnRequest {
-  /** Command string passed via `-c` (POSIX) or `/c` (Windows cmd). */
+  /** Command string passed via `-c` (POSIX) or `-Command` (PowerShell). */
   command: string;
   cwd?: string;
   /** Whether to spawn the shell as a login shell (POSIX `-lc`). */
@@ -32,7 +37,9 @@ export interface ShellSpawnRequest {
 }
 
 export interface ShellProvider {
-  /** Display name of the resolved shell, e.g. "/bin/bash" or "/bin/sh". */
+  /** Shell flavour — determines prompt wording, parser, and spawn args. */
+  readonly kind: ShellKind;
+  /** Absolute path to the resolved shell binary. */
   readonly path: string;
 
   /**

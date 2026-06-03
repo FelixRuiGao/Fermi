@@ -38,6 +38,8 @@ export interface PromptVariables {
   systemData: string;
   /** ISO timestamp of when this session began (its first message). Stable across resumes. */
   sessionStartedAt?: string;
+  /** Shell-specific notes injected into the tools prompt (bash vs PowerShell). */
+  shellNotes?: string;
 }
 
 /**
@@ -88,7 +90,8 @@ export function renderPromptVariables(prompt: string, vars: PromptVariables): st
   return prompt
     .replace(/\{PROJECT_ROOT\}/g, vars.projectRoot)
     .replace(/\{SESSION_ARTIFACTS\}/g, vars.sessionArtifacts)
-    .replace(/\{SYSTEM_DATA\}/g, vars.systemData);
+    .replace(/\{SYSTEM_DATA\}/g, vars.systemData)
+    .replace(/\{SHELL_NOTES\}/g, vars.shellNotes ?? "");
 }
 
 /**
@@ -176,6 +179,8 @@ export interface AssembleOptions {
   sessionStartedAt?: string;
   /** Agent model pins from config (for the model pins section). */
   agentModels?: Record<string, { provider: string; selection_key: string; model_id: string; thinking_level?: string }>;
+  /** Shell-specific notes (bash vs PowerShell) for {SHELL_NOTES} variable. */
+  shellNotes?: string;
   /** Additional prompt layers (hooks, injected turns, etc.). */
   extraLayers?: PromptLayer[];
 }
@@ -224,6 +229,7 @@ export function assembleFullSystemPrompt(opts: AssembleOptions): string {
     sessionArtifacts: opts.sessionArtifacts,
     systemData: opts.systemData,
     sessionStartedAt: opts.sessionStartedAt,
+    shellNotes: opts.shellNotes,
   };
   prompt = renderPromptVariables(prompt, vars);
 

@@ -16,6 +16,7 @@ import type { GateAdvisor, GateDecision } from "../tool-runtime.js";
 import type { ToolPreflightContext } from "../agents/tool-loop.js";
 import { classifyTool, classifyToolAsync } from "./classify.js";
 import { PermissionRuleStore } from "./rules.js";
+import type { ShellKind } from "../platform/types.js";
 import type {
   PermissionMode,
   InvocationAssessment,
@@ -40,6 +41,7 @@ export class PermissionAdvisor implements GateAdvisor {
   private _sessionMode: PermissionMode;
   private _agentCeiling?: PermissionMode;
   private _projectRoot: string;
+  private _shellKind: ShellKind;
 
   /** In-memory "allow once" grants for this session (toolCallId → true). */
   private _allowOnceGrants = new Set<string>();
@@ -49,11 +51,13 @@ export class PermissionAdvisor implements GateAdvisor {
     sessionMode?: PermissionMode;
     agentCeiling?: PermissionMode;
     projectRoot?: string;
+    shellKind?: ShellKind;
   }) {
     this._ruleStore = opts.ruleStore;
     this._sessionMode = opts.sessionMode ?? "reversible";
     this._agentCeiling = opts.agentCeiling;
     this._projectRoot = opts.projectRoot ?? process.cwd();
+    this._shellKind = opts.shellKind ?? "bash";
   }
 
   get sessionMode(): PermissionMode {
@@ -75,7 +79,7 @@ export class PermissionAdvisor implements GateAdvisor {
   // -- GateAdvisor interface -------------------------------------------
 
   async evaluate(ctx: ToolPreflightContext): Promise<GateDecision> {
-    const assessment = await classifyToolAsync(ctx.toolName, ctx.toolArgs, this._projectRoot);
+    const assessment = await classifyToolAsync(ctx.toolName, ctx.toolArgs, this._projectRoot, this._shellKind);
     const mode = effectiveMode(this._sessionMode, this._agentCeiling);
 
     // 1. Check allow-once grants

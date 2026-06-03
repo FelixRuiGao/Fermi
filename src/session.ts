@@ -90,6 +90,8 @@ import { PermissionAdvisor, PermissionRuleStore, initBashParser, type Permission
 import { HookRuntime, type HookEvent, type HookPayload } from "./hooks/index.js";
 import type { HookManifest } from "./hooks/types.js";
 import { assembleFullSystemPrompt } from "./prompt-assembler.js";
+import { shell } from "./platform/index.js";
+import { buildShellNotes } from "./tools/shell-notes.js";
 import {
   argOptionalString,
   argOptionalPath,
@@ -950,6 +952,7 @@ export class Session {
       ruleStore: this._permissionRuleStore,
       sessionMode: opts.permissionMode ?? "reversible",
       projectRoot: this._projectRoot,
+      shellKind: shell.kind,
     });
     this.toolGate.addAdvisor(this._permissionAdvisor);
 
@@ -6231,6 +6234,7 @@ export class Session {
       systemData: this._resolveSystemData({ allowUnresolved: true }),
       sessionStartedAt: this._createdAt,
       agentModels: this.config.agentModels,
+      shellNotes: buildShellNotes(shell.kind),
     });
   }
 

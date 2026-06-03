@@ -65,6 +65,7 @@
     "string-width": "7.2.0",
     "strip-ansi": "^7.1.0",
     "tree-sitter-bash": "^0.25.1",
+    "tree-sitter-powershell": "^0.26.4",
     "turndown": "^7.2.4",
     "web-tree-sitter": "0.25.10",
     "yoga-layout": "^3.2.1"

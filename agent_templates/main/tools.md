@@ -135,42 +135,44 @@ Recommended workflow for large files and logs:
 
 Execute shell commands. Returns stdout, stderr, and exit code.
 
-**Use `bash` for:** running builds, installing dependencies, running tests, git operations, short one-off scripts, checking system state (`ps`, `df`, `env`, `uname`), and operations that genuinely have no dedicated tool.
+{SHELL_NOTES}
+
+**Use `bash` for:** running builds, installing dependencies, running tests, git operations, short one-off scripts, checking system state, and operations that genuinely have no dedicated tool.
 
 ### Do NOT use `bash` to substitute for dedicated tools
 
 These are hard rules, not preferences. If you catch yourself reaching for one of these patterns, stop and use the right tool.
 
-| ❌ Do not do this in bash | ✅ Use this instead |
+| ❌ Do not do this via the bash tool | ✅ Use this instead |
 |---|---|
-| `echo "..." > file.txt`, `cat > file <<EOF`, `printf ... > file`, `tee file` | **`write_file`** |
-| `sed -i ...`, `awk -i inplace ...`, `perl -i -pe ...`, any in-place stream edit | **`edit_file`** |
-| `cat file.txt`, `head`, `tail`, `less`, `more`, `bat` | **`read_file`** |
-| `grep -r`, `rg`, `ag`, `ack` | the dedicated **`grep`** tool |
-| `find . -name ...`, `ls -R`, `tree` | **`glob`** or **`list_dir`** |
+| Shell file-write commands (echo/printf/tee/Set-Content/Out-File to file) | **`write_file`** |
+| Shell in-place edits (sed -i / stream edits) | **`edit_file`** |
+| Shell file reads (cat/head/tail/Get-Content) | **`read_file`** |
+| Shell search (grep -r/rg/ag/Select-String) | the dedicated **`grep`** tool |
+| Shell file listing (find/ls -R/tree/Get-ChildItem) | **`glob`** or **`list_dir`** |
 
 **Why these restrictions exist:**
 - The dedicated tools apply access controls and safety checks that the bash path bypasses.
-- They return structured output the system can track, show in the UI, and include in file-change summaries. Bash redirection is invisible to these systems — the user's interface cannot display a file change that was made through `echo >`.
-- They respect mtime validation and atomic-write guarantees that `edit_file` / `write_file` provide. A `sed -i` loses all of this.
+- They return structured output the system can track, show in the UI, and include in file-change summaries. Shell redirection is invisible to these systems — the user's interface cannot display a file change that was made through shell commands.
+- They respect mtime validation and atomic-write guarantees that `edit_file` / `write_file` provide. Shell-based edits lose all of this.
 
 There are **no exceptions**. Even for "just a one-liner" or "it's faster this way" — use the right tool.
 
 ### Allowed bash patterns for filesystem work
 
 Some filesystem operations have no dedicated tool; these are fine via bash:
-- `mkdir -p path/to/dir` — creating directories.
-- `rm`, `rmdir`, `mv`, `cp` — deleting, moving, copying files (there are no dedicated tools for these; bash is the right path).
-- `chmod`, `chown`, `ln` — permissions and links.
+- Creating directories (`mkdir -p` / `New-Item -ItemType Directory`).
+- Deleting, moving, copying files (`rm`/`mv`/`cp` / `Remove-Item`/`Move-Item`/`Copy-Item`).
+- Permissions and links (`chmod`, `chown`, `ln`).
 - `git` operations on files (`git add`, `git mv`, `git rm`, etc.).
 
-**Before creating a file or directory via bash**, verify the parent directory exists first (via `list_dir` or a separate `mkdir -p`).
+**Before creating a file or directory via bash**, verify the parent directory exists first (via `list_dir` or a separate mkdir).
 
 ### Other notes
 
 - **Timeouts:** Default 60s, max 600s. Long-running commands should specify a timeout explicitly.
 - **Output limit:** ~200KB per stream. When a stream exceeds the cap the head and tail are kept and the middle is dropped; the **full untruncated output is also written to a temp file** and the path is included in the result, so you can `read_file` or `grep` the complete log if needed.
-- **Working directory:** Use the `cwd` parameter for one-off directory changes rather than `cd path && command`.
+- **Working directory:** Use the `cwd` parameter for one-off directory changes rather than changing directories inside the command.
 
 ## `bash_background`
 

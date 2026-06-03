@@ -1146,6 +1146,22 @@ export function OpenTuiApp({
     }, durationMs);
   }, []);
 
+  // Show one-time hint when running a non-bash shell on Windows.
+  useEffect(() => {
+    try {
+      // Dynamic import so the TUI module doesn't hard-depend on
+      // platform internals (opentui-src is outside the src/ TS scope).
+      const { shell } = require("../src/platform/index.js") as {
+        shell: { kind: string };
+      };
+      if (shell.kind === "pwsh") {
+        showHint("Shell: PowerShell 7+ (install Git for Windows for better compatibility)", 8000);
+      } else if (shell.kind === "powershell") {
+        showHint("Shell: Windows PowerShell 5.1 (install Git for Windows for better compatibility)", 8000);
+      }
+    } catch { /* not on Windows or import unavailable */ }
+  }, [showHint]);
+
   // Poll for background update state and show hint when actionable.
   useEffect(() => {
     let stopped = false;
