@@ -35,7 +35,7 @@ import { getFermiHomeDir } from "./home-path.js";
 
 const GITHUB_REPO = "FelixRuiGao/Fermi";
 const CACHE_FILE = ".update-check.json";
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+// No longer throttled — every launch checks for updates in the background.
 const WINDOWS_UPDATE_HELPER_RELATIVE_PATH = join("updater", "apply-staged.ps1");
 
 interface UpdateCache {
@@ -405,16 +405,6 @@ export function checkForUpdates(
     const type = getReleaseType(currentVersion, releaseVersion);
     return type === "patch" || type === "minor";
   };
-
-  const cache = readCache(home);
-  if (cache && Date.now() - cache.lastCheck < CHECK_INTERVAL_MS) {
-    if (compareVersions(currentVersion, cache.latestVersion)) {
-      state = { phase: "available", currentVersion, latestVersion: cache.latestVersion };
-    } else {
-      state = { phase: "idle", currentVersion };
-    }
-    return () => state;
-  }
 
   void (async () => {
     try {
