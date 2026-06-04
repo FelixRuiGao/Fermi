@@ -21,6 +21,22 @@
     "AI",
     "Programming Languages"
   ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding agent",
+    "chat",
+    "assistant",
+    "llm",
+    "claude",
+    "gpt",
+    "deepseek",
+    "copilot"
+  ],
+  "galleryBanner": {
+    "color": "#0969da",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
