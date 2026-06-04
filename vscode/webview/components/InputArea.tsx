@@ -3,6 +3,12 @@ import { useStore } from "../store.js";
 import { onEvent, rpcRequest } from "../vscode-api.js";
 import { SlashCommandPanel, SLASH_COMMANDS, type SlashCommandDef } from "./SlashCommandPanel.js";
 
+const PERM_COLORS: Record<string, string> = {
+  yolo: "#4ec954",
+  reversible: "#e8a838",
+  read_only: "#e05252",
+};
+
 export function InputArea() {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<Array<{ path: string; selection?: string }>>([]);
@@ -32,7 +38,6 @@ export function InputArea() {
       setInput("");
       return;
     }
-    // Send as regular input — server's session.turn handles it
     submitTurn(cmd.name);
     setInput("");
   }, [submitTurn]);
@@ -41,7 +46,6 @@ export function InputArea() {
     const trimmed = input.trim();
     if (!trimmed && files.length === 0) return;
 
-    // Check if it's a slash command with client action
     if (trimmed.startsWith("/")) {
       const cmd = SLASH_COMMANDS.find((c) => c.name === trimmed || trimmed.startsWith(c.name + " "));
       if (cmd?.clientAction) {
@@ -64,19 +68,13 @@ export function InputArea() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (showSlashPanel) return; // keyboard handled by SlashCommandPanel
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSubmit();
       }
-      if (e.key === "Escape") {
-        if (showSlashPanel) {
-          setShowSlashPanel(false);
-        } else if (isRunning) {
-          interruptTurn();
-        }
-      }
-      if (e.key === "Tab" && showSlashPanel) {
-        e.preventDefault();
+      if (e.key === "Escape" && isRunning) {
+        interruptTurn();
       }
     },
     [handleSubmit, isRunning, interruptTurn, showSlashPanel],
@@ -85,7 +83,6 @@ export function InputArea() {
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
-    // Show slash command panel when input starts with /
     const trimmed = val.trimStart();
     setShowSlashPanel(trimmed.startsWith("/") && !trimmed.includes(" ") && !trimmed.includes("\n"));
   };
@@ -101,12 +98,15 @@ export function InputArea() {
     setFiles((prev) => prev.filter((f) => f.path !== path));
   };
 
+  const permMode = status?.permissionMode ?? "reversible";
+  const permColor = PERM_COLORS[permMode] ?? PERM_COLORS.reversible;
   const shortModel = meta?.modelConfigName
     ? (meta.modelConfigName.includes(":") ? meta.modelConfigName.split(":")[1] : meta.modelConfigName)
-    : "—";
+    : "No model";
 
-  const permMode = status?.permissionMode ?? "reversible";
-  const permLabel = permMode === "yolo" ? "Full Access" : permMode === "read_only" ? "Read Only" : "Approve";
+  const tokens = status?.lastInputTokens ?? 0;
+  const budget = status?.contextBudget ?? 0;
+  const pct = budget > 0 ? Math.round((tokens / budget) * 100) : 0;
 
   return (
     <div className="input-area">
@@ -115,9 +115,7 @@ export function InputArea() {
           {files.map((f) => (
             <span key={f.path} className="file-tag">
               @{f.path}
-              <span className="file-tag-remove" onClick={() => removeFile(f.path)}>
-                ×
-              </span>
+              <span className="file-tag-remove" onClick={() => removeFile(f.path)}>×</span>
             </span>
           ))}
         </div>
@@ -127,6 +125,7 @@ export function InputArea() {
         <SlashCommandPanel
           filter={input.trimStart()}
           onSelect={handleSlashCommand}
+          onClose={() => { setShowSlashPanel(false); textareaRef.current?.focus(); }}
         />
       )}
 
@@ -139,47 +138,94 @@ export function InputArea() {
           placeholder={isRunning ? "Working..." : "Ask Fermi..."}
           rows={1}
         />
-        <div className="input-toolbar">
-          <div className="input-toolbar-left">
-            <button
-              className="toolbar-btn"
-              onClick={() => rpcRequest("__ext.addFile")}
-              title="Attach file"
-            >
-              +
-            </button>
-            <button
-              className="toolbar-btn toolbar-btn-perm"
-              title="Permission mode"
-            >
-              🛡 {permLabel}
-            </button>
-          </div>
-          <div className="input-toolbar-right">
-            <button
-              className="toolbar-btn"
-              onClick={() => rpcRequest("__ext.selectModel")}
-              title="Switch model"
-            >
-              {shortModel}
-            </button>
-            {isRunning ? (
-              <button className="send-btn send-btn-stop" onClick={() => interruptTurn()} title="Stop">
-                ■
-              </button>
-            ) : (
-              <button
-                className="send-btn"
-                onClick={handleSubmit}
-                disabled={!input.trim() && files.length === 0}
-                title="Send (Enter)"
-              >
-                ↑
-              </button>
-            )}
-          </div>
+        <div className="input-inner-toolbar">
+          <button className="itool-btn" onClick={() => rpcRequest("__ext.addFile")} title="Attach file">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a.5.5 0 0 1 .5.5v6h6a.5.5 0 0 1 0 1h-6v6a.5.5 0 0 1-1 0v-6h-6a.5.5 0 0 1 0-1h6v-6A.5.5 0 0 1 8 1z"/></svg>
+          </button>
+          <button className="itool-btn" title={`Permission: ${permMode}`}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill={permColor}><path d="M8 1l5 2v4c0 3.5-2.2 6.5-5 8-2.8-1.5-5-4.5-5-8V3l5-2z"/></svg>
+          </button>
+          <div style={{ flex: 1 }} />
+          {isRunning ? (
+            <button className="send-btn send-btn-stop" onClick={() => interruptTurn()} title="Stop">■</button>
+          ) : (
+            <button className="send-btn" onClick={handleSubmit} disabled={!input.trim() && files.length === 0} title="Send (Enter)">↑</button>
+          )}
         </div>
+      </div>
+
+      <div className="input-meta-row">
+        <span className="meta-model" onClick={() => rpcRequest("__ext.selectModel")} title="Switch model">
+          {shortModel}
+        </span>
+        <ContextRing tokens={tokens} cached={status?.lastCacheReadTokens ?? 0} budget={budget} pct={pct} />
       </div>
     </div>
   );
+}
+
+function ContextRing({ tokens, cached, budget, pct }: { tokens: number; cached: number; budget: number; pct: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const r = 8;
+  const stroke = 2.5;
+  const circ = 2 * Math.PI * r;
+  const filled = circ * (pct / 100);
+
+  return (
+    <div className="context-ring-wrap" ref={ref}>
+      <svg
+        width="22" height="22" viewBox="0 0 22 22"
+        className="context-ring"
+        onClick={() => setOpen(!open)}
+        title={`Context: ${pct}%`}
+      >
+        <circle cx="11" cy="11" r={r} fill="none" stroke="var(--vscode-foreground)" strokeOpacity="0.15" strokeWidth={stroke} />
+        <circle
+          cx="11" cy="11" r={r} fill="none"
+          stroke={pct > 80 ? "#e05252" : pct > 50 ? "#e8a838" : "var(--vscode-textLink-foreground)"}
+          strokeWidth={stroke}
+          strokeDasharray={`${filled} ${circ - filled}`}
+          strokeDashoffset={circ * 0.25}
+          strokeLinecap="round"
+        />
+      </svg>
+      {open && (
+        <div className="context-popup">
+          <div className="context-popup-row">
+            <span>Used</span>
+            <span>{formatTokens(tokens)}</span>
+          </div>
+          <div className="context-popup-row">
+            <span>Cached</span>
+            <span>{formatTokens(cached)}</span>
+          </div>
+          <div className="context-popup-row">
+            <span>Budget</span>
+            <span>{formatTokens(budget)}</span>
+          </div>
+          <div className="context-popup-row" style={{ fontWeight: 500 }}>
+            <span>Usage</span>
+            <span>{pct}%</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 }
