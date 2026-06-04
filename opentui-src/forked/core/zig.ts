@@ -75,9 +75,17 @@ const zigArch =
 const zigOs = process.platform === "darwin" ? "macos" : process.platform
 const nativeLibFile =
   process.platform === "darwin" ? "libopentui.dylib" : process.platform === "win32" ? "opentui.dll" : "libopentui.so"
+const isCompiledBinary = isBunfsPath(currentDir)
 const localNativeCandidates = [
-  join(executableDir, "native", `${process.platform}-${process.arch}`, nativeLibFile),
-  join(executableDir, nativeLibFile),
+  // Executable-adjacent paths only make sense for the compiled binary;
+  // in dev mode executableDir points at bun's own directory where a
+  // stale dylib from a previous version could shadow the npm package.
+  ...(isCompiledBinary
+    ? [
+        join(executableDir, "native", `${process.platform}-${process.arch}`, nativeLibFile),
+        join(executableDir, nativeLibFile),
+      ]
+    : []),
   join(currentDir, "zig", "zig-out", "lib", "libopentui.dylib"),
   join(currentDir, "zig", "lib", `${zigArch}-${zigOs}`, "libopentui.dylib"),
   join(currentDir, "native", `${process.platform}-${process.arch}`, "libopentui.dylib"),
