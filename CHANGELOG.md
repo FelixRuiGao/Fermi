@@ -9,6 +9,9 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Changed: upgraded vendored OpenTUI fork from 0.2.1 to 0.3.1. Native binaries (`@opentui/core-*`) and `@opentui/react` synced to 0.3.1. All Fermi-specific patches preserved. Upstream gains include blockquote/list/hr markdown renderables, Code `baseHighlight`, platform FFI abstraction, stdin CPR abort, zellij/remote-shell detection, and Input `minLength`.
+- Changed: H1 heading color now matches H2 for a more uniform look.
+
 ## v0.3.4
 
 - Added: Windows PowerShell support as fallback shell. Fermi no longer requires Git for Windows — when Git Bash is unavailable, it falls back to pwsh (PowerShell 7+) or powershell (Windows PowerShell 5.1). Shell detection is fully automatic with priority Git Bash → pwsh → powershell. The `bash` tool description and system prompt dynamically adapt to the active shell, guiding the model to write correct PowerShell syntax (cmdlet names, `$env:VAR`, chaining rules, etc.). The permission classifier uses tree-sitter-powershell for AST-accurate command classification with PowerShell-specific command sets, alias resolution (60+ entries), script-block/subexpression detection, `-EncodedCommand` prefix matching, and catastrophic-path checks for `Remove-Item -Recurse -Force` on drive roots and home directories. The TUI shows a non-blocking hint when running in PowerShell fallback mode, suggesting Git for Windows installation for better compatibility.

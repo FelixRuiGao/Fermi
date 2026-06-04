@@ -55,8 +55,8 @@ function buildMarkdownStyle(colors: DisplayThemeColorTokens, tokens: DisplayThem
   return SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromHex(colors.text) },
     conceal: { fg: RGBA.fromHex(colors.dim) },
-    "markup.heading": { fg: RGBA.fromHex(tokens.syntax.headingPrimary), bold: true },
-    "markup.heading.1": { fg: RGBA.fromHex(tokens.syntax.headingPrimary), bold: true },
+    "markup.heading": { fg: RGBA.fromHex(tokens.syntax.headingSecondary), bold: true },
+    "markup.heading.1": { fg: RGBA.fromHex(tokens.syntax.headingSecondary), bold: true },
     "markup.heading.2": { fg: RGBA.fromHex(tokens.syntax.headingSecondary), bold: true },
     "markup.heading.3": { fg: RGBA.fromHex(colors.text), bold: true },
     "markup.heading.4": { fg: RGBA.fromHex(colors.text), bold: true },
