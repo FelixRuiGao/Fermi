@@ -4,4 +4,5 @@ node_modules/**
 .vscode/**
 tsconfig.json
 esbuild.mjs
-*.map
+**/*.map
+*.vsix

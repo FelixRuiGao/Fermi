@@ -5,6 +5,11 @@
   "version": "0.1.0",
   "publisher": "fermi",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FelixRuiGao/Fermi.git",
+    "directory": "vscode"
+  },
   "engines": {
     "vscode": "^1.84.0"
   },

@@ -132,6 +132,7 @@ Full documentation: **[felixruigao.github.io/Fermi](https://felixruigao.github.i
 ## Interfaces
 
 - **Terminal (TUI)** — the primary interface, built on [OpenTUI](https://github.com/anomalyco/opentui). Run with `fermi` or `bun run dev`.
+- **VS Code extension** (`vscode/`) — a sidebar chat panel driving the same backend. Streaming markdown, tool-call cards with inline diffs, permission approval, model picker, slash commands, and `@file` context. Sessions are shared with the TUI, so terminal conversations show up in the extension's history and vice versa. Works over Remote SSH (runs on the remote host) with one-click `fermi` install when the binary is missing.
 - **Desktop (GUI)** — an Electron app in early development (`gui/`). Same runtime, different frontend.
 
 ## Development
