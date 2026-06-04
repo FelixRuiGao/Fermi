@@ -1,5 +1,7 @@
 # Fermi for VS Code
 
+English | <a href="./README.zh-CN.md">中文</a>
+
 A sidebar chat panel for [Fermi](https://github.com/FelixRuiGao/Fermi) — an AI coding agent built for long sessions. Same backend as the terminal app, in your editor.
 
 ## Features
