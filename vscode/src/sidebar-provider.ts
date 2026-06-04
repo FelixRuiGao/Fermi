@@ -13,6 +13,8 @@ export class FermiSidebarProvider implements vscode.WebviewViewProvider {
   private statusBar: FermiStatusBar;
   private extensionUri: vscode.Uri;
   private outputChannel: vscode.OutputChannel;
+  private cachedServerState: { event: string; params: unknown } | null = null;
+  private needsInit = false;
 
   constructor(
     extensionUri: vscode.Uri,
@@ -141,10 +143,14 @@ export class FermiSidebarProvider implements vscode.WebviewViewProvider {
         const meta = params as any;
         if (meta?.modelConfigName) this.statusBar.updateModel(meta.modelConfigName);
         vscode.commands.executeCommand("setContext", "fermi.isConnected", true);
+        this.cachedServerState = { event: "ready", params };
+        this.needsInit = false;
       }
 
       if (method === "needs_init") {
         vscode.commands.executeCommand("setContext", "fermi.needsInit", true);
+        this.needsInit = true;
+        this.cachedServerState = null;
       }
 
       if (method === "log.changed") {
@@ -191,11 +197,28 @@ export class FermiSidebarProvider implements vscode.WebviewViewProvider {
 
   private async handleWebviewMessage(msg: WebviewToExtMessage): Promise<void> {
     if (msg.type === "ready") {
+      if (this.cachedServerState) {
+        this.postEvent(this.cachedServerState.event, this.cachedServerState.params);
+      } else if (this.needsInit) {
+        this.postEvent("needs_init", {});
+      }
       return;
     }
 
     if (msg.type === "rpc") {
       // Special client-side commands
+      if (msg.method === "__ext.newSession") {
+        this.newSession();
+        this.postToWebview({ type: "rpc-response", id: msg.id, result: { ok: true } });
+        return;
+      }
+
+      if (msg.method === "__ext.selectModel") {
+        this.selectModel();
+        this.postToWebview({ type: "rpc-response", id: msg.id, result: { ok: true } });
+        return;
+      }
+
       if (msg.method === "vscode.showDiff") {
         const p = msg.params as any;
         try {

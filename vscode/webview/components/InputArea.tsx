@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useStore } from "../store.js";
-import { onEvent } from "../vscode-api.js";
+import { onEvent, rpcRequest } from "../vscode-api.js";
 
 export function InputArea() {
   const [input, setInput] = useState("");
@@ -25,6 +25,23 @@ export function InputArea() {
     const trimmed = input.trim();
     if (!trimmed && files.length === 0) return;
 
+    // Slash commands handled client-side
+    if (trimmed === "/clear") {
+      rpcRequest("__ext.newSession");
+      setInput("");
+      return;
+    }
+    if (trimmed === "/model") {
+      rpcRequest("__ext.selectModel");
+      setInput("");
+      return;
+    }
+    if (trimmed === "/compact") {
+      rpcRequest("session.compact", {});
+      setInput("");
+      return;
+    }
+
     let fullInput = "";
     for (const f of files) {
       fullInput += `@${f.path}\n`;
@@ -38,7 +55,7 @@ export function InputArea() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSubmit();
       }
@@ -48,6 +65,13 @@ export function InputArea() {
     },
     [handleSubmit, isRunning, interruptTurn],
   );
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  }, [input]);
 
   const removeFile = (path: string) => {
     setFiles((prev) => prev.filter((f) => f.path !== path));
@@ -67,26 +91,27 @@ export function InputArea() {
           ))}
         </div>
       )}
-      <textarea
-        ref={textareaRef}
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={isRunning ? "Thinking... (Esc to interrupt)" : "Ask Fermi... (Ctrl+Enter to send)"}
-        disabled={false}
-        rows={3}
-      />
-      <div className="input-controls">
-        <span className="input-hint">
-          {isRunning ? "Esc to interrupt" : "Ctrl+Enter to send"}
-        </span>
+      <div className="input-row">
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={isRunning ? "Working..." : "Ask Fermi..."}
+          rows={1}
+        />
         {isRunning ? (
-          <button className="btn-deny" onClick={() => interruptTurn()}>
-            Stop
+          <button className="input-btn input-btn-stop" onClick={() => interruptTurn()} title="Stop">
+            ■
           </button>
         ) : (
-          <button className="btn-approve" onClick={handleSubmit} disabled={!input.trim() && files.length === 0}>
-            Send
+          <button
+            className="input-btn input-btn-send"
+            onClick={handleSubmit}
+            disabled={!input.trim() && files.length === 0}
+            title="Send (Enter)"
+          >
+            ↑
           </button>
         )}
       </div>
