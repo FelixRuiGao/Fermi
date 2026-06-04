@@ -219,6 +219,16 @@ export class FermiSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
 
+      if (msg.method === "__ext.addFile") {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          const relativePath = vscode.workspace.asRelativePath(editor.document.uri);
+          this.addFileToChat(relativePath);
+        }
+        this.postToWebview({ type: "rpc-response", id: msg.id, result: { ok: true } });
+        return;
+      }
+
       if (msg.method === "vscode.showDiff") {
         const p = msg.params as any;
         try {

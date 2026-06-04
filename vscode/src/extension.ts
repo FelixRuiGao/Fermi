@@ -18,6 +18,25 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   );
 
+  // ── Chat Participant (Codex-style: session list in Copilot panel) ──
+  try {
+    const participant = vscode.chat.createChatParticipant("fermi", async (request, _context, stream, _token) => {
+      // When user sends a message through the Copilot panel, open our
+      // webview sidebar and forward the message there instead.
+      await vscode.commands.executeCommand("fermi.chatView.focus");
+      if (request.prompt) {
+        sidebarProvider.addFileToChat("", request.prompt);
+      }
+      stream.markdown("*Opened in Fermi sidebar panel.*");
+    });
+    participant.iconPath = vscode.Uri.joinPath(context.extensionUri, "resources", "fermi-icon.svg");
+    context.subscriptions.push(participant);
+  } catch {
+    // Chat API may not be available in older VSCode versions
+  }
+
+  // ── Commands ──
+
   context.subscriptions.push(
     vscode.commands.registerCommand("fermi.newSession", () => {
       sidebarProvider.newSession();

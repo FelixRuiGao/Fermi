@@ -4,8 +4,11 @@ import { rpcRequest } from "../vscode-api.js";
 
 interface SessionItem {
   sessionId: string;
+  path: string;
   title?: string;
-  lastActive?: string;
+  summary?: string;
+  lastActiveAt: string;
+  turns: number;
 }
 
 export function HeaderBar() {
@@ -16,6 +19,7 @@ export function HeaderBar() {
 
   const handleNewSession = () => {
     rpcRequest("__ext.newSession");
+    setShowHistory(false);
   };
 
   const handleToggleHistory = async () => {
@@ -41,13 +45,12 @@ export function HeaderBar() {
     } catch {}
   };
 
-  const title = meta?.title || meta?.displayName || "Fermi";
-  const shortTitle = title.length > 30 ? title.slice(0, 28) + "..." : title;
+  const title = meta?.title || meta?.displayName || "New session";
 
   return (
     <>
       <div className="header-bar">
-        <span className="header-title" title={title}>{shortTitle}</span>
+        <span className="header-title" title={title}>{title}</span>
         <div className="header-actions">
           <button className="header-btn" onClick={handleToggleHistory} title="Session history">
             ⏱
@@ -59,9 +62,9 @@ export function HeaderBar() {
       </div>
       {showHistory && (
         <div className="session-list-dropdown">
-          {loading && <div className="session-item">Loading...</div>}
+          {loading && <div className="session-item" style={{ opacity: 0.5 }}>Loading...</div>}
           {!loading && sessions.length === 0 && (
-            <div className="session-item" style={{ opacity: 0.5 }}>No saved sessions</div>
+            <div className="session-item" style={{ opacity: 0.4 }}>No saved sessions</div>
           )}
           {sessions.map((s) => (
             <div
@@ -69,10 +72,14 @@ export function HeaderBar() {
               className="session-item"
               onClick={() => handleRestoreSession(s.sessionId)}
             >
-              <span className="session-title">{s.title || s.sessionId}</span>
-              {s.lastActive && (
-                <span className="session-time">{formatRelativeTime(s.lastActive)}</span>
-              )}
+              <div className="session-info">
+                <span className="session-title">
+                  {s.title || s.summary || s.sessionId}
+                </span>
+                <span className="session-meta">
+                  {s.turns} turns · {formatRelativeTime(s.lastActiveAt)}
+                </span>
+              </div>
             </div>
           ))}
         </div>
@@ -92,7 +99,8 @@ function formatRelativeTime(isoString: string): string {
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+    if (days < 30) return `${days}d ago`;
+    return `${Math.floor(days / 30)}mo ago`;
   } catch {
     return "";
   }
