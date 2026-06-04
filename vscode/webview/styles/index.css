@@ -337,7 +337,6 @@ body {
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
   border-radius: 12px;
-  overflow: hidden;
 }
 
 .input-box:focus-within {
@@ -475,6 +474,52 @@ body {
   opacity: 0.55;
 }
 
+/* ── Permission menu ── */
+.perm-menu {
+  position: absolute;
+  bottom: 36px;
+  left: -4px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 200px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.perm-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.88em;
+}
+.perm-menu-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.perm-menu-active {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.perm-menu-text {
+  flex: 1;
+}
+.perm-menu-label {
+  font-weight: 500;
+  font-size: 0.92em;
+}
+.perm-menu-desc {
+  opacity: 0.45;
+  font-size: 0.8em;
+}
+.perm-check {
+  opacity: 0.6;
+  font-size: 0.9em;
+}
+
 /* ── Slash command panel ── */
 .slash-panel {
   background: var(--vscode-editor-background);
@@ -598,16 +643,7 @@ body {
   background: var(--vscode-button-secondaryHoverBackground);
 }
 
-/* ── Status bar ── */
-.status-bar-bottom {
-  display: flex;
-  justify-content: space-between;
-  padding: 3px 12px;
-  font-size: 0.78em;
-  opacity: 0.5;
-  border-top: 1px solid var(--vscode-panel-border);
-  flex-shrink: 0;
-}
+/* (status-bar-bottom removed — info is in input-meta-row) */
 
 /* ── Welcome / Loading ── */
 .welcome {
@@ -631,6 +667,36 @@ body {
   opacity: 0.6;
   max-width: 280px;
   line-height: 1.6;
+}
+
+.welcome-logo {
+  font-size: 2.4em;
+  color: var(--vscode-textLink-foreground);
+  opacity: 0.9;
+}
+
+.install-btn {
+  margin-top: 4px;
+  padding: 8px 24px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.95em;
+  font-weight: 500;
+}
+.install-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.install-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.welcome-hint {
+  font-size: 0.8em !important;
+  opacity: 0.4 !important;
 }
 
 /* ── Init wizard ── */

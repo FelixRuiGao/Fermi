@@ -38,9 +38,10 @@ export function HeaderBar() {
     setShowHistory(true);
   };
 
-  const handleRestoreSession = async (sessionId: string) => {
+  const handleRestoreSession = async (sessionId: string, title?: string) => {
     try {
-      await rpcRequest("session.restoreSession", { sessionId });
+      // Open the session in its own editor tab (Codex-style).
+      await rpcRequest("__ext.openSession", { sessionId, title });
       setShowHistory(false);
     } catch {}
   };
@@ -70,7 +71,7 @@ export function HeaderBar() {
             <div
               key={s.sessionId}
               className="session-item"
-              onClick={() => handleRestoreSession(s.sessionId)}
+              onClick={() => handleRestoreSession(s.sessionId, s.title || s.summary)}
             >
               <div className="session-info">
                 <span className="session-title">

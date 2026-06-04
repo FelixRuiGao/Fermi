@@ -6,11 +6,18 @@
   "publisher": "fermi",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.84.0"
   },
-  "extensionKind": ["workspace"],
-  "categories": ["AI", "Programming Languages"],
-  "activationEvents": ["onStartupFinished"],
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -18,7 +25,16 @@
         {
           "id": "fermi-sidebar",
           "title": "Fermi",
-          "icon": "resources/fermi-icon.svg"
+          "icon": "resources/fermi-icon.svg",
+          "when": "fermi.doesNotSupportSecondarySidebar"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "fermi-secondary",
+          "title": "Fermi",
+          "icon": "resources/fermi-icon.svg",
+          "when": "!fermi.doesNotSupportSecondarySidebar"
         }
       ]
     },
@@ -27,22 +43,56 @@
         {
           "type": "webview",
           "id": "fermi.chatView",
-          "name": "Fermi"
+          "name": "Fermi",
+          "when": "fermi.doesNotSupportSecondarySidebar"
+        }
+      ],
+      "fermi-secondary": [
+        {
+          "type": "webview",
+          "id": "fermi.secondaryView",
+          "name": "Fermi",
+          "when": "!fermi.doesNotSupportSecondarySidebar"
         }
       ]
     },
     "commands": [
-      { "command": "fermi.newSession", "title": "Fermi: New Session" },
-      { "command": "fermi.addFileToChat", "title": "Fermi: Add File to Chat" },
-      { "command": "fermi.addSelectionToChat", "title": "Fermi: Add Selection to Chat" },
-      { "command": "fermi.selectModel", "title": "Fermi: Select Model" },
-      { "command": "fermi.interruptTurn", "title": "Fermi: Interrupt" },
-      { "command": "fermi.switchSession", "title": "Fermi: Switch Session" }
+      {
+        "command": "fermi.newSession",
+        "title": "Fermi: New Session"
+      },
+      {
+        "command": "fermi.addFileToChat",
+        "title": "Fermi: Add File to Chat"
+      },
+      {
+        "command": "fermi.addSelectionToChat",
+        "title": "Fermi: Add Selection to Chat"
+      },
+      {
+        "command": "fermi.selectModel",
+        "title": "Fermi: Select Model"
+      },
+      {
+        "command": "fermi.interruptTurn",
+        "title": "Fermi: Interrupt"
+      },
+      {
+        "command": "fermi.switchSession",
+        "title": "Fermi: Switch Session"
+      }
     ],
     "menus": {
       "editor/context": [
-        { "command": "fermi.addFileToChat", "group": "fermi" },
-        { "command": "fermi.addSelectionToChat", "when": "editorHasSelection", "group": "fermi" }
+        {
+          "command": "fermi.addFileToChat",
+          "group": "fermi"
+        },
+        {
+          "command": "fermi.addSelectionToChat",
+          "when": "editorHasSelection",
+          "group": "fermi"
+        }
       ]
     },
     "keybindings": [
@@ -61,7 +111,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.84.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.24.0"
   },

@@ -39,6 +39,7 @@ interface StoreState {
   interruptTurn(): Promise<void>;
   refreshLog(): Promise<void>;
   refreshModels(): Promise<void>;
+  refreshStatus(): Promise<void>;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -60,6 +61,7 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ mode: "chat", meta });
       get().refreshLog();
       get().refreshModels();
+      get().refreshStatus();
     });
 
     // Needs init → wizard mode
@@ -67,6 +69,22 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ mode: "init" });
       rpcRequest<ConfigStatus>("init.checkConfig").then((status) => {
         set({ configStatus: status });
+      });
+    });
+
+    // New session starting — clear log but stay in chat mode
+    onEvent("session.starting", (params) => {
+      const p = params as { modelConfigName?: string };
+      const currentMeta = get().meta;
+      set({
+        logEntries: [],
+        logRevision: -1,
+        activeLogEntryId: null,
+        pendingAsk: null,
+        status: null,
+        meta: currentMeta
+          ? { ...currentMeta, title: "New session", turnCount: 0, modelConfigName: p.modelConfigName || currentMeta.modelConfigName }
+          : null,
       });
     });
 
@@ -102,6 +120,15 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ pendingAsk: null });
     });
 
+    // Permission change
+    onEvent("permission.changed", (params) => {
+      const p = params as { mode: string };
+      const status = get().status;
+      if (status) {
+        set({ status: { ...status, permissionMode: p.mode } });
+      }
+    });
+
     // Model change
     onEvent("model.changed", (params) => {
       const p = params as { name: string };
@@ -121,16 +148,13 @@ export const useStore = create<StoreState>((set, get) => ({
       if (status) set({ status: { ...status, currentTurnRunning: false } });
     });
 
-    // Session reset
+    // Session reset (legacy, kept for compat)
     onEvent("session.reset", () => {
       set({
         logEntries: [],
         logRevision: -1,
         activeLogEntryId: null,
         pendingAsk: null,
-        meta: null,
-        status: null,
-        mode: "loading",
       });
     });
   },
@@ -172,6 +196,13 @@ export const useStore = create<StoreState>((set, get) => ({
     try {
       const models = await rpcRequest<ModelDescriptor[]>("session.listAvailableModels");
       set({ models });
+    } catch {}
+  },
+
+  async refreshStatus() {
+    try {
+      const s = await rpcRequest<SessionStatus>("session.getStatus");
+      set({ status: s });
     } catch {}
   },
 }));

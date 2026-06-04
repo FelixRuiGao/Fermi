@@ -1,76 +1,33 @@
 import * as vscode from "vscode";
+import { SessionManager } from "./session-manager.js";
 import { FermiSidebarProvider } from "./sidebar-provider.js";
-import { FermiStatusBar } from "./status-bar.js";
 
 export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel("Fermi");
-  const statusBar = new FermiStatusBar();
-  const sidebarProvider = new FermiSidebarProvider(
-    context.extensionUri,
-    statusBar,
-    outputChannel,
-  );
+  const sessionManager = new SessionManager(context.extensionUri, outputChannel);
+  const sidebarProvider = new FermiSidebarProvider(context.extensionUri, sessionManager);
 
+  vscode.commands.executeCommand("setContext", "fermi.doesNotSupportSecondarySidebar", false);
+
+  // Webview views (primary + secondary sidebar)
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      FermiSidebarProvider.viewType,
-      sidebarProvider,
-    ),
+    vscode.window.registerWebviewViewProvider(FermiSidebarProvider.viewType, sidebarProvider),
+    vscode.window.registerWebviewViewProvider("fermi.secondaryView", sidebarProvider),
   );
-
-  // ── Chat Participant (Codex-style: session list in Copilot panel) ──
-  try {
-    const participant = vscode.chat.createChatParticipant("fermi", async (request, _context, stream, _token) => {
-      // When user sends a message through the Copilot panel, open our
-      // webview sidebar and forward the message there instead.
-      await vscode.commands.executeCommand("fermi.chatView.focus");
-      if (request.prompt) {
-        sidebarProvider.addFileToChat("", request.prompt);
-      }
-      stream.markdown("*Opened in Fermi sidebar panel.*");
-    });
-    participant.iconPath = vscode.Uri.joinPath(context.extensionUri, "resources", "fermi-icon.svg");
-    context.subscriptions.push(participant);
-  } catch {
-    // Chat API may not be available in older VSCode versions
-  }
 
   // ── Commands ──
-
   context.subscriptions.push(
-    vscode.commands.registerCommand("fermi.newSession", () => {
-      sidebarProvider.newSession();
-    }),
-  );
+    vscode.commands.registerCommand("fermi.newSession", () => sidebarProvider.newSession()),
+    vscode.commands.registerCommand("fermi.interruptTurn", () => sidebarProvider.interruptTurn()),
+    vscode.commands.registerCommand("fermi.selectModel", () => sidebarProvider.selectModel()),
+    vscode.commands.registerCommand("fermi.switchSession", () => sidebarProvider.switchSession()),
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("fermi.interruptTurn", () => {
-      sidebarProvider.interruptTurn();
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("fermi.selectModel", () => {
-      sidebarProvider.selectModel();
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("fermi.switchSession", () => {
-      sidebarProvider.switchSession();
-    }),
-  );
-
-  context.subscriptions.push(
     vscode.commands.registerCommand("fermi.addFileToChat", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      const relativePath = vscode.workspace.asRelativePath(editor.document.uri);
-      sidebarProvider.addFileToChat(relativePath);
+      sidebarProvider.addFileToChat(vscode.workspace.asRelativePath(editor.document.uri));
     }),
-  );
 
-  context.subscriptions.push(
     vscode.commands.registerCommand("fermi.addSelectionToChat", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
@@ -84,8 +41,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  context.subscriptions.push(statusBar);
   context.subscriptions.push(outputChannel);
+  context.subscriptions.push({ dispose: () => sessionManager.kill() });
 }
 
 export function deactivate() {}

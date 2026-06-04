@@ -45,3 +45,6 @@ vscode/out/
 gui/node_modules/
 gui/out/
 gui/dist/
+
+# VSCode extension package artifacts
+vscode/*.vsix

@@ -1,16 +1,32 @@
-import React from "react";
+import React, { useState } from "react";
+import { rpcRequest } from "../vscode-api.js";
 
 export function BinaryNotFound() {
+  const [installing, setInstalling] = useState(false);
+
+  const handleInstall = async () => {
+    setInstalling(true);
+    try {
+      await rpcRequest("__ext.installFermi");
+    } finally {
+      setInstalling(false);
+    }
+  };
+
   return (
     <div className="welcome">
-      <h2>Fermi Not Found</h2>
+      <div className="welcome-logo">✦</div>
+      <h2>Welcome to Fermi</h2>
       <p>
-        The <code>fermi</code> binary was not found on this machine.
-        Install it first, then reopen this panel.
+        Fermi isn't installed on this machine yet. Install it with one click
+        to get started.
       </p>
-      <pre style={{ fontSize: "0.85em", opacity: 0.8, textAlign: "left" }}>
-        curl -fsSL https://fermi.sh/install | sh
-      </pre>
+      <button className="install-btn" onClick={handleInstall} disabled={installing}>
+        {installing ? "Installing…" : "Install Fermi"}
+      </button>
+      <p className="welcome-hint">
+        Downloads the latest release to <code>~/.fermi/bin</code>
+      </p>
     </div>
   );
 }

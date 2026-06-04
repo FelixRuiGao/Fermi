@@ -5,7 +5,7 @@ import { HeaderBar } from "./components/HeaderBar.js";
 import { Transcript } from "./components/Transcript.js";
 import { InputArea } from "./components/InputArea.js";
 import { AskPanel } from "./components/AskPanel.js";
-import { StatusInfo } from "./components/StatusInfo.js";
+// StatusInfo removed — model + context are in InputArea's meta row
 import { InitWizard } from "./components/InitWizard.js";
 import { BinaryNotFound, ErrorView, LoadingView } from "./components/WelcomeView.js";
 
@@ -30,7 +30,6 @@ export function App() {
       <Transcript />
       <AskPanel />
       <InputArea />
-      <StatusInfo />
     </>
   );
 }

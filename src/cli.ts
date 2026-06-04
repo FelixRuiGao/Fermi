@@ -322,6 +322,26 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
     });
 
   program
+    .command("sessions")
+    .description("List saved sessions for a project directory")
+    .option("--json", "Output as JSON")
+    .option("--work-dir <path>", "Project directory (defaults to cwd)")
+    .action(async (opts: { json?: boolean; workDir?: string }) => {
+      ranSubcommand = true;
+      const { SessionStore } = await import("./persistence.js");
+      const projectPath = opts.workDir ? resolve(opts.workDir) : process.cwd();
+      const store = new SessionStore({ projectPath });
+      const sessions = store.listSessions();
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(sessions) + "\n");
+      } else {
+        for (const s of sessions) {
+          console.log(`${s.sessionId}  ${s.title || s.summary || "(untitled)"}  (${s.turns} turns)`);
+        }
+      }
+    });
+
+  program
     .command("update")
     .description("Check for and install the latest version")
     .option("--check", "Check for updates without installing")

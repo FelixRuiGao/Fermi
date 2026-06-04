@@ -13,6 +13,9 @@ Release notes. A missing or empty section fails CI.
 - Added: Parallel Web Search MCP as a new fallback in the client-side search chain. The priority is now: API key backends → Exa free MCP → Parallel free MCP → DuckDuckGo lite. Parallel runs its own web-scale index and requires no API key or registration.
 - Changed: upgraded vendored OpenTUI fork from 0.2.1 to 0.3.1. Native binaries (`@opentui/core-*`) and `@opentui/react` synced to 0.3.1. All Fermi-specific patches preserved. Upstream gains include blockquote/list/hr markdown renderables, Code `baseHighlight`, platform FFI abstraction, stdin CPR abort, zellij/remote-shell detection, and Input `minLength`.
 - Changed: H1 heading color now matches H2 for a more uniform look.
+- Added: VS Code extension (`vscode/`) — a sidebar chat panel that drives the same `fermi --server` backend as the GUI. Streaming markdown, tool-call cards with inline diffs, permission approval, model picker, slash commands, `@file` context from the editor, and an in-webview first-run setup wizard. Sessions are shared with the TUI (same on-disk storage), so conversations started in the terminal appear in the extension's history and vice versa; clicking one opens it in an editor tab. Works over Remote SSH (runs on the remote host) and offers one-click install when the `fermi` binary is missing. Marketplace-publishable (no proposed APIs).
+- Added: `fermi sessions [--json] [--work-dir <path>]` lists saved sessions for a project directory (reads on-disk storage without starting a server). Used by the VS Code extension's history list.
+- Changed: `fermi --server` now enters an interactive setup mode (instead of erroring) when no providers are configured, so GUI/extension clients can drive the init wizard over RPC rather than requiring `fermi init` in a terminal first.
 
 ## v0.3.4
 

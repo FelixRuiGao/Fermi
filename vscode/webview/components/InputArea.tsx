@@ -3,16 +3,22 @@ import { useStore } from "../store.js";
 import { onEvent, rpcRequest } from "../vscode-api.js";
 import { SlashCommandPanel, SLASH_COMMANDS, type SlashCommandDef } from "./SlashCommandPanel.js";
 
-const PERM_COLORS: Record<string, string> = {
-  yolo: "#4ec954",
-  reversible: "#e8a838",
-  read_only: "#e05252",
-};
+const PERM_MODES = [
+  { mode: "reversible", label: "Approve Edits", desc: "Ask before file changes", color: "#e8a838" },
+  { mode: "yolo", label: "Full Access", desc: "No approval needed", color: "#e05252" },
+  { mode: "read_only", label: "Read Only", desc: "No file modifications", color: "#4ec954" },
+] as const;
+
+function permColor(mode: string): string {
+  return PERM_MODES.find((p) => p.mode === mode)?.color ?? "#e8a838";
+}
 
 export function InputArea() {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<Array<{ path: string; selection?: string }>>([]);
   const [showSlashPanel, setShowSlashPanel] = useState(false);
+  const [showPermMenu, setShowPermMenu] = useState(false);
+  const permMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submitTurn = useStore((s) => s.submitTurn);
   const isRunning = useStore((s) => s.status?.currentTurnRunning ?? false);
@@ -30,6 +36,15 @@ export function InputArea() {
       textareaRef.current?.focus();
     });
   }, []);
+
+  useEffect(() => {
+    if (!showPermMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (permMenuRef.current && !permMenuRef.current.contains(e.target as Node)) setShowPermMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showPermMenu]);
 
   const handleSlashCommand = useCallback((cmd: SlashCommandDef) => {
     setShowSlashPanel(false);
@@ -99,7 +114,6 @@ export function InputArea() {
   };
 
   const permMode = status?.permissionMode ?? "reversible";
-  const permColor = PERM_COLORS[permMode] ?? PERM_COLORS.reversible;
   const shortModel = meta?.modelConfigName
     ? (meta.modelConfigName.includes(":") ? meta.modelConfigName.split(":")[1] : meta.modelConfigName)
     : "No model";
@@ -142,9 +156,32 @@ export function InputArea() {
           <button className="itool-btn" onClick={() => rpcRequest("__ext.addFile")} title="Attach file">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a.5.5 0 0 1 .5.5v6h6a.5.5 0 0 1 0 1h-6v6a.5.5 0 0 1-1 0v-6h-6a.5.5 0 0 1 0-1h6v-6A.5.5 0 0 1 8 1z"/></svg>
           </button>
-          <button className="itool-btn" title={`Permission: ${permMode}`}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill={permColor}><path d="M8 1l5 2v4c0 3.5-2.2 6.5-5 8-2.8-1.5-5-4.5-5-8V3l5-2z"/></svg>
-          </button>
+          <div style={{ position: "relative" }} ref={permMenuRef}>
+            <button className="itool-btn" title={`Permission: ${permMode}`} onClick={() => setShowPermMenu(!showPermMenu)}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={permColor(permMode)} strokeWidth="1.5"><path d="M8 1.5l4.5 1.8v3.7c0 3.2-2 5.9-4.5 7.2-2.5-1.3-4.5-4-4.5-7.2V3.3L8 1.5z"/></svg>
+            </button>
+            {showPermMenu && (
+              <div className="perm-menu">
+                {PERM_MODES.map((p) => (
+                  <div
+                    key={p.mode}
+                    className={`perm-menu-item ${permMode === p.mode ? "perm-menu-active" : ""}`}
+                    onClick={() => {
+                      rpcRequest("session.setPermissionMode", { mode: p.mode });
+                      setShowPermMenu(false);
+                    }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill={p.color}/></svg>
+                    <div className="perm-menu-text">
+                      <div className="perm-menu-label">{p.label}</div>
+                      <div className="perm-menu-desc">{p.desc}</div>
+                    </div>
+                    {permMode === p.mode && <span className="perm-check">✓</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ flex: 1 }} />
           {isRunning ? (
             <button className="send-btn send-btn-stop" onClick={() => interruptTurn()} title="Stop">■</button>
@@ -188,7 +225,6 @@ function ContextRing({ tokens, cached, budget, pct }: { tokens: number; cached: 
         width="22" height="22" viewBox="0 0 22 22"
         className="context-ring"
         onClick={() => setOpen(!open)}
-        title={`Context: ${pct}%`}
       >
         <circle cx="11" cy="11" r={r} fill="none" stroke="var(--vscode-foreground)" strokeOpacity="0.15" strokeWidth={stroke} />
         <circle

@@ -248,13 +248,17 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
     onShutdown: shutdown,
   });
 
-  // Emit ready event with session metadata so the GUI can populate its UI
+  // Emit ready event with session metadata so the GUI can populate its UI.
+  // Field names must match session-rpc.ts buildMeta() for consistency.
   rpc.emit("ready", {
     sessionId: session._createdAt,
     sessionDir: store.sessionDir ?? null,
     workDir: projectPath,
-    selectedModel: session.currentModelConfigName ?? "",
+    modelConfigName: session.currentModelConfigName ?? "",
     modelProvider: session.primaryAgent?.modelConfig?.provider ?? "",
+    thinkingLevel: (session as any).thinkingLevel ?? "none",
+    accentColor: (session as any).accentColor,
+    turnCount: (session as any)._turnCount ?? 0,
     title: session.getTitle(),
     displayName: session.getDisplayName(),
   });
