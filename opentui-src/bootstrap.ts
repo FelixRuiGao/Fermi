@@ -27,7 +27,6 @@ import { applyPersistedModelSelectionToSession } from "../src/model-restore.js";
 import {
   hasAnyManagedCredential,
 } from "../src/managed-provider-credentials.js";
-import { setAccent } from "../src/accent.js";
 
 function identifyPrimaryAgent(
   agents: Record<string, Agent>,
@@ -237,9 +236,6 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   // ── Apply settings to session ──
   session.applySettings(settings, modelState);
   await refreshActiveOpenAICodexToken(session);
-  if (settings.accent_color) {
-    setAccent(settings.accent_color);
-  }
 
   // ── Shiki syntax highlighter (disable with FERMI_SHIKI=0) ──
   if (opts?.initHighlighter !== false) {

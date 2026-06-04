@@ -1,10 +1,10 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="fermiBg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5a5af4"/>
-      <stop offset="1" stop-color="#4b4bf0"/>
+      <stop stop-color="#1a7ae0"/>
+      <stop offset="1" stop-color="#0969da"/>
     </linearGradient>
   </defs>
   <rect width="128" height="128" rx="28" fill="url(#fermiBg)"/>
-  <path d="M38 33 H88 V49 H54 V55 H76 V70 H54 V95 H38 Z" fill="#ffffff"/>
+  <path d="M41 33 H91 V49 H57 V55 H79 V70 H57 V95 H41 Z" fill="#ffffff"/>
 </svg>
