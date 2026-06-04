@@ -83,6 +83,8 @@ pub const GraphemePool = struct {
         while (i < MAX_CLASSES) : (i += 1) {
             self.classes[i].deinit();
         }
+
+        self.* = undefined;
     }
 
     /// removeInternedLiveId removes an interned ID from the live set if it
@@ -167,7 +169,7 @@ pub const GraphemePool = struct {
         const class_id: u32 = classForSize(bytes.len);
         const slot_index = try self.classes[class_id].allocInternal(bytes, true);
         const generation = self.classes[class_id].getGeneration(slot_index);
-        return try packId(class_id, slot_index, generation);
+        return packId(class_id, slot_index, generation);
     }
 
     /// Allocate an ID for externally managed memory (no copy, just reference)
@@ -178,7 +180,7 @@ pub const GraphemePool = struct {
         const class_id: u32 = classForSize(ptr_size);
         const slot_index = try self.classes[class_id].allocInternal(bytes, false);
         const generation = self.classes[class_id].getGeneration(slot_index);
-        return try packId(class_id, slot_index, generation);
+        return packId(class_id, slot_index, generation);
     }
 
     pub fn incref(self: *GraphemePool, id: IdPayload) GraphemePoolError!void {
@@ -257,7 +259,7 @@ pub const GraphemePool = struct {
         slot_capacity: u32,
         slots_per_page: u32,
         slot_size_bytes: usize,
-        slots: std.ArrayListAlignedUnmanaged(u8, std.mem.Alignment.of(SlotHeader)),
+        slots: std.ArrayListUnmanaged(u8),
         free_list: std.ArrayListUnmanaged(u32),
         num_slots: u32,
 
@@ -279,6 +281,7 @@ pub const GraphemePool = struct {
         pub fn deinit(self: *ClassPool) void {
             self.slots.deinit(self.allocator);
             self.free_list.deinit(self.allocator);
+            self.* = undefined;
         }
 
         fn grow(self: *ClassPool) GraphemePoolError!void {
@@ -286,7 +289,6 @@ pub const GraphemePool = struct {
 
             try self.slots.ensureTotalCapacity(self.allocator, self.slots.items.len + add_bytes);
             try self.slots.appendNTimes(self.allocator, 0, add_bytes);
-            std.debug.assert(std.mem.Alignment.of(SlotHeader).check(@intFromPtr(self.slots.items.ptr)));
 
             var i: u32 = 0;
             while (i < self.slots_per_page) : (i += 1) {
@@ -521,6 +523,7 @@ pub const GraphemeTracker = struct {
     pub fn deinit(self: *GraphemeTracker) void {
         self.decRefAll();
         self.used_ids.deinit();
+        self.* = undefined;
     }
 
     pub fn clear(self: *GraphemeTracker) void {

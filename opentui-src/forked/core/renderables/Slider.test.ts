@@ -148,7 +148,7 @@ test("SliderRenderable > Vertical thumb size calculation", async () => {
 
   slider.viewPortSize = 1
   // @ts-expect-error - Testing private method
-  expect(slider.getVirtualThumbSize()).toBe(2)
+  expect(slider.getVirtualThumbSize()).toBe(1)
 
   slider.viewPortSize = 150
   // @ts-expect-error - Testing private method
@@ -179,64 +179,6 @@ test("SliderRenderable > Horizontal thumb size calculation", async () => {
   expect(slider.getVirtualThumbSize()).toBe(1)
 })
 
-test("SliderRenderable > Vertical thumb metrics preserve fixed size and sub-cell position", async () => {
-  const { slider } = await createSliderRenderable(currentRenderer, {
-    orientation: "vertical",
-    min: 0,
-    max: 100,
-    value: 0,
-    width: 1,
-    height: 20,
-    viewPortSize: 20,
-  })
-
-  // @ts-expect-error - Testing private method
-  const startMetrics = slider.getThumbMetrics()
-  expect(startMetrics.start).toBe(0)
-  expect(startMetrics.size).toBe(3.375)
-
-  slider.value = 1
-
-  // @ts-expect-error - Testing private method
-  const nextMetrics = slider.getThumbMetrics()
-  expect(nextMetrics.start).toBeGreaterThan(0)
-  expect(nextMetrics.start).toBeLessThan(1)
-  expect(nextMetrics.size).toBe(startMetrics.size)
-
-  slider.value = 50
-
-  // @ts-expect-error - Testing private method
-  const middleMetrics = slider.getThumbMetrics()
-  expect(middleMetrics.size).toBe(startMetrics.size)
-
-  slider.value = 100
-
-  // @ts-expect-error - Testing private method
-  const endMetrics = slider.getThumbMetrics()
-  expect(endMetrics.size).toBe(startMetrics.size)
-})
-
-test("SliderRenderable > minThumbSize clamps rendered thumb metrics", async () => {
-  const { slider } = await createSliderRenderable(currentRenderer, {
-    orientation: "vertical",
-    min: 0,
-    max: 10000,
-    value: 5000,
-    width: 1,
-    height: 10,
-    viewPortSize: 1,
-    minThumbSize: 4,
-  })
-
-  // @ts-expect-error - Testing private method
-  const metrics = slider.getThumbMetrics()
-  expect(metrics.size).toBe(4)
-  expect(metrics.start).toBe(3)
-
-  // @ts-expect-error - Testing private method
-  expect(slider.getVirtualThumbSize()).toBe(8)
-})
-
 test("SliderRenderable > Edge cases in thumb size calculation", async () => {
   const { slider } = await createSliderRenderable(currentRenderer, {
     orientation: "vertical",
@@ -256,7 +198,7 @@ test("SliderRenderable > Edge cases in thumb size calculation", async () => {
   slider.viewPortSize = 1
 
   // @ts-expect-error - Testing private method
-  expect(slider.getVirtualThumbSize()).toBe(2)
+  expect(slider.getVirtualThumbSize()).toBe(1)
 
   slider.max = 30
   slider.viewPortSize = 30
@@ -291,14 +233,14 @@ test("SliderRenderable > Thumb size minimum clamping", async () => {
   })
 
   // @ts-expect-error - Testing private method
-  expect(extremeSlider.getVirtualThumbSize()).toBe(2)
+  expect(extremeSlider.getVirtualThumbSize()).toBe(1)
 
   expect(thumbSize).toBeGreaterThanOrEqual(1)
   // @ts-expect-error - Testing private method
   expect(extremeSlider.getVirtualThumbSize()).toBeGreaterThanOrEqual(1)
 })
 
-test("SliderRenderable > Horizontal thumb size can be less than 2", async () => {
+test("SliderRenderable > Thumb size can be less than 2", async () => {
   const { slider } = await createSliderRenderable(currentRenderer, {
     orientation: "horizontal",
     min: 0,
@@ -324,7 +266,7 @@ test("SliderRenderable > Horizontal thumb size can be less than 2", async () => 
   })
 
   // @ts-expect-error - Testing private method
-  expect(largerRatioSlider.getVirtualThumbSize()).toBe(2)
+  expect(largerRatioSlider.getVirtualThumbSize()).toBe(1)
 
   const { slider: exactSlider } = await createSliderRenderable(currentRenderer, {
     orientation: "horizontal",

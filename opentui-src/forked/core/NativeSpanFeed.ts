@@ -1,8 +1,7 @@
-import { toArrayBuffer, type Pointer } from "bun:ffi"
-import { toPointer as toPlatformPointer } from "./platform/ffi.js"
-import { resolveRenderLib } from "./zig.js"
+import { toArrayBuffer, type Pointer } from "./platform/ffi.js"
+import { resolveRenderLib, type NativeSpanFeedEventHandler } from "./zig.js"
 import { SpanInfoStruct } from "./zig-structs.js"
-import type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs.js"
+import type { NativeSpanFeedOptions } from "./zig-structs.js"
 
 export type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs.js"
 
@@ -14,14 +13,9 @@ const enum EventId {
   StateBuffer = 8,
 }
 
-// TODO: Remove this temporary shim once current Bun FFI call sites use the platform backend.
-const toPointer = toPlatformPointer as unknown as (value: number | bigint) => Pointer
-
 function toNumber(value: number | bigint): number {
   return typeof value === "bigint" ? Number(value) : value
 }
-
-type StreamEventHandler = (eventId: number, arg0: Pointer, arg1: number | bigint) => void
 
 export type DataHandler = (data: Uint8Array) => void | Promise<void>
 
@@ -46,16 +40,15 @@ export class NativeSpanFeed {
     return stream
   }
 
-  static attach(streamPtr: bigint | number, _options?: NativeSpanFeedOptions): NativeSpanFeed {
+  static attach(streamPtr: Pointer, _options?: NativeSpanFeedOptions): NativeSpanFeed {
     const lib = resolveRenderLib()
-    const ptr = toPointer(streamPtr)
-    const stream = new NativeSpanFeed(ptr)
+    const stream = new NativeSpanFeed(streamPtr)
 
-    lib.registerNativeSpanFeedStream(ptr, stream.eventHandler)
+    lib.registerNativeSpanFeedStream(streamPtr, stream.eventHandler)
 
-    const status = lib.attachNativeSpanFeed(ptr)
+    const status = lib.attachNativeSpanFeed(streamPtr)
     if (status !== 0) {
-      lib.unregisterNativeSpanFeedStream(ptr)
+      lib.unregisterNativeSpanFeedStream(streamPtr)
       throw new Error(`Failed to attach stream: ${status}`)
     }
 
@@ -64,7 +57,7 @@ export class NativeSpanFeed {
 
   readonly streamPtr: Pointer
   private readonly lib = resolveRenderLib()
-  private readonly eventHandler: StreamEventHandler
+  private readonly eventHandler: NativeSpanFeedEventHandler
   private chunkMap = new Map<Pointer, ArrayBuffer>()
   private chunkSizes = new Map<Pointer, number>()
   private dataHandlers = new Set<DataHandler>()
@@ -80,6 +73,7 @@ export class NativeSpanFeed {
   private pendingAsyncHandlers = 0
   private inCallback = false
   private closeQueued = false
+  private idleResolvers: Array<() => void> = []
 
   private constructor(streamPtr: Pointer) {
     this.streamPtr = streamPtr
@@ -109,6 +103,18 @@ export class NativeSpanFeed {
     return () => this.errorHandlers.delete(handler)
   }
 
+  private hasPinnedChunks(): boolean {
+    if (!this.stateBuffer) return false
+    for (const refcount of this.stateBuffer) {
+      if (refcount > 0) return true
+    }
+    return false
+  }
+
+  isBackpressured(): boolean {
+    return this.pendingAsyncHandlers > 0 || this.pendingDataAvailable || this.hasPinnedChunks()
+  }
+
   close(): void {
     if (this.destroyed) return
     if (this.inCallback || this.draining || this.pendingAsyncHandlers > 0) {
@@ -130,6 +136,7 @@ export class NativeSpanFeed {
     if (this.inCallback || this.draining || this.pendingAsyncHandlers > 0) return
     this.pendingClose = false
     this.performClose()
+    this.resolveIdleIfNeeded()
   }
 
   private performClose(): void {
@@ -158,6 +165,32 @@ export class NativeSpanFeed {
     this.dataHandlers.clear()
     this.errorHandlers.clear()
     this.pendingDataAvailable = false
+    this.resolveIdleIfNeeded()
+  }
+
+  private isIdle(): boolean {
+    return (
+      !this.inCallback &&
+      !this.draining &&
+      this.pendingAsyncHandlers === 0 &&
+      !this.pendingDataAvailable &&
+      !this.hasPinnedChunks()
+    )
+  }
+
+  private resolveIdleIfNeeded(): void {
+    if (!this.isIdle()) return
+    const resolvers = this.idleResolvers.splice(0)
+    for (const resolve of resolvers) {
+      resolve()
+    }
+  }
+
+  idle(): Promise<void> {
+    if (this.isIdle()) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      this.idleResolvers.push(resolve)
+    })
   }
 
   private handleEvent(eventId: number, arg0: Pointer, arg1: number | bigint): void {
@@ -194,7 +227,7 @@ export class NativeSpanFeed {
           break
         }
         case EventId.Error: {
-          const code = arg0
+          const code = toNumber(arg0)
           for (const handler of this.errorHandlers) handler(code)
           break
         }
@@ -207,6 +240,7 @@ export class NativeSpanFeed {
       }
     } finally {
       this.inCallback = false
+      this.resolveIdleIfNeeded()
     }
   }
 
@@ -269,6 +303,7 @@ export class NativeSpanFeed {
             this.decrementRefcount(chunkIndex)
             this.pendingAsyncHandlers -= 1
             this.processPendingClose()
+            this.resolveIdleIfNeeded()
           })
         } else {
           this.decrementRefcount(span.chunkIndex)
@@ -278,6 +313,7 @@ export class NativeSpanFeed {
       }
     } finally {
       this.draining = false
+      this.resolveIdleIfNeeded()
     }
 
     if (firstError) throw firstError

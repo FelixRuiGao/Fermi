@@ -4,8 +4,6 @@ const rope_mod = @import("rope.zig");
 const buffer = @import("buffer.zig");
 const mem_registry_mod = @import("mem-registry.zig");
 
-const gp = @import("grapheme.zig");
-
 const utf8 = @import("utf8.zig");
 
 pub const RGBA = buffer.RGBA;
@@ -65,18 +63,8 @@ pub const TextChunk = struct {
         return self.width == 0;
     }
 
-    /// [DEBUG:STALE-CHUNK] Bounds guard — if this fires, a TextChunk references
-    /// bytes beyond its MemRegistry buffer (stale chunk after buffer replace/shrink).
-    /// Remove guard after root cause is identified.
     pub fn getBytes(self: *const TextChunk, mem_registry: *const MemRegistry) []const u8 {
         const mem_buf = mem_registry.get(self.mem_id) orelse return &[_]u8{};
-        if (self.byte_end > mem_buf.len or self.byte_start > mem_buf.len or self.byte_start > self.byte_end) {
-            @import("logger.zig").warn(
-                "[STALE-CHUNK] mem_id={d} byte_start={d} byte_end={d} buf_len={d} width={d} flags=0x{x:0>2}",
-                .{ self.mem_id, self.byte_start, self.byte_end, mem_buf.len, self.width, self.flags },
-            );
-            return &[_]u8{};
-        }
         return mem_buf[self.byte_start..self.byte_end];
     }
 
@@ -86,8 +74,8 @@ pub const TextChunk = struct {
     /// For mixed chunks, returns only multibyte (non-ASCII) graphemes and tabs with their column offsets
     pub fn getGraphemes(
         self: *const TextChunk,
-        mem_registry: *const MemRegistry,
         allocator: Allocator,
+        mem_registry: *const MemRegistry,
         tabwidth: u8,
         width_method: utf8.WidthMethod,
     ) TextBufferError![]const GraphemeInfo {
@@ -107,7 +95,7 @@ pub const TextChunk = struct {
         var grapheme_list: std.ArrayListUnmanaged(GraphemeInfo) = .{};
         errdefer grapheme_list.deinit(allocator);
 
-        try utf8.findGraphemeInfo(chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, allocator, &grapheme_list);
+        try utf8.findGraphemeInfo(allocator, chunk_bytes, tabwidth, self.isAsciiOnly(), width_method, &grapheme_list);
 
         // TODO: Calling this with an arena allocator will just double the memory usage?
         const graphemes = try grapheme_list.toOwnedSlice(allocator);
@@ -120,8 +108,8 @@ pub const TextChunk = struct {
     /// Returns a slice that is valid until the buffer is reset
     pub fn getWrapOffsets(
         self: *const TextChunk,
-        mem_registry: *const MemRegistry,
         allocator: Allocator,
+        mem_registry: *const MemRegistry,
         width_method: utf8.WidthMethod,
     ) TextBufferError![]const utf8.WrapBreak {
         const mut_self = @constCast(self);
@@ -151,6 +139,7 @@ pub const Highlight = struct {
     style_id: u32,
     priority: u8,
     hl_ref: u16 = 0,
+    internal: bool = false,
 };
 
 /// Pre-computed style span for efficient rendering
@@ -305,7 +294,7 @@ pub const Segment = union(enum) {
         // TODO: could clear the caches on the original chunks,
         // as the original chunks are only kept for history purposes.
 
-        return Segment{
+        return .{
             .text = TextChunk{
                 .mem_id = left_chunk.mem_id,
                 .byte_start = left_chunk.byte_start,
@@ -366,14 +355,14 @@ pub const Segment = union(enum) {
 
         // [brk, brk] -> insert linestart between (represents empty line)
         if (left_seg.isBreak() and right_seg.isBreak()) {
-            const linestart_segment = Segment{ .linestart = {} };
+            const linestart_segment: Segment = .{ .linestart = {} };
             const insert_slice = &[_]Segment{linestart_segment};
             return .{ .insert_between = insert_slice };
         }
 
         // [brk, text] -> insert linestart between
         if (left_seg.isBreak() and right_seg.isText()) {
-            const linestart_segment = Segment{ .linestart = {} };
+            const linestart_segment: Segment = .{ .linestart = {} };
             const insert_slice = &[_]Segment{linestart_segment};
             return .{ .insert_between = insert_slice };
         }
@@ -396,13 +385,13 @@ pub const Segment = union(enum) {
         // Ensure rope starts with linestart (insert even if empty)
         if (first) |first_seg| {
             if (!first_seg.isLineStart()) {
-                const linestart_segment = Segment{ .linestart = {} };
+                const linestart_segment: Segment = .{ .linestart = {} };
                 const insert_slice = &[_]Segment{linestart_segment};
                 return .{ .insert_between = insert_slice };
             }
         } else {
             // Empty rope - insert linestart to ensure at least one line
-            const linestart_segment = Segment{ .linestart = {} };
+            const linestart_segment: Segment = .{ .linestart = {} };
             const insert_slice = &[_]Segment{linestart_segment};
             return .{ .insert_between = insert_slice };
         }

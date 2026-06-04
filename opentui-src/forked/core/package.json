@@ -4,7 +4,7 @@
   "main": "index.ts",
   "types": "index.ts",
   "type": "module",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "description": "Local Fermi fork of OpenTUI core",
   "license": "MIT",
   "exports": {
@@ -27,6 +27,11 @@
       "import": "./runtime-plugin-support.ts",
       "require": "./runtime-plugin-support.ts",
       "types": "./runtime-plugin-support.ts"
+    },
+    "./runtime-plugin-support/configure": {
+      "import": "./runtime-plugin-support-configure.ts",
+      "require": "./runtime-plugin-support-configure.ts",
+      "types": "./runtime-plugin-support-configure.ts"
     },
     "./parser.worker": {
       "import": "./lib/tree-sitter/parser.worker.ts",

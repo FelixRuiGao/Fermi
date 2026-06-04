@@ -36,6 +36,47 @@ pub const Cursor = struct {
 
 const CursorCoords = struct { row: u32, col: u32 };
 
+const CursorMeta = struct {
+    row: u32,
+    col: u32,
+    desired_col: u32,
+
+    fn fromCursor(cursor: Cursor) CursorMeta {
+        return .{
+            .row = cursor.row,
+            .col = cursor.col,
+            .desired_col = cursor.desired_col,
+        };
+    }
+
+    fn encode(self: CursorMeta, out_buffer: []u8) ![]const u8 {
+        return std.fmt.bufPrint(out_buffer, "cursor:{d}:{d}:{d}", .{ self.row, self.col, self.desired_col });
+    }
+
+    fn decode(bytes: []const u8) ?CursorMeta {
+        const prefix = "cursor:";
+        if (!std.mem.startsWith(u8, bytes, prefix)) {
+            return null;
+        }
+
+        var parts = std.mem.splitScalar(u8, bytes[prefix.len..], ':');
+
+        const row = std.fmt.parseInt(u32, parts.next() orelse return null, 10) catch return null;
+        const col = std.fmt.parseInt(u32, parts.next() orelse return null, 10) catch return null;
+        const desired_col = std.fmt.parseInt(u32, parts.next() orelse return null, 10) catch return null;
+
+        if (parts.next() != null) {
+            return null;
+        }
+
+        return .{
+            .row = row,
+            .col = col,
+            .desired_col = desired_col,
+        };
+    }
+};
+
 const AddBuffer = struct {
     mem_id: u8,
     ptr: [*]u8,
@@ -90,12 +131,14 @@ pub const EditBuffer = struct {
     allocator: Allocator,
     events: event_emitter.EventEmitter(EditBufferEvent),
     segment_splitter: UnifiedRope.Node.LeafSplitFn,
+    event_sink: ?*event_bus.EventSink,
 
     pub fn init(
         allocator: Allocator,
         pool: *gp.GraphemePool,
         link_pool: *link.LinkPool,
         width_method: utf8.WidthMethod,
+        event_sink: ?*event_bus.EventSink,
     ) !*EditBuffer {
         const self = try allocator.create(EditBuffer);
         errdefer allocator.destroy(self);
@@ -122,17 +165,21 @@ pub const EditBuffer = struct {
             .allocator = allocator,
             .events = event_emitter.EventEmitter(EditBufferEvent).init(allocator),
             .segment_splitter = .{ .ctx = self, .splitFn = splitSegmentCallback },
+            .event_sink = event_sink,
         };
 
         return self;
     }
 
     pub fn deinit(self: *EditBuffer) void {
+        const allocator = self.allocator;
+        defer allocator.destroy(self);
+
         // Registry owns all AddBuffer memory, don't free it manually
         self.events.deinit();
         self.tb.deinit();
         self.cursors.deinit(self.allocator);
-        self.allocator.destroy(self);
+        self.* = undefined;
     }
 
     pub fn getId(self: *const EditBuffer) u16 {
@@ -146,7 +193,7 @@ pub const EditBuffer = struct {
         const full_name = std.fmt.allocPrint(self.allocator, "eb_{s}", .{event_name}) catch return;
         defer self.allocator.free(full_name);
 
-        event_bus.emit(full_name, &id_bytes);
+        event_bus.emit(self.event_sink, full_name, &id_bytes);
     }
 
     pub fn getTextBuffer(self: *EditBuffer) *UnifiedTextBuffer {
@@ -163,40 +210,12 @@ pub const EditBuffer = struct {
         return self.cursors.items[0];
     }
 
-    fn snapCursorCol(self: *EditBuffer, row: u32, col: u32) u32 {
-        return iter_mod.snapColToGraphemeBoundary(
-            self.tb.rope(),
-            self.tb.memRegistry(),
-            row,
-            col,
-            self.tb.tabWidth(),
-            self.tb.widthMethod(),
-        );
-    }
-
-    fn normalizePrimaryCursor(self: *EditBuffer) ?Cursor {
-        if (self.cursors.items.len == 0) return null;
-
-        var cursor = self.cursors.items[0];
-        const snapped_col = self.snapCursorCol(cursor.row, cursor.col);
-        const snapped_offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, snapped_col) orelse cursor.offset;
-
-        if (snapped_col != cursor.col or snapped_offset != cursor.offset) {
-            cursor.col = snapped_col;
-            cursor.desired_col = snapped_col;
-            cursor.offset = snapped_offset;
-            self.cursors.items[0] = cursor;
-        }
-
-        return self.cursors.items[0];
-    }
-
     pub fn setCursor(self: *EditBuffer, row: u32, col: u32) !void {
         const line_count = self.tb.lineCount();
         const clamped_row = @min(row, line_count -| 1);
 
         const line_width = iter_mod.lineWidthAt(self.tb.rope(), clamped_row);
-        const clamped_col = self.snapCursorCol(clamped_row, @min(col, line_width));
+        const clamped_col = @min(col, line_width);
 
         const offset = iter_mod.coordsToOffset(self.tb.rope(), clamped_row, clamped_col) orelse 0;
 
@@ -261,8 +280,8 @@ pub const EditBuffer = struct {
     }
 
     fn splitSegmentCallback(
-        ctx: ?*anyopaque,
         allocator: Allocator,
+        ctx: ?*anyopaque,
         leaf: *const Segment,
         weight_in_leaf: u32,
     ) error{ OutOfBounds, OutOfMemory }!UnifiedRope.Node.LeafSplitResult {
@@ -357,22 +376,6 @@ pub const EditBuffer = struct {
 
         if (start.row == end.row and start.col == end.col) return;
 
-        const line_count = self.tb.lineCount();
-        if (line_count == 0) return;
-
-        start.row = @min(start.row, line_count -| 1);
-        end.row = @min(end.row, line_count -| 1);
-        start.col = self.snapCursorCol(start.row, @min(start.col, iter_mod.lineWidthAt(self.tb.rope(), start.row)));
-        end.col = self.snapCursorCol(end.row, @min(end.col, iter_mod.lineWidthAt(self.tb.rope(), end.row)));
-
-        if (start.row > end.row or (start.row == end.row and start.col > end.col)) {
-            const temp = start;
-            start = end;
-            end = temp;
-        }
-
-        if (start.row == end.row and start.col == end.col) return;
-
         try self.autoStoreUndo();
 
         const start_offset = iter_mod.coordsToOffset(self.tb.rope(), start.row, start.col) orelse return EditBufferError.InvalidCursor;
@@ -385,15 +388,13 @@ pub const EditBuffer = struct {
         self.tb.markViewsDirty();
 
         if (self.cursors.items.len > 0) {
-            // Use offset-based cursor positioning: start_offset was calculated
-            // before deletion and now points to the exact deletion boundary
-            // in the post-deletion rope. start_offset <= new_total is guaranteed
-            // (deletion removes content between start and end, preserving everything
-            // before start), so @min is a safety clamp only.
-            const new_total = self.tb.rope().totalWeight();
-            const safe_offset = @min(start_offset, new_total);
-            const coords = iter_mod.offsetToCoords(self.tb.rope(), safe_offset) orelse iter_mod.Coords{ .row = 0, .col = 0 };
-            self.cursors.items[0] = .{ .row = coords.row, .col = coords.col, .desired_col = coords.col, .offset = safe_offset };
+            const line_count = self.tb.lineCount();
+            const clamped_row = if (start.row >= line_count) line_count -| 1 else start.row;
+            const line_width = if (line_count > 0) iter_mod.lineWidthAt(self.tb.rope(), clamped_row) else 0;
+            const clamped_col = @min(start.col, line_width);
+            const offset = iter_mod.coordsToOffset(self.tb.rope(), clamped_row, clamped_col) orelse 0;
+
+            self.cursors.items[0] = .{ .row = clamped_row, .col = clamped_col, .desired_col = clamped_col, .offset = offset };
         }
 
         self.events.emit(.cursorChanged);
@@ -402,7 +403,8 @@ pub const EditBuffer = struct {
     }
 
     pub fn backspace(self: *EditBuffer) !void {
-        const cursor = self.normalizePrimaryCursor() orelse return;
+        if (self.cursors.items.len == 0) return;
+        const cursor = self.cursors.items[0];
 
         if (cursor.row == 0 and cursor.col == 0) return;
 
@@ -429,7 +431,8 @@ pub const EditBuffer = struct {
     }
 
     pub fn deleteForward(self: *EditBuffer) !void {
-        const cursor = self.normalizePrimaryCursor() orelse return;
+        if (self.cursors.items.len == 0) return;
+        const cursor = self.cursors.items[0];
 
         try self.autoStoreUndo();
 
@@ -498,7 +501,6 @@ pub const EditBuffer = struct {
 
     pub fn moveUp(self: *EditBuffer) void {
         if (self.cursors.items.len == 0) return;
-        _ = self.normalizePrimaryCursor();
         const cursor = &self.cursors.items[0];
 
         if (cursor.row > 0) {
@@ -510,7 +512,7 @@ pub const EditBuffer = struct {
 
             const line_width = iter_mod.lineWidthAt(self.tb.rope(), cursor.row);
 
-            cursor.col = self.snapCursorCol(cursor.row, @min(cursor.desired_col, line_width));
+            cursor.col = @min(cursor.desired_col, line_width);
             cursor.offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, cursor.col) orelse 0;
         }
 
@@ -520,7 +522,6 @@ pub const EditBuffer = struct {
 
     pub fn moveDown(self: *EditBuffer) void {
         if (self.cursors.items.len == 0) return;
-        _ = self.normalizePrimaryCursor();
         const cursor = &self.cursors.items[0];
 
         const line_count = self.tb.getLineCount();
@@ -533,7 +534,7 @@ pub const EditBuffer = struct {
 
             const line_width = iter_mod.lineWidthAt(self.tb.rope(), cursor.row);
 
-            cursor.col = self.snapCursorCol(cursor.row, @min(cursor.desired_col, line_width));
+            cursor.col = @min(cursor.desired_col, line_width);
             cursor.offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, cursor.col) orelse 0;
         }
 
@@ -645,15 +646,39 @@ pub const EditBuffer = struct {
         self.tb.debugLogRope();
     }
 
+    fn encodeCurrentCursorMeta(self: *const EditBuffer, out_buffer: []u8) ![]const u8 {
+        return CursorMeta.fromCursor(self.getPrimaryCursor()).encode(out_buffer);
+    }
+
+    fn restoreCursorFromMeta(self: *EditBuffer, meta: []const u8) !bool {
+        const decodedMeta = CursorMeta.decode(meta) orelse return false;
+
+        try self.setCursor(decodedMeta.row, decodedMeta.col);
+
+        if (self.cursors.items.len > 0) {
+            self.cursors.items[0].desired_col = decodedMeta.desired_col;
+        }
+
+        return true;
+    }
+
     fn autoStoreUndo(self: *EditBuffer) !void {
-        try self.tb.rope().store_undo("edit");
+        var meta_buffer: [64]u8 = undefined;
+        const meta = try self.encodeCurrentCursorMeta(meta_buffer[0..]);
+        try self.tb.rope().store_undo(meta);
     }
 
     pub fn undo(self: *EditBuffer) ![]const u8 {
-        const prev_meta = try self.tb.rope().undo("current");
+        var current_meta_buffer: [64]u8 = undefined;
+        const current_meta = try self.encodeCurrentCursorMeta(current_meta_buffer[0..]);
+        const prev_meta = try self.tb.rope().undo(current_meta);
 
-        const cursor = self.getPrimaryCursor();
-        try self.setCursor(cursor.row, cursor.col);
+        const restored = try self.restoreCursorFromMeta(prev_meta);
+
+        if (!restored) {
+            const cursor = self.getPrimaryCursor();
+            try self.setCursor(cursor.row, cursor.col);
+        }
 
         self.tb.markViewsDirty();
         self.events.emit(.cursorChanged);
@@ -665,8 +690,12 @@ pub const EditBuffer = struct {
     pub fn redo(self: *EditBuffer) ![]const u8 {
         const next_meta = try self.tb.rope().redo();
 
-        const cursor = self.getPrimaryCursor();
-        try self.setCursor(cursor.row, cursor.col);
+        const restored = try self.restoreCursorFromMeta(next_meta);
+
+        if (!restored) {
+            const cursor = self.getPrimaryCursor();
+            try self.setCursor(cursor.row, cursor.col);
+        }
 
         self.tb.markViewsDirty();
         self.events.emit(.cursorChanged);
@@ -724,7 +753,7 @@ pub const EditBuffer = struct {
                     const graphemes: []const seg_mod.GraphemeInfo = if (is_ascii_only)
                         &[_]seg_mod.GraphemeInfo{}
                     else
-                        chunk.getGraphemes(self.tb.memRegistry(), self.tb.getAllocator(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
+                        chunk.getGraphemes(self.tb.getAllocator(), self.tb.memRegistry(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
                     var grapheme_idx: usize = 0;
                     var col_delta: i64 = 0;
 
@@ -807,7 +836,7 @@ pub const EditBuffer = struct {
                 const graphemes: []const seg_mod.GraphemeInfo = if (is_ascii_only)
                     &[_]seg_mod.GraphemeInfo{}
                 else
-                    chunk.getGraphemes(self.tb.memRegistry(), self.tb.getAllocator(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
+                    chunk.getGraphemes(self.tb.getAllocator(), self.tb.memRegistry(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
                 var grapheme_idx: usize = 0;
                 var col_delta: i64 = 0;
 

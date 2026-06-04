@@ -28,7 +28,7 @@ pub const LinkPool = struct {
     slot_capacity: u32,
     slots_per_page: u32,
     slot_size_bytes: usize,
-    slots: std.ArrayListAlignedUnmanaged(u8, std.mem.Alignment.of(SlotHeader)),
+    slots: std.ArrayListUnmanaged(u8),
     free_list: std.ArrayListUnmanaged(u32),
     num_slots: u32,
     interned_live_ids: std.StringHashMapUnmanaged(IdPayload),
@@ -36,8 +36,7 @@ pub const LinkPool = struct {
     pub fn init(allocator: std.mem.Allocator) LinkPool {
         const slot_capacity = MAX_URL_LENGTH;
         const slots_per_page = 64;
-        const raw_slot_size = @sizeOf(SlotHeader) + slot_capacity;
-        const slot_size_bytes = std.mem.alignForward(usize, raw_slot_size, @alignOf(SlotHeader));
+        const slot_size_bytes = @sizeOf(SlotHeader) + slot_capacity;
         return .{
             .allocator = allocator,
             .slot_capacity = slot_capacity,
@@ -59,6 +58,7 @@ pub const LinkPool = struct {
 
         self.slots.deinit(self.allocator);
         self.free_list.deinit(self.allocator);
+        self.* = undefined;
     }
 
     fn grow(self: *LinkPool) LinkPoolError!void {
@@ -66,7 +66,6 @@ pub const LinkPool = struct {
 
         try self.slots.ensureTotalCapacity(self.allocator, self.slots.items.len + add_bytes);
         try self.slots.appendNTimes(self.allocator, 0, add_bytes);
-        std.debug.assert(std.mem.Alignment.of(SlotHeader).check(@intFromPtr(self.slots.items.ptr)));
 
         var i: u32 = 0;
         while (i < self.slots_per_page) : (i += 1) {
@@ -167,7 +166,7 @@ pub const LinkPool = struct {
         const data_ptr = @as([*]u8, @ptrCast(p)) + @sizeOf(SlotHeader);
         @memcpy(data_ptr[0..url.len], url);
 
-        return try packId(slot_index, new_generation);
+        return packId(slot_index, new_generation);
     }
 
     pub fn incref(self: *LinkPool, id: IdPayload) LinkPoolError!void {
@@ -273,6 +272,7 @@ pub const LinkTracker = struct {
     pub fn deinit(self: *LinkTracker) void {
         self.decRefAll();
         self.used_ids.deinit();
+        self.* = undefined;
     }
 
     pub fn clear(self: *LinkTracker) void {

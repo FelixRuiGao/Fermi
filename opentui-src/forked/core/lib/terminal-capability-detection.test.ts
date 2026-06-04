@@ -50,6 +50,12 @@ describe("isCapabilityResponse", () => {
     expect(isCapabilityResponse("\x1b[?31u")).toBe(true)
   })
 
+  test("detects notification capability responses", () => {
+    expect(isCapabilityResponse("\x1b]99;i=opentui-notifications:p=?;p=title,body\x1b\\")).toBe(true)
+    expect(isCapabilityResponse("\x1b]99;i=opentui-notifications:p=?;p=title,body\x07")).toBe(true)
+    expect(isCapabilityResponse("\x1b]1337;Capabilities=T2NoH\x1b\\")).toBe(true)
+  })
+
   test("does not detect regular keypresses", () => {
     expect(isCapabilityResponse("a")).toBe(false)
     expect(isCapabilityResponse("A")).toBe(false)
@@ -78,6 +84,12 @@ describe("isCapabilityResponse", () => {
   test("does not detect mouse sequences", () => {
     expect(isCapabilityResponse("\x1b[<35;20;5m")).toBe(false)
     expect(isCapabilityResponse("\x1b[<0;10;10M")).toBe(false)
+  })
+
+  test("does not detect arbitrary OSC sequences as capabilities", () => {
+    expect(isCapabilityResponse("\x1b]9;hello\x1b\\")).toBe(false)
+    expect(isCapabilityResponse("\x1b]777;notify;title;body\x1b\\")).toBe(false)
+    expect(isCapabilityResponse("\x1b]99;i=other:p=?;p=title\x1b\\")).toBe(false)
   })
 })
 
@@ -122,7 +134,6 @@ describe("real-world terminal capability sequences", () => {
   })
 
   test("ghostty terminal response - individual sequences", () => {
-    expect(isCapabilityResponse("\x1b[?1016;1$y")).toBe(true)
     expect(isCapabilityResponse("\x1bP>|ghostty 1.1.3\x1b\\")).toBe(true)
     expect(isCapabilityResponse("\x1b_Gi=1;OK\x1b\\")).toBe(true)
     expect(isCapabilityResponse("\x1b[?62;22c")).toBe(true)
@@ -185,6 +196,7 @@ describe("renderer capabilities event", () => {
     // After xtversion (event 9): kitty_keyboard should be true
     expect(events[8].kitty_keyboard).toBe(true)
     expect(events[8].kitty_graphics).toBe(true)
+    expect(events[8].notifications).toBe(true)
     expect(events[8].terminal.name).toBe("kitty")
     expect(events[8].terminal.version).toBe("0.42.2")
 
@@ -197,44 +209,6 @@ describe("renderer capabilities event", () => {
     expect(finalCaps.sync).toBe(true)
     expect(finalCaps.explicit_width).toBe(true)
     expect(finalCaps.scaled_text).toBe(true)
-
-    renderer.destroy()
-  })
-
-  test("ghostty terminal marks sgr_pixels true from 1016 set reply", async () => {
-    const { createTestRenderer } = await import("../testing/test-renderer.js")
-    const { renderer } = await createTestRenderer({})
-
-    const events: any[] = []
-    renderer.on("capabilities", (caps) => events.push({ ...caps }))
-
-    const ghosttyResponses = [
-      "\x1b[?1016;1$y",
-      "\x1b[?2027;1$y",
-      "\x1b[?2031;2$y",
-      "\x1b[?1004;1$y",
-      "\x1b[?2004;2$y",
-      "\x1b[?2026;2$y",
-      "\x1b[1;1R",
-      "\x1b[1;1R",
-      "\x1bP>|ghostty 1.1.3\x1b\\",
-      "\x1b[?0u",
-      "\x1b_Gi=1;OK\x1b\\",
-      "\x1b[?62;22c",
-    ]
-
-    for (const response of ghosttyResponses) {
-      renderer.stdin.emit("data", Buffer.from(response))
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-
-    expect(events.length).toBeGreaterThan(0)
-    expect(events[0].sgr_pixels).toBe(true)
-
-    const finalCaps = events.at(-1)
-    expect(finalCaps.sgr_pixels).toBe(true)
-    expect(finalCaps.terminal.name).toBe("ghostty")
-    expect(finalCaps.terminal.version).toBe("1.1.3")
 
     renderer.destroy()
   })

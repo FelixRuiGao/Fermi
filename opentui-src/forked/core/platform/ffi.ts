@@ -1,3 +1,4 @@
+import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
 
 declare const pointerBrand: unique symbol
@@ -5,12 +6,16 @@ declare const pointerBrand: unique symbol
 // This module owns OpenTUI's native FFI surface. Portable code imports this
 // file instead of bun:ffi, so backends can keep the same call sites.
 
-// Runtime pointers are numbers in Bun and bigints in Node's experimental FFI.
-// Keep both in the our own type, and narrow only inside a backend that requires
-// it.
-export type Pointer = (number | bigint) & { readonly [pointerBrand]: "Pointer" }
+// External FFI producers may expose their own branded pointer types. Public APIs
+// that consume foreign pointers should accept the raw pointer shape and normalize
+// it before crossing OpenTUI's native boundary.
+export type PointerInput = number | bigint
 
-type PointerSource = ArrayBuffer | (ArrayBufferView & { buffer: ArrayBuffer })
+// Runtime pointers are numbers in Bun and bigints in Node's experimental FFI.
+// Keep both in our own type, and narrow only inside a backend that requires it.
+export type Pointer = PointerInput & { readonly [pointerBrand]: "Pointer" }
+
+type PointerSource = ArrayBufferLike | ArrayBufferView
 
 // Bun accepts numeric pointers only. Keep this type private so Bun's pointer
 // model does not leak into the exported surface.
@@ -181,39 +186,40 @@ const isBun =
   process.versions !== null &&
   typeof process.versions.bun === "string"
 
-const backend = await loadBackend()
+const requireModule = createRequire(import.meta.url)
+const backend = loadBackend()
 
-function importModule<T>(specifier: string): Promise<T> {
-  return import(specifier) as Promise<T>
-}
-
-async function loadBackend(): Promise<FfiBackend> {
+function loadBackend(): FfiBackend {
   // Keep the Bun module import behind the runtime check so Node does not
   // resolve bun:ffi during import.
   if (isBun) {
-    return createBunBackend(await importModule<BunFfiBackend>("bun:ffi"))
+    return createBunBackend(requireModule("bun:ffi") as BunFfiBackend)
   }
 
   try {
-    const nodeFfi = await importModule<NodeFfiBackend & { default?: NodeFfiBackend }>("node:ffi")
+    const nodeFfi = requireModule("node:ffi") as NodeFfiBackend & { default?: NodeFfiBackend }
     return createNodeBackend(nodeFfi.default ?? nodeFfi)
   } catch (error) {
     return createUnsupportedBackend(error)
   }
 }
 
-// Convert pointer values for current Bun-backed call sites that still store
-// numeric pointers.
-//
-// TODO: Remove this temporary shim once current Bun FFI call sites use the
-// platform backend. Do not use this helper to force future Node pointers into
-// numbers.
-export function toPointer(value: number | bigint): Pointer {
-  if (typeof value === "bigint") {
+// Normalize foreign pointer-like values into the current runtime's pointer
+// representation before passing them to native code.
+export function toPointer(value: PointerInput): Pointer {
+  if (isBun && typeof value === "bigint") {
     return toSafeNumberPointer(value) as Pointer
   }
 
+  if (!isBun && typeof value === "number") {
+    return toSafeBigIntPointer(value) as Pointer
+  }
+
   return value as Pointer
+}
+
+export function ffiBool(value: boolean): 0 | 1 {
+  return value ? 1 : 0
 }
 
 // Convert a bigint pointer to a number only when JavaScript can represent it
@@ -228,6 +234,18 @@ function toSafeNumberPointer(pointer: bigint): number {
   }
 
   return Number(pointer)
+}
+
+function toSafeBigIntPointer(pointer: number): bigint {
+  if (pointer < 0) {
+    throw new Error(POINTER_NEGATIVE)
+  }
+
+  if (!Number.isSafeInteger(pointer)) {
+    throw new Error(POINTER_UNSAFE)
+  }
+
+  return BigInt(pointer)
 }
 
 // Wrap a backend callback so the loaded library can close it later. The wrapper
@@ -530,7 +548,15 @@ function unsupportedNodeFFIType(type: never): never {
 }
 
 function toBigIntPointer(pointer: Pointer): bigint {
-  return typeof pointer === "bigint" ? pointer : BigInt(pointer)
+  if (typeof pointer === "bigint") {
+    if (pointer < 0n) {
+      throw new Error(POINTER_NEGATIVE)
+    }
+
+    return pointer
+  }
+
+  return toSafeBigIntPointer(pointer)
 }
 
 export const dlopen = backend.dlopen

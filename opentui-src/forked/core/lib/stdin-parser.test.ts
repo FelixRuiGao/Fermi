@@ -544,8 +544,11 @@ describe("StdinParser", () => {
     // CSI codepoint u format
     table([
       ["a key", "\x1b[97u", [k("a", { raw: "\x1b[97u" })]],
+      ["space", "\x1b[32u", [k("space", { raw: "\x1b[32u" })]],
       ["shift+a", "\x1b[97;2u", [k("a", { raw: "\x1b[97;2u", shift: true })]],
+      ["shift+space", "\x1b[32;2u", [k("space", { raw: "\x1b[32;2u", shift: true })]],
       ["ctrl+a", "\x1b[97;5u", [k("a", { raw: "\x1b[97;5u", ctrl: true })]],
+      ["ctrl+space", "\x1b[32;5u", [k("space", { raw: "\x1b[32;5u", ctrl: true })]],
       ["alt+a", "\x1b[97;3u", [k("a", { raw: "\x1b[97;3u", meta: true })]],
       ["ctrl+shift+a", "\x1b[97;6u", [k("a", { raw: "\x1b[97;6u", ctrl: true, shift: true })]],
       ["a release", "\x1b[97;1:3u", [k("a", { raw: "\x1b[97;1:3u", eventType: "release" })]],
@@ -724,7 +727,7 @@ describe("StdinParser", () => {
       }
     })
 
-    test("delayed X10 continuation after timed-out escape stays opaque", () => {
+    test("delayed X10 continuation after timed-out escape becomes a mouse event", () => {
       const { parser, clock } = createTimedParser()
       try {
         parser.push(Buffer.from("\x1b"))
@@ -735,7 +738,7 @@ describe("StdinParser", () => {
         parser.push(Buffer.from("[M"))
         expect(snap(parser)).toEqual([])
         parser.push(Buffer.from(" !!"))
-        expect(snap(parser)).toEqual([resp("unknown", "[M !!")])
+        expect(snap(parser)).toEqual([x10m("\x1b[M !!", "down", 0, 0)])
       } finally {
         parser.destroy()
       }
@@ -1389,6 +1392,87 @@ describe("StdinParser", () => {
       }
     })
 
+    test("aborting a pending startup cursor CPR swallows a reply that finishes later", () => {
+      const parser = createParser({
+        protocolContext: { startupCursorCprActive: true },
+      })
+
+      try {
+        parser.push(Buffer.from("\x1b[24;80"))
+        expect(snap(parser)).toEqual([])
+
+        parser.abortPendingStartupCursorCpr()
+        parser.updateProtocolContext({ startupCursorCprActive: false })
+
+        expect(snap(parser)).toEqual([])
+
+        parser.push(Buffer.from("R"))
+        expect(snap(parser)).toEqual([])
+      } finally {
+        parser.destroy()
+      }
+    })
+
+    test("aborting a pending startup cursor CPR swallows a reply split after the CSI introducer", () => {
+      const parser = createParser({
+        protocolContext: { startupCursorCprActive: true },
+      })
+
+      try {
+        parser.push(Buffer.from("\x1b["))
+        expect(snap(parser)).toEqual([])
+
+        parser.abortPendingStartupCursorCpr()
+        parser.updateProtocolContext({ startupCursorCprActive: false })
+
+        parser.push(Buffer.from("24;80R"))
+        expect(snap(parser)).toEqual([])
+      } finally {
+        parser.destroy()
+      }
+    })
+
+    test("aborting a pending startup cursor CPR preserves explicit-width CPR replies", () => {
+      const parser = createParser({
+        protocolContext: {
+          startupCursorCprActive: true,
+          explicitWidthCprActive: true,
+        },
+      })
+
+      try {
+        parser.push(Buffer.from("\x1b["))
+        expect(snap(parser)).toEqual([])
+
+        parser.abortPendingStartupCursorCpr()
+        parser.updateProtocolContext({ startupCursorCprActive: false })
+
+        parser.push(Buffer.from("1;2R"))
+        expect(snap(parser)).toEqual([resp("cpr", "\x1b[1;2R")])
+      } finally {
+        parser.destroy()
+      }
+    })
+
+    test("aborting a pending startup cursor CPR preserves later non-CPR input", () => {
+      const parser = createParser({
+        protocolContext: { startupCursorCprActive: true },
+      })
+
+      try {
+        parser.push(Buffer.from("\x1b[24;80"))
+        expect(snap(parser)).toEqual([])
+
+        parser.abortPendingStartupCursorCpr()
+        parser.updateProtocolContext({ startupCursorCprActive: false })
+
+        parser.push(Buffer.from("a"))
+        expect(snap(parser)).toEqual([k("a")])
+      } finally {
+        parser.destroy()
+      }
+    })
+
     test("deferred explicit-width CPR flushes when probe context is cleared", () => {
       const { parser, clock } = createTimedParser({
         protocolContext: { explicitWidthCprActive: true },
@@ -1623,7 +1707,23 @@ describe("StdinParser", () => {
   })
 
   describe("ESC-less SGR continuation recovery", () => {
-    test("after timed-out ESC, continuation is not split into text", () => {
+    test("after timed-out ESC, scroll continuation still becomes a mouse event", () => {
+      const { parser, clock } = createTimedParser()
+      try {
+        parser.push(Buffer.from("\x1b"))
+        clock.advance(10)
+        expect(snap(parser)).toEqual([k("escape", { raw: "\x1b" })])
+
+        parser.push(Buffer.from("[<64;38;15M"))
+        expect(snap(parser)).toEqual([
+          sgr("\x1b[<64;38;15M", "scroll", 37, 14, { scroll: { direction: "up", delta: 1 } }),
+        ])
+      } finally {
+        parser.destroy()
+      }
+    })
+
+    test("after timed-out ESC, continuation is recovered as mouse input", () => {
       const { parser, clock } = createTimedParser()
       try {
         parser.push(Buffer.from("\x1b"))
@@ -1631,13 +1731,13 @@ describe("StdinParser", () => {
         expect(snap(parser)).toEqual([k("escape", { raw: "\x1b" })])
 
         parser.push(Buffer.from("[<35;20;5m"))
-        expect(snap(parser)).toEqual([resp("unknown", "[<35;20;5m")])
+        expect(snap(parser)).toEqual([sgr("\x1b[<35;20;5m", "move", 19, 4)])
       } finally {
         parser.destroy()
       }
     })
 
-    test("after timed-out ESC, split continuation across pushes is not split into text", () => {
+    test("after timed-out ESC, split continuation across pushes is recovered as mouse input", () => {
       const { parser, clock } = createTimedParser()
       try {
         parser.push(Buffer.from("\x1b"))
@@ -1648,7 +1748,7 @@ describe("StdinParser", () => {
         expect(snap(parser)).toEqual([])
 
         parser.push(Buffer.from("<35;20;5m"))
-        expect(snap(parser)).toEqual([resp("unknown", "[<35;20;5m")])
+        expect(snap(parser)).toEqual([sgr("\x1b[<35;20;5m", "move", 19, 4)])
       } finally {
         parser.destroy()
       }

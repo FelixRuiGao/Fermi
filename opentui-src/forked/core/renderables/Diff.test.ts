@@ -2345,7 +2345,7 @@ test("DiffRenderable - target remains functional after multiple updates", async 
   rightCodeRenderable.off("line-info-change", rightListener)
 })
 
-test.skip("DiffRenderable - split view scroll is not synchronized by default", async () => {
+test("DiffRenderable - split view scroll is not synchronized by default", async () => {
   const mockMouse = createMockMouse(currentRenderer)
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },
@@ -2385,7 +2385,7 @@ test.skip("DiffRenderable - split view scroll is not synchronized by default", a
   expect(leftCodeRenderable.scrollY).toBe(1)
 })
 
-test.skip("DiffRenderable - split view wheel scroll keeps panes synchronized", async () => {
+test("DiffRenderable - split view wheel scroll keeps panes synchronized", async () => {
   const mockMouse = createMockMouse(currentRenderer)
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },

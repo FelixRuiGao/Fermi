@@ -15,6 +15,7 @@ import {
   POINTER_UNSAFE,
   createBunBackend,
   createNodeBackend,
+  ffiBool,
   toPointer,
   type FFICallbackInstance,
   type Pointer,
@@ -150,6 +151,11 @@ function createMockNodeBackend(options: MockNodeBackendOptions = {}) {
 }
 
 describe("platform/ffi", () => {
+  test("converts JavaScript booleans to numeric FFI booleans", () => {
+    expect(ffiBool(false)).toBe(0)
+    expect(ffiBool(true)).toBe(1)
+  })
+
   test("closes the native library before auto-closing managed callbacks", () => {
     const { backend, events, rawCallbacks } = createMockBackend()
     const library = backend.dlopen("mock", {})
@@ -344,6 +350,8 @@ describe("platform/ffi", () => {
     const buffer = new ArrayBuffer(16)
     const view = new Uint8Array(buffer, 4, 8)
     const otherBuffer = new ArrayBuffer(16)
+    const unsafeNumericPointer = (Number.MAX_SAFE_INTEGER + 1) as Pointer
+    const negativeBigIntPointer = -1n as Pointer
 
     expect(backend.ptr(buffer)).toBe(1000n as Pointer)
     expect(backend.ptr(view)).toBe(1004n as Pointer)
@@ -353,6 +361,8 @@ describe("platform/ffi", () => {
 
     backend.toArrayBuffer(2000n as Pointer, 8, 32)
     backend.toArrayBuffer(3000n as Pointer, undefined, 16)
+    expect(() => backend.toArrayBuffer(unsafeNumericPointer, 0, 1)).toThrow(POINTER_UNSAFE)
+    expect(() => backend.toArrayBuffer(negativeBigIntPointer, 0, 1)).toThrow(POINTER_NEGATIVE)
 
     expect(toArrayBufferCalls).toEqual([
       { pointer: 2008n, length: 32, copy: false },

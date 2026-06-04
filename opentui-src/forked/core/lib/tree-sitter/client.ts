@@ -16,10 +16,11 @@ import { dirname, join, resolve, isAbsolute, parse } from "path"
 import { existsSync } from "fs"
 import { registerEnvVar, env } from "../env.js"
 import { isBunfsPath, normalizeBunfsPath } from "../bunfs.js"
+import { Worker as PlatformWorker } from "../../platform/worker.js"
 
 registerEnvVar({
   name: "OTUI_TREE_SITTER_WORKER_PATH",
-  description: "Path to the TreeSitter worker",
+  description: "Path to the TreeSitter worker entry script",
   type: "string",
   default: "",
 })
@@ -35,12 +36,18 @@ interface EditQueueItem {
   isReset?: boolean
 }
 
-let DEFAULT_PARSERS: FiletypeParserOptions[] = getParsers()
+type TreeSitterWorkerPath = string | URL
+type TreeSitterWorkerHandle = Pick<
+  InstanceType<typeof PlatformWorker>,
+  "onerror" | "onmessage" | "postMessage" | "terminate"
+>
+
+let DEFAULT_PARSER_OVERRIDES: FiletypeParserOptions[] = []
 
 export function addDefaultParsers(parsers: FiletypeParserOptions[]): void {
   for (const parser of parsers) {
-    DEFAULT_PARSERS = [
-      ...DEFAULT_PARSERS.filter((existingParser) => existingParser.filetype !== parser.filetype),
+    DEFAULT_PARSER_OVERRIDES = [
+      ...DEFAULT_PARSER_OVERRIDES.filter((existingParser) => existingParser.filetype !== parser.filetype),
       parser,
     ]
   }
@@ -52,7 +59,7 @@ const isUrl = (path: string) => path.startsWith("http://") || path.startsWith("h
 // TODO: TreeSitterClient should have a setOptions method, passing it on to the worker etc.
 export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
   private initialized = false
-  private worker: Worker | undefined
+  private worker: TreeSitterWorkerHandle | undefined
   private buffers: Map<number, BufferState> = new Map()
   private initializePromise: Promise<void> | undefined
   private initializeResolvers:
@@ -88,32 +95,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       return
     }
 
-    let worker_path: string | URL
+    const workerPath = this.resolveWorkerPath()
 
-    if (env.OTUI_TREE_SITTER_WORKER_PATH) {
-      worker_path = env.OTUI_TREE_SITTER_WORKER_PATH
-    } else if (typeof OTUI_TREE_SITTER_WORKER_PATH !== "undefined") {
-      worker_path = OTUI_TREE_SITTER_WORKER_PATH
-    } else if (this.options.workerPath) {
-      worker_path = this.options.workerPath
-    } else {
-      const moduleDir = import.meta.dirname
-      if (isBunfsPath(moduleDir)) {
-        worker_path = join(dirname(process.execPath), "tree-sitter", "parser.worker.js")
-      } else {
-        worker_path = new URL("./parser.worker.js", import.meta.url).href
-      }
-      if (!isBunfsPath(moduleDir) && !existsSync(resolve(moduleDir, "parser.worker.js"))) {
-        worker_path = new URL("./parser.worker.ts", import.meta.url).href
-      }
-    }
+    this.worker = new PlatformWorker(workerPath)
 
-    this.worker = new Worker(worker_path)
-
-    // @ts-ignore - onmessage exists
     this.worker.onmessage = this.handleWorkerMessage.bind(this)
 
-    // @ts-ignore - onerror exists
     this.worker.onerror = (error: ErrorEvent) => {
       console.error("TreeSitter worker error:", error.message)
 
@@ -126,6 +113,34 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
 
       this.emitError(`Worker error: ${error.message}`)
     }
+  }
+
+  // Path resolution stays in the client for now; runtime-specific Worker construction lives in platform/worker.
+  private resolveWorkerPath(): TreeSitterWorkerPath {
+    if (env.OTUI_TREE_SITTER_WORKER_PATH) {
+      return env.OTUI_TREE_SITTER_WORKER_PATH
+    }
+
+    if (typeof OTUI_TREE_SITTER_WORKER_PATH !== "undefined") {
+      return OTUI_TREE_SITTER_WORKER_PATH
+    }
+
+    if (this.options.workerPath) {
+      return this.options.workerPath
+    }
+
+    const moduleDir = import.meta.dirname
+    if (isBunfsPath(moduleDir)) {
+      return join(dirname(process.execPath), "tree-sitter", "parser.worker.js")
+    }
+
+    let workerPath = new URL("./parser.worker.js", import.meta.url).href
+
+    if (!existsSync(resolve(moduleDir, "parser.worker.js"))) {
+      workerPath = new URL("./parser.worker.ts", import.meta.url).href
+    }
+
+    return workerPath
   }
 
   private stopWorker() {
@@ -142,6 +157,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     this.buffers.clear()
     this.stopWorker()
     this.startWorker()
+    this.initialized = false
     this.initializePromise = undefined
     this.initializeResolvers = undefined
     return this.initialize()
@@ -152,7 +168,13 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       return this.initializePromise
     }
 
-    this.initializePromise = new Promise((resolve, reject) => {
+    this.initializePromise = this.initializeClient()
+
+    return this.initializePromise
+  }
+
+  private async initializeClient(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
       const timeoutMs = this.options.initTimeout ?? 10000 // Default to 10 seconds
       const timeoutId = setTimeout(() => {
         const error = new Error("Worker initialization timed out")
@@ -168,14 +190,18 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       })
     })
 
-    await this.initializePromise
     await this.registerDefaultParsers()
-
-    return this.initializePromise
+    this.initialized = true
   }
 
   private async registerDefaultParsers(): Promise<void> {
-    for (const parser of DEFAULT_PARSERS) {
+    const defaultParsers = await getParsers()
+    const overriddenFiletypes = new Set(DEFAULT_PARSER_OVERRIDES.map((parser) => parser.filetype))
+
+    for (const parser of [
+      ...defaultParsers.filter((parser) => !overriddenFiletypes.has(parser.filetype)),
+      ...DEFAULT_PARSER_OVERRIDES,
+    ]) {
       this.addFiletypeParser(parser)
     }
   }
@@ -260,7 +286,6 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
           console.error("TreeSitter client initialization failed:", error)
           this.initializeResolvers.reject(new Error(error))
         } else {
-          this.initialized = true
           this.initializeResolvers.resolve()
         }
         this.initializeResolvers = undefined

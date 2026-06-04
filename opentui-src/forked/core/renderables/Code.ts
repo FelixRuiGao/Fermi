@@ -37,6 +37,7 @@ export interface CodeOptions extends TextBufferOptions {
   drawUnstyledText?: boolean
   streaming?: boolean
   reserveHeightWhileStreaming?: boolean
+  baseHighlight?: string
   onHighlight?: OnHighlightCallback
   onChunks?: OnChunksCallback
 }
@@ -57,6 +58,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _streamingMeasuredHeightFloorsByWidth: Map<number, number> = new Map()
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
+  private _baseHighlight?: string
   private _onHighlight?: OnHighlightCallback
   private _onChunks?: OnChunksCallback
   private _highlightingPromise: Promise<void> = Promise.resolve()
@@ -82,6 +84,7 @@ export class CodeRenderable extends TextBufferRenderable {
     this._reserveHeightWhileStreaming =
       options.reserveHeightWhileStreaming ??
       (this._streaming && this._conceal && !this._drawUnstyledText)
+    this._baseHighlight = options.baseHighlight
     this._onHighlight = options.onHighlight
     this._onChunks = options.onChunks
 
@@ -204,6 +207,17 @@ export class CodeRenderable extends TextBufferRenderable {
     return this._onHighlight
   }
 
+  get baseHighlight(): string | undefined {
+    return this._baseHighlight
+  }
+
+  set baseHighlight(value: string | undefined) {
+    if (this._baseHighlight !== value) {
+      this._baseHighlight = value
+      this._highlightsDirty = true
+    }
+  }
+
   set onHighlight(value: OnHighlightCallback | undefined) {
     if (this._onHighlight !== value) {
       this._onHighlight = value
@@ -308,6 +322,7 @@ export class CodeRenderable extends TextBufferRenderable {
       const result = await this._treeSitterClient.highlightOnce(content, filetype)
 
       if (snapshotId !== this._highlightSnapshotId) {
+        this.requestRender()
         return
       }
 
@@ -328,6 +343,7 @@ export class CodeRenderable extends TextBufferRenderable {
       }
 
       if (snapshotId !== this._highlightSnapshotId) {
+        this.requestRender()
         return
       }
 
@@ -339,7 +355,7 @@ export class CodeRenderable extends TextBufferRenderable {
         }
       }
 
-      if (highlights.length > 0 || this._onChunks) {
+      if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
         const context: ChunkRenderContext = {
           content,
           filetype,
@@ -349,11 +365,13 @@ export class CodeRenderable extends TextBufferRenderable {
 
         let chunks = treeSitterToTextChunks(content, highlights, this._syntaxStyle, {
           enabled: this._conceal,
+          baseHighlight: this._baseHighlight,
         })
 
         chunks = await this.transformChunks(chunks, context)
 
         if (snapshotId !== this._highlightSnapshotId) {
+          this.requestRender()
           return
         }
 
@@ -372,6 +390,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this.requestRender()
     } catch (error) {
       if (snapshotId !== this._highlightSnapshotId) {
+        this.requestRender()
         return
       }
 
