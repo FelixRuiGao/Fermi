@@ -37,6 +37,10 @@ gui_legacy/
 opentui-src/forked/core/zig/vendor/
 opentui-src/forked/core/benchmark/
 
+# VSCode extension build artifacts
+vscode/node_modules/
+vscode/out/
+
 # GUI build artifacts (gui/ itself is now tracked)
 gui/node_modules/
 gui/out/

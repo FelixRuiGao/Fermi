@@ -19,6 +19,7 @@ import { join } from "node:path";
 
 import { createRpcServer } from "./rpc-transport.js";
 import { registerSessionRpc } from "./session-rpc.js";
+import { registerInitRpc } from "./init-rpc.js";
 import { Config, resolveAssetPaths, getBundledAssetsDir } from "../config.js";
 import { Agent } from "../agents/agent.js";
 import { Session } from "../session.js";
@@ -87,9 +88,25 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
     || hasAnyManagedCredential();
 
   if (!hasProviders) {
-    throw new Error(
-      "No providers configured. Run `fermi init` from a terminal first, then start the GUI.",
-    );
+    // No providers configured — enter init mode instead of throwing.
+    // The GUI / VSCode webview drives the wizard through init RPC methods.
+    const rpc = createRpcServer(process.stdin, process.stdout);
+    rpc.emit("needs_init", { reason: "no_providers" });
+
+    registerInitRpc({
+      server: rpc,
+      onInitComplete: async () => {
+        // Re-run server mode now that config exists.
+        // Re-load dotenv so newly saved keys are visible.
+        loadDotenv(homeDir);
+        rpc.close();
+        await runServerMode(opts);
+      },
+    });
+
+    process.stdin.on("end", () => { process.exit(0); });
+    await new Promise<void>(() => { /* never resolves */ });
+    return;
   }
 
   const paths = resolveAssetPaths({

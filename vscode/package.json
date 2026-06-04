@@ -1,0 +1,74 @@
+{
+  "name": "fermi-code",
+  "displayName": "Fermi",
+  "description": "AI coding agent for long sessions — right in your editor",
+  "version": "0.1.0",
+  "publisher": "fermi",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": ["workspace"],
+  "categories": ["AI", "Programming Languages"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fermi-sidebar",
+          "title": "Fermi",
+          "icon": "resources/fermi-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "fermi-sidebar": [
+        {
+          "type": "webview",
+          "id": "fermi.chatView",
+          "name": "Fermi"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "fermi.newSession", "title": "Fermi: New Session" },
+      { "command": "fermi.addFileToChat", "title": "Fermi: Add File to Chat" },
+      { "command": "fermi.addSelectionToChat", "title": "Fermi: Add Selection to Chat" },
+      { "command": "fermi.selectModel", "title": "Fermi: Select Model" },
+      { "command": "fermi.interruptTurn", "title": "Fermi: Interrupt" },
+      { "command": "fermi.switchSession", "title": "Fermi: Switch Session" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "fermi.addFileToChat", "group": "fermi" },
+        { "command": "fermi.addSelectionToChat", "when": "editorHasSelection", "group": "fermi" }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "fermi.interruptTurn",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "focusedView == 'fermi.chatView' && fermi.isRunning"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0"
+  },
+  "dependencies": {
+    "marked": "^17.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.0"
+  }
+}
