@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.5
+
 - Added: init wizard now prompts for a web search API key (Serper recommended — Google index, 2,500 free queries/month). Pasted keys are saved to `~/.fermi/.env` alongside provider keys. Users who skip get the built-in free fallback chain.
 - Added: Parallel Web Search MCP as a new fallback in the client-side search chain. The priority is now: API key backends → Exa free MCP → Parallel free MCP → DuckDuckGo lite. Parallel runs its own web-scale index and requires no API key or registration.
 - Changed: upgraded vendored OpenTUI fork from 0.2.1 to 0.3.1. Native binaries (`@opentui/core-*`) and `@opentui/react` synced to 0.3.1. All Fermi-specific patches preserved. Upstream gains include blockquote/list/hr markdown renderables, Code `baseHighlight`, platform FFI abstraction, stdin CPR abort, zellij/remote-shell detection, and Input `minLength`.
