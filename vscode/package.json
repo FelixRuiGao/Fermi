@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "fermi",
   "license": "MIT",
+  "icon": "resources/fermi-mark.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/FelixRuiGao/Fermi.git",
