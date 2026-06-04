@@ -656,6 +656,55 @@ async function stepConfigureTiers(
 }
 
 // ------------------------------------------------------------------
+// Step: Web search API key
+// ------------------------------------------------------------------
+
+const SEARCH_API_OPTIONS = [
+  { env: "SERPER_API_KEY",        name: "Serper",       url: "https://serper.dev",             free: "2,500 queries/month" },
+  { env: "TAVILY_API_KEY",        name: "Tavily",       url: "https://tavily.com",             free: "1,000 queries/month" },
+  { env: "EXA_API_KEY",           name: "Exa",          url: "https://exa.ai",                 free: "one-time credit" },
+  { env: "BRAVE_SEARCH_API_KEY",  name: "Brave Search", url: "https://brave.com/search/api/",  free: "$5 credit" },
+] as const;
+
+async function stepConfigureWebSearch(): Promise<void> {
+  const configured = SEARCH_API_OPTIONS.find(({ env }) => process.env[env]?.trim());
+  if (configured) {
+    console.log(`  ✓ Web search: ${configured.name} (${configured.env} detected)\n`);
+    return;
+  }
+
+  const choice = await select({
+    message: "Web search: Paste an API key for better results (strongly recommended)",
+    choices: [
+      ...SEARCH_API_OPTIONS.map((opt) => ({
+        name: `${opt.name} — ${opt.free} free → ${opt.url}`,
+        value: opt.env,
+      })),
+      { name: "Skip (use built-in free search — limited quality)", value: "skip" },
+    ],
+  });
+
+  if (choice === "skip") {
+    console.log("  Using built-in search (Exa → Parallel → DuckDuckGo).\n");
+    return;
+  }
+
+  const selected = SEARCH_API_OPTIONS.find(({ env }) => env === choice)!;
+  console.log(`\n  Sign up at ${selected.url} and copy your API key.\n`);
+
+  const key = await input({
+    message: `Paste your ${selected.env}`,
+  });
+
+  if (key.trim()) {
+    setDotenvKey(selected.env, key.trim());
+    console.log(`  ✓ Saved to ~/.fermi/.env\n`);
+  } else {
+    console.log("  Skipped. You can set it later in ~/.fermi/.env\n");
+  }
+}
+
+// ------------------------------------------------------------------
 // Main wizard — state machine with back support
 // ------------------------------------------------------------------
 
@@ -664,6 +713,7 @@ const enum Step {
   SELECT_MODEL,
   THINKING_LEVEL,
   CONFIGURE_TIERS,
+  WEB_SEARCH,
   WRITE,
 }
 
@@ -728,6 +778,12 @@ export async function runInitWizard(): Promise<WizardResult> {
 
         case Step.CONFIGURE_TIERS: {
           tierConfig = await stepConfigureTiers(configuredProviders);
+          step = Step.WEB_SEARCH;
+          break;
+        }
+
+        case Step.WEB_SEARCH: {
+          await stepConfigureWebSearch();
           step = Step.WRITE;
           break;
         }
@@ -754,6 +810,9 @@ export async function runInitWizard(): Promise<WizardResult> {
           break;
         case Step.CONFIGURE_TIERS:
           step = Step.THINKING_LEVEL;
+          break;
+        case Step.WEB_SEARCH:
+          step = Step.CONFIGURE_TIERS;
           break;
       }
       console.log();

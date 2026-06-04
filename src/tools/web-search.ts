@@ -8,7 +8,8 @@
  *
  *   1. API key backends (SERPER → TAVILY → EXA → BRAVE)
  *   2. Exa free MCP endpoint (zero-config)
- *   3. DuckDuckGo lite scraping (zero-config fallback)
+ *   3. Parallel Web Search MCP (zero-config, own index)
+ *   4. DuckDuckGo lite scraping (zero-config fallback)
  */
 
 import type { ToolDef } from "../providers/base.js";
@@ -411,7 +412,7 @@ function parseSearchResultsText(text: string): SearchResult[] {
 
 // ── Backend detection (cached) ──────────────────────────────────
 
-type BackendKind = "serper" | "tavily" | "exa_api" | "brave" | "exa_free" | "ddg";
+type BackendKind = "serper" | "tavily" | "exa_api" | "brave" | "exa_free" | "parallel_free" | "ddg";
 
 interface ApiBackend {
   kind: "serper" | "tavily" | "exa_api" | "brave";
@@ -575,6 +576,71 @@ async function searchExaFreeMcp(query: string, numResults: number, signal?: Abor
   throw new Error("Exa MCP returned no results");
 }
 
+// ── Parallel Web Search MCP ────────────────────────────────────
+
+const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
+const PARALLEL_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+let _parallelInitialized = false;
+
+async function parallelMcpCall(
+  method: string,
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const resp = await fetch(PARALLEL_MCP_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream",
+      "User-Agent": PARALLEL_UA,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal,
+  });
+  if (!resp.ok) throw new Error(`Parallel MCP HTTP ${resp.status}`);
+  return (await resp.json()) as Record<string, unknown>;
+}
+
+async function searchParallelFreeMcp(
+  query: string,
+  numResults: number,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  if (!_parallelInitialized) {
+    await parallelMcpCall("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "fermi", version: "1.0" },
+    }, signal);
+    _parallelInitialized = true;
+  }
+
+  const resp = await parallelMcpCall("tools/call", {
+    name: "web_search",
+    arguments: { objective: query, search_queries: [query] },
+  }, signal);
+
+  const content = (resp as any)?.result?.content as Array<{ type?: string; text?: string }> | undefined;
+  if (!content) throw new Error("Parallel MCP returned no content");
+
+  const text = content
+    .filter((c) => c.type === "text")
+    .map((c) => c.text ?? "")
+    .join("\n");
+  if (!text) throw new Error("Parallel MCP returned empty text");
+
+  const parsed = parseSearchResultsText(text);
+  if (parsed.length > 0) return parsed.slice(0, numResults);
+
+  return [{
+    title: normalizeResultTitle("Parallel Search Results", "", [text]),
+    url: "",
+    highlights: [text],
+  }];
+}
+
 // ── DuckDuckGo lite ─────────────────────────────────────────────
 
 const DDG_USER_AGENTS = [
@@ -709,7 +775,15 @@ export async function toolWebSearch(
       if (signal.aborted) throw new Error("aborted");
     }
 
-    // 3. DuckDuckGo lite
+    // 3. Parallel Web Search MCP
+    try {
+      const results = await searchParallelFreeMcp(query, max, signal);
+      return formatResults(results, query);
+    } catch {
+      if (signal.aborted) throw new Error("aborted");
+    }
+
+    // 4. DuckDuckGo lite
     try {
       const results = await searchDuckDuckGo(query, max, signal);
       if (results.length > 0) return formatResults(results, query);
