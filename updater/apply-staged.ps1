@@ -1,5 +1,3 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [Parameter(Mandatory = $true)][int]$ParentPid,
     [Parameter(Mandatory = $true)][string]$InstallDir,
@@ -7,6 +5,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ExePath,
     [Parameter(Mandatory = $true)][string]$ArgsFile
 )
+
+$ErrorActionPreference = "Stop"
 
 function Wait-ForParentExit {
     param([int]$Pid)
@@ -49,17 +49,24 @@ function Copy-StagedEntries {
     }
 }
 
+$HomeDir = Split-Path $ExePath -Parent | Split-Path -Parent
+$MarkerFile = Join-Path $HomeDir ".update-handoff-pending"
+
 Wait-ForParentExit -Pid $ParentPid
 Copy-StagedEntries -SourceDir $StagedDir -TargetDir $InstallDir
 Remove-Item $StagedDir -Recurse -Force
 
-$Args = @()
+if (Test-Path $MarkerFile) {
+    Remove-Item $MarkerFile -Force
+}
+
+$RestartArgs = @()
 if (Test-Path $ArgsFile) {
     $ParsedArgs = Get-Content -Raw $ArgsFile | ConvertFrom-Json
     if ($null -ne $ParsedArgs) {
-        $Args = @($ParsedArgs)
+        $RestartArgs = @($ParsedArgs)
     }
     Remove-Item $ArgsFile -Force
 }
 
-Start-Process -FilePath $ExePath -ArgumentList $Args | Out-Null
+Start-Process -FilePath $ExePath -ArgumentList $RestartArgs | Out-Null

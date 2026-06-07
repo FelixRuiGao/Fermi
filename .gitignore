@@ -48,3 +48,6 @@ gui/dist/
 
 # VSCode extension package artifacts
 vscode/*.vsix
+
+# Staging site (not ready for release)
+site-staging/

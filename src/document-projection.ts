@@ -34,9 +34,92 @@ function buildCachePath(filePath: string, artifactsDir: string, sizeBytes: numbe
   return path.join(artifactsDir, PROJECTION_CACHE_DIR, `${safeBase}-${hash}${ext}.md`);
 }
 
+function installPdfjsPolyfills(): void {
+  // pdfjs-dist (transitive via pdf-parse) needs DOMMatrix and Path2D at runtime.
+  // In Node/Bun without @napi-rs/canvas these globals are missing.  We only do
+  // text extraction — never rendering — so minimal stubs are sufficient.
+  if (!globalThis.DOMMatrix) {
+    globalThis.DOMMatrix = class DOMMatrix {
+      a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+      m11 = 1; m12 = 0; m13 = 0; m14 = 0;
+      m21 = 0; m22 = 1; m23 = 0; m24 = 0;
+      m31 = 0; m32 = 0; m33 = 1; m34 = 0;
+      m41 = 0; m42 = 0; m43 = 0; m44 = 1;
+      is2D = true; isIdentity = true;
+      constructor(init?: number[] | string) {
+        if (Array.isArray(init) && init.length === 6) {
+          [this.a, this.b, this.c, this.d, this.e, this.f] = init;
+          this.m11 = this.a; this.m12 = this.b;
+          this.m21 = this.c; this.m22 = this.d;
+          this.m41 = this.e; this.m42 = this.f;
+          this.isIdentity = false;
+        }
+      }
+      invertSelf() { return this; }
+      multiplySelf() { return this; }
+      preMultiplySelf() { return this; }
+      translate() { return this; }
+      scale() { return this; }
+      inverse() { return new (globalThis.DOMMatrix as any)(); }
+    } as any;
+  }
+  if (!globalThis.Path2D) {
+    globalThis.Path2D = class Path2D {
+      addPath() {}
+    } as any;
+  }
+  if (!globalThis.ImageData) {
+    globalThis.ImageData = class ImageData {
+      width: number; height: number; data: Uint8ClampedArray;
+      constructor(w: number, h: number) {
+        this.width = w; this.height = h;
+        this.data = new Uint8ClampedArray(w * h * 4);
+      }
+    } as any;
+  }
+}
+
+async function preloadPdfjsWorker(): Promise<void> {
+  if ((globalThis as Record<string, unknown>).pdfjsWorker) return;
+  try {
+    let workerPath: string | undefined;
+    // Compiled binary: worker shipped as runtime asset next to the executable
+    const assetPath = path.join(path.dirname(process.execPath), "pdfjs", "pdf.worker.mjs");
+    if (existsSync(assetPath)) {
+      workerPath = assetPath;
+    } else {
+      // Dev mode: resolve through the dependency chain
+      const { createRequire } = await import("node:module");
+      const mktRequire = createRequire(require.resolve("markitdown-ts"));
+      const ppRequire = createRequire(mktRequire.resolve("pdf-parse"));
+      workerPath = ppRequire.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+    }
+    (globalThis as Record<string, unknown>).pdfjsWorker = await import(workerPath);
+  } catch {
+    // Worker preload failed — pdfjs-dist will attempt its own fallback.
+  }
+}
+
 async function getMarkItDown(): Promise<MarkItDownLike> {
   if (!markItDownPromise) {
-    markItDownPromise = import("markitdown-ts").then((mod) => new mod.MarkItDown());
+    markItDownPromise = (async () => {
+      installPdfjsPolyfills();
+      await preloadPdfjsWorker();
+      // Suppress pdfjs-dist's top-level warnings about @napi-rs/canvas (we
+      // already polyfilled above, but the require() still fails and warns).
+      const origWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        const msg = typeof args[0] === "string" ? args[0] : "";
+        if (msg.includes("@napi-rs/canvas") || msg.includes("Cannot polyfill")) return;
+        origWarn.apply(console, args);
+      };
+      try {
+        const mod = await import("markitdown-ts");
+        return new mod.MarkItDown();
+      } finally {
+        console.warn = origWarn;
+      }
+    })();
   }
   return markItDownPromise;
 }

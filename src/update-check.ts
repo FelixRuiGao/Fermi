@@ -37,6 +37,7 @@ const GITHUB_REPO = "FelixRuiGao/Fermi";
 const CACHE_FILE = ".update-check.json";
 // No longer throttled — every launch checks for updates in the background.
 const WINDOWS_UPDATE_HELPER_RELATIVE_PATH = join("updater", "apply-staged.ps1");
+const WINDOWS_HANDOFF_MARKER = ".update-handoff-pending";
 
 interface UpdateCache {
   lastCheck: number;
@@ -369,6 +370,20 @@ export function applyStaged(
 
   const installDir = dirname(execPath);
   if (platform === "win32") {
+    // Guard against infinite handoff loops: if a previous handoff left the
+    // marker file, the PS1 helper never ran (or failed). Clean up staged so
+    // the user isn't permanently locked out.
+    const marker = join(home, WINDOWS_HANDOFF_MARKER);
+    if (existsSync(marker)) {
+      rmSync(marker, { force: true });
+      rmSync(staged, { recursive: true, force: true });
+      return { kind: "none" };
+    }
+
+    try {
+      writeFileSync(marker, String(Date.now()));
+    } catch { /* non-fatal */ }
+
     launchHandoff({
       home,
       installDir,
