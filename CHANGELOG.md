@@ -9,11 +9,16 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.6
+
 - Fixed: Windows startup deadlock — the staged-update PowerShell helper had `$ErrorActionPreference` before `param()` (a parse error), causing the handoff to silently fail and `~/.fermi/staged/` to persist, locking every subsequent launch into a silent `process.exit(0)`. Also renamed `$Args` to avoid shadowing PowerShell's automatic variable.
 - Added: handoff marker guard (`.update-handoff-pending`) so a failed PS1 handoff self-heals on the next launch instead of looping forever.
 - Added: `/review [prompt]` slash command for code review. Picker offers Uncommitted changes, Against base branch, Specific commit, or Custom instructions. Review prompt uses P0–P3 severity levels and 8-point bug qualification criteria.
 - Added: command picker now supports inline note input — press Tab on any option to attach instructions (used by `/review` for adding focus to a selected review target).
 - Removed: `csv-data`, `explain-code`, `tui-test` bundled skills (prompt-only, no non-obvious knowledge).
+- Changed: `/review` and skill slash commands now show a short display line in the conversation (e.g. `/review uncommitted changes`) instead of exposing the full prompt template.
+- Fixed: injected-turn commands (`/review`, skills) now correctly surface tool-approval dialogs instead of silently hanging.
+- Fixed: `/review <word>` no longer misidentifies single-word instructions as branch names; uses `git rev-parse` to verify refs.
 
 ## v0.3.5
 
