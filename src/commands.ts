@@ -110,6 +110,13 @@ export interface CommandContext {
   /** Inject content as a user message and trigger a new turn. */
   onTurnRequested?: (content: string) => void;
 
+  /**
+   * Inject a turn where the user sees `displayText` but the model receives
+   * `content`. Used by /review and skill commands to keep the conversation
+   * clean while sending detailed prompts to the model.
+   */
+  onInjectedTurnRequested?: (displayText: string, content: string) => void;
+
   /** Trigger a targeted summarize request through the TUI turn pipeline. */
   onManualSummarizeRequested?: (opts: { targetContextIds?: string[]; focusPrompt?: string }) => void;
 
@@ -1776,7 +1783,6 @@ function gitBranchOptions(): CommandOption[] {
   });
   const branches = (result.stdout ?? "").split("\n").map(l => l.trim()).filter(Boolean)
     .filter(b => b !== current && !b.endsWith("/HEAD"));
-  // Deduplicate: if origin/main and main both exist, prefer the shorter form
   const seen = new Set<string>();
   const deduped: string[] = [];
   for (const b of branches) {
@@ -1785,6 +1791,9 @@ function gitBranchOptions(): CommandOption[] {
       seen.add(short);
       deduped.push(b);
     }
+  }
+  if (deduped.length === 0) {
+    return [{ label: "No other branches found", value: "", disabled: true }];
   }
   return deduped.map(b => ({
     label: `${current} → ${b}`,
@@ -1797,7 +1806,11 @@ function gitCommitOptions(): CommandOption[] {
   const result = spawnSync("git", ["log", "--oneline", "-20"], {
     encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"],
   });
-  return (result.stdout ?? "").split("\n").map(l => l.trim()).filter(Boolean).map(line => {
+  const commits = (result.stdout ?? "").split("\n").map(l => l.trim()).filter(Boolean);
+  if (commits.length === 0) {
+    return [{ label: "No commits found", value: "", disabled: true }];
+  }
+  return commits.map(line => {
     const spaceIdx = line.indexOf(" ");
     return {
       label: line,
@@ -1824,11 +1837,26 @@ function reviewOptions(_ctx: CommandOptionsContext): CommandOption[] {
   ];
 }
 
+function reviewDisplayText(kind: string, detail: string, note: string): string {
+  const parts = ["/review"];
+  switch (kind) {
+    case "uncommitted": parts.push("uncommitted changes"); break;
+    case "base": parts.push(`against ${detail || "base"}`); break;
+    case "commit": parts.push(`commit ${detail || "HEAD"}`); break;
+    case "custom": break;
+  }
+  if (note) parts.push(note);
+  return parts.join(" ");
+}
+
 function dispatchReview(ctx: CommandContext, kind: string, detail: string, note: string): void {
   const target = buildReviewTarget(kind, detail);
-  const prompt = buildReviewPrompt(target, note);
-  if (ctx.onTurnRequested) {
-    ctx.onTurnRequested(prompt);
+  const content = buildReviewPrompt(target, note);
+  const displayText = reviewDisplayText(kind, detail, note);
+  if (ctx.onInjectedTurnRequested) {
+    ctx.onInjectedTurnRequested(displayText, content);
+  } else if (ctx.onTurnRequested) {
+    ctx.onTurnRequested(content);
   }
 }
 
@@ -1836,6 +1864,35 @@ async function cmdReview(ctx: CommandContext, args: string): Promise<void> {
   const trimmed = args.trim();
 
   if (trimmed) {
+    // When dispatched from the command-overlay picker (startCommandPicker),
+    // the value arrives as args (e.g. "uncommitted", a SHA, or a branch name).
+    // Detect known review-target values and route them; everything else is
+    // free-form user instructions for an uncommitted-changes review.
+    if (trimmed === "uncommitted") {
+      dispatchReview(ctx, "uncommitted", "", "");
+      return;
+    }
+    if (trimmed === "custom") {
+      ctx.showMessage("Custom review requires instructions. Use /review <instructions>.");
+      return;
+    }
+    if (/^[0-9a-f]{7,40}$/.test(trimmed)) {
+      dispatchReview(ctx, "commit", trimmed, "");
+      return;
+    }
+    // From drill-down picker, args may be a branch name. Verify with git
+    // before assuming — single-word instructions like "login" or "config"
+    // should not be misidentified as branches.
+    if (/^[A-Za-z0-9_./-]+$/.test(trimmed) && !trimmed.includes(" ")) {
+      const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+      const check = spawnSync("git", ["rev-parse", "--verify", "--quiet", trimmed], {
+        timeout: 3000, stdio: "ignore",
+      });
+      if (check.status === 0) {
+        dispatchReview(ctx, "base", trimmed, "");
+        return;
+      }
+    }
     dispatchReview(ctx, "uncommitted", "", trimmed);
     return;
   }
@@ -2241,8 +2298,12 @@ export function registerSkillCommands(
       handler: async (ctx: CommandContext, args: string) => {
         const content = resolveSkillContent(captured, args);
         const tagged = `[SKILL: ${captured.name}]\n\n${content}`;
-        ctx.showMessage(`Loaded skill: ${captured.name}`);
-        if (ctx.onTurnRequested) {
+        const displayText = args.trim()
+          ? `/${captured.name} ${args.trim()}`
+          : `/${captured.name}`;
+        if (ctx.onInjectedTurnRequested) {
+          ctx.onInjectedTurnRequested(displayText, tagged);
+        } else if (ctx.onTurnRequested) {
           ctx.onTurnRequested(tagged);
         }
       },

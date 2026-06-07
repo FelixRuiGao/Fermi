@@ -1518,6 +1518,9 @@ export function OpenTuiApp({
       onTurnRequested: (content: string) => {
         void handleSubmit(content);
       },
+      onInjectedTurnRequested: (displayText: string, content: string) => {
+        void runInjectedCommand(displayText, content);
+      },
       onManualSummarizeRequested: (opts: { targetContextIds?: string[]; focusPrompt?: string }) => {
         void runManualSummarize(opts);
       },
@@ -1792,6 +1795,37 @@ export function OpenTuiApp({
     runTurn,
     showHint,
   ]);
+
+  const runInjectedCommand = useCallback(async (displayText: string, content: string) => {
+    const s = session as any;
+    if (typeof s.runInjectedCommand !== "function") {
+      void handleSubmit(content);
+      return;
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setProcessing(true);
+    setPhase("Working");
+    try {
+      await s.runInjectedCommand(displayText, content, { signal: controller.signal });
+      updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+      setPendingAsk(session.getPendingAsk?.() ?? null);
+      autoSave();
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        session.appendErrorMessage?.(err instanceof Error ? err.message : String(err), "injected_command");
+      }
+    } finally {
+      abortControllerRef.current = null;
+      const suspended = Boolean(session.getPendingAsk?.());
+      if (suspended) {
+        setPhase("Asking");
+      } else {
+        setProcessing(false);
+        setPhase("idle");
+      }
+    }
+  }, [session, autoSave, handleSubmit, updateContextTokenState]);
 
   const acceptInputOverlaySelection = useCallback(() => {
     const selectedValue = commandOverlay.values[commandOverlay.selected];

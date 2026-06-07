@@ -3710,6 +3710,21 @@ export class Session {
     return this._runTurnActivationLoop(opts?.signal, textAccumulator, reasoningAccumulator);
   }
 
+  async runInjectedCommand(
+    displayText: string,
+    content: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<string> {
+    return this._withTurnLock(async () => {
+      this._ensureSessionStorageReady();
+      await this._ensureMcp();
+      return this._runInjectedTurn(displayText, content, {
+        signal: options?.signal,
+        turnKind: "user",
+      });
+    });
+  }
+
   /**
    * Return the list of items available for the /summarize picker.
    * Includes real user turns and visible summary entries in the active window.
