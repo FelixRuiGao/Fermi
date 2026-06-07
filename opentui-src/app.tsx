@@ -39,6 +39,9 @@ import {
   isCommandPickerActive,
   moveCommandPickerSelection,
   setCommandPickerSelection,
+  setCommandPickerNote,
+  toggleCommandPickerNoteEditing,
+  type CommandPickerResult,
   type CommandPickerState,
 } from "../src/ui/command-picker.js";
 import {
@@ -496,7 +499,9 @@ export function OpenTuiApp({
   const composerTokenVisualsRef = useRef<ComposerTokenVisuals | null>(null);
   const promptSelectResolverRef = useRef<((value: string | undefined) => void) | null>(null);
   const promptSecretResolverRef = useRef<((value: string | undefined) => void) | null>(null);
-  const commandPickerResolverRef = useRef<((value: string | undefined) => void) | null>(null);
+  const commandPickerResolverRef = useRef<((value: CommandPickerResult | undefined) => void) | null>(null);
+  const pickerNoteInputRef = useRef<InputRenderable | null>(null);
+  const [pickerNoteValue, setPickerNoteValue] = useState("");
   const colors = theme.colors;
   const composerTokenColorsRef = useRef(colors);
   const markdownStyle = theme.markdownStyle;
@@ -1557,11 +1562,12 @@ export function OpenTuiApp({
       promptCommandPicker: async (options: CommandOption[]) => {
         resolvePromptSelect(undefined);
         resolvePromptSecret(undefined);
-        return await new Promise<string | undefined>((resolve) => {
+        return await new Promise<CommandPickerResult | undefined>((resolve) => {
           commandPickerResolverRef.current = resolve;
           setCommandOverlay(EMPTY_COMMAND_OVERLAY);
           setPromptSelect(null);
           setCheckboxPicker(null);
+          setPickerNoteValue("");
           setCommandPicker(
             createCommandPicker("", options, pickerMaxVisible),
           );
@@ -1887,13 +1893,13 @@ export function OpenTuiApp({
     }
 
     setCommandPicker(null);
-    // If a promptCommandPicker resolver is active, resolve with the leaf value
+    setPickerNoteValue("");
     const pickerResolver = commandPickerResolverRef.current;
     if (pickerResolver) {
       commandPickerResolverRef.current = null;
-      // result.command is "<commandName> <value>" — extract value after first space
       const spaceIdx = result.command.indexOf(" ");
-      pickerResolver(spaceIdx >= 0 ? result.command.slice(spaceIdx + 1) : result.command);
+      const value = spaceIdx >= 0 ? result.command.slice(spaceIdx + 1) : result.command;
+      pickerResolver({ value, note: result.note });
       return;
     }
     void handleSubmit(result.command);
@@ -1912,11 +1918,13 @@ export function OpenTuiApp({
       return;
     }
     setCommandPicker(null);
+    setPickerNoteValue("");
     const pickerResolver = commandPickerResolverRef.current;
     if (pickerResolver) {
       commandPickerResolverRef.current = null;
       const spaceIdx = result.command.indexOf(" ");
-      pickerResolver(spaceIdx >= 0 ? result.command.slice(spaceIdx + 1) : result.command);
+      const value = spaceIdx >= 0 ? result.command.slice(spaceIdx + 1) : result.command;
+      pickerResolver({ value, note: result.note });
       return;
     }
     void handleSubmit(result.command);
@@ -2382,16 +2390,40 @@ export function OpenTuiApp({
     }
 
     if (isCommandPickerActive(commandPicker)) {
-      if (event.name === "up" || (event.name === "tab" && event.shift)) {
+      if (commandPicker.noteEditing) {
+        if (event.name === "return") {
+          event.preventDefault();
+          event.stopPropagation();
+          setCommandPicker((current) => current ? toggleCommandPickerNoteEditing(current) : current);
+          return;
+        }
+        if (event.name === "escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setPickerNoteValue("");
+          setCommandPicker((current) => current ? { ...toggleCommandPickerNoteEditing(current), note: "" } : current);
+          return;
+        }
+        // All other keys go to the note input — don't intercept
+        return;
+      }
+
+      if (event.name === "up") {
         setCommandPicker((current) => current ? moveCommandPickerSelection(current, -1) : current);
         event.preventDefault();
         event.stopPropagation();
         return;
       }
-      if (event.name === "down" || event.name === "tab") {
+      if (event.name === "down") {
         setCommandPicker((current) => current ? moveCommandPickerSelection(current, 1) : current);
         event.preventDefault();
         event.stopPropagation();
+        return;
+      }
+      if (event.name === "tab" && !event.shift) {
+        event.preventDefault();
+        event.stopPropagation();
+        setCommandPicker((current) => current ? toggleCommandPickerNoteEditing(current) : current);
         return;
       }
       if (event.name === "return") {
@@ -2404,7 +2436,6 @@ export function OpenTuiApp({
         setCommandPicker((current) => {
           if (!current) return null;
           const exited = exitCommandPickerLevel(current);
-          // If we've exited the last level and a resolver is waiting, cancel it
           if (!exited && commandPickerResolverRef.current) {
             const resolver = commandPickerResolverRef.current;
             commandPickerResolverRef.current = null;
@@ -2952,6 +2983,12 @@ export function OpenTuiApp({
       getAskQuestions={getAskQuestions}
       commandOverlay={commandOverlay}
       commandPicker={commandPicker}
+      pickerNoteInputRef={pickerNoteInputRef}
+      pickerNoteValue={pickerNoteValue}
+      onPickerNoteInput={(value: string) => {
+        setPickerNoteValue(value);
+        setCommandPicker((current) => current ? setCommandPickerNote(current, value) : current);
+      }}
       checkboxPicker={checkboxPicker}
       promptSelect={promptSelect}
       promptSecret={promptSecret}

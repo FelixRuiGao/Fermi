@@ -11,7 +11,9 @@
  */
 
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { CommandPickerResult } from "./ui/command-picker.js";
 import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, ModelTierEntry } from "./persistence.js";
 import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch, loadGlobalSettings } from "./persistence.js";
 import { applySessionRestore, findSessionById } from "./session-resume.js";
@@ -132,9 +134,9 @@ export interface CommandContext {
 
   /**
    * Show the hierarchical command picker (with drill-down children support).
-   * Returns the selected leaf value, or undefined if cancelled.
+   * Returns the selected leaf value (and optional note), or undefined if cancelled.
    */
-  promptCommandPicker?: (options: CommandOption[]) => Promise<string | undefined>;
+  promptCommandPicker?: (options: CommandOption[]) => Promise<CommandPickerResult | undefined>;
 
   /**
    * Show the inline OAuth login overlay for the given provider and return
@@ -795,7 +797,7 @@ async function pickResolvedModelSelection(
       if (ctx.promptCommandPicker) {
         target = (await ctx.promptCommandPicker(
           modelOptionsWithTree({ session: ctx.session, store: ctx.store }, opts?.treeOverrides),
-        )) ?? "";
+        ))?.value ?? "";
       } else if (ctx.promptSelect) {
         const choice = await ctx.promptSelect({
           message: opts?.flatMessage ?? "Select model",
@@ -1266,7 +1268,7 @@ async function cmdDiff(ctx: CommandContext, args: string): Promise<void> {
       diffDisplayOptions({ session: ctx.session, store: ctx.store }),
     );
     if (!picked) return;
-    choice = picked;
+    choice = picked.value;
   }
 
   if (choice === "compact" || choice === "full") {
@@ -1307,7 +1309,7 @@ async function cmdTheme(ctx: CommandContext, args: string): Promise<void> {
       themeModeOptions({ session: ctx.session, store: ctx.store }),
     );
     if (!picked) return;
-    choice = picked;
+    choice = picked.value;
   }
 
   if (choice === "auto" || choice === "light" || choice === "dark") {
@@ -1343,7 +1345,7 @@ async function cmdAutoUpdate(ctx: CommandContext, args: string): Promise<void> {
       autoUpdateOptions({ session: ctx.session, store: ctx.store }),
     );
     if (!picked) return;
-    choice = picked;
+    choice = picked.value;
   }
 
   if (choice === "on" || choice === "off") {
@@ -1707,6 +1709,176 @@ async function cmdTier(ctx: CommandContext, args: string): Promise<void> {
 }
 
 // ------------------------------------------------------------------
+// /review — code review
+// ------------------------------------------------------------------
+
+function loadReviewPromptTemplate(): string {
+  const { getBundledAssetsDir } = require("./config.js") as { getBundledAssetsDir: () => string };
+  const promptPath = join(getBundledAssetsDir(), "prompts", "review.md");
+  try {
+    return readFileSync(promptPath, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+function buildReviewTarget(kind: string, detail?: string): string {
+  switch (kind) {
+    case "uncommitted":
+      return [
+        "Review all uncommitted changes in the current repository.",
+        "Run `git diff` for unstaged changes, `git diff --cached` for staged changes,",
+        "and `git status --short` to identify untracked files. Read their contents.",
+      ].join("\n");
+    case "base": {
+      const branch = detail || "main";
+      return [
+        `Review all changes on the current branch compared to \`${branch}\`.`,
+        `Run \`git diff ${branch}...HEAD\` to get the diff.`,
+        "Also check `git log --oneline " + branch + "..HEAD` for commit context.",
+      ].join("\n");
+    }
+    case "commit": {
+      const sha = detail || "HEAD";
+      return [
+        `Review the specific commit \`${sha}\`.`,
+        `Run \`git show ${sha}\` to get the diff and commit message.`,
+      ].join("\n");
+    }
+    default:
+      return "Review the changes described in the user instructions below.";
+  }
+}
+
+function buildReviewPrompt(reviewTarget: string, userInstructions: string): string {
+  const template = loadReviewPromptTemplate();
+  if (!template) {
+    return `Review the following code changes.\n\n${reviewTarget}\n\n${userInstructions}`;
+  }
+  return template
+    .replace("{REVIEW_TARGET}", reviewTarget)
+    .replace("{USER_INSTRUCTIONS}", userInstructions || "(No additional instructions.)");
+}
+
+function gitCurrentBranch(): string {
+  const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+  const result = spawnSync("git", ["branch", "--show-current"], {
+    encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"],
+  });
+  return (result.stdout ?? "").trim() || "HEAD";
+}
+
+function gitBranchOptions(): CommandOption[] {
+  const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+  const current = gitCurrentBranch();
+  const result = spawnSync("git", ["branch", "-a", "--format=%(refname:short)"], {
+    encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"],
+  });
+  const branches = (result.stdout ?? "").split("\n").map(l => l.trim()).filter(Boolean)
+    .filter(b => b !== current && !b.endsWith("/HEAD"));
+  // Deduplicate: if origin/main and main both exist, prefer the shorter form
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const b of branches) {
+    const short = b.replace(/^origin\//, "");
+    if (!seen.has(short)) {
+      seen.add(short);
+      deduped.push(b);
+    }
+  }
+  return deduped.map(b => ({
+    label: `${current} → ${b}`,
+    value: b,
+  }));
+}
+
+function gitCommitOptions(): CommandOption[] {
+  const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+  const result = spawnSync("git", ["log", "--oneline", "-20"], {
+    encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"],
+  });
+  return (result.stdout ?? "").split("\n").map(l => l.trim()).filter(Boolean).map(line => {
+    const spaceIdx = line.indexOf(" ");
+    return {
+      label: line,
+      value: spaceIdx > 0 ? line.slice(0, spaceIdx) : line,
+    };
+  });
+}
+
+function reviewOptions(_ctx: CommandOptionsContext): CommandOption[] {
+  return [
+    {
+      label: "Review against a base branch",
+      value: "base",
+      detail: "(PR Style)",
+      children: gitBranchOptions(),
+    },
+    { label: "Review uncommitted changes", value: "uncommitted" },
+    {
+      label: "Review a commit",
+      value: "commit",
+      children: gitCommitOptions(),
+    },
+    { label: "Custom review instructions", value: "custom" },
+  ];
+}
+
+function dispatchReview(ctx: CommandContext, kind: string, detail: string, note: string): void {
+  const target = buildReviewTarget(kind, detail);
+  const prompt = buildReviewPrompt(target, note);
+  if (ctx.onTurnRequested) {
+    ctx.onTurnRequested(prompt);
+  }
+}
+
+async function cmdReview(ctx: CommandContext, args: string): Promise<void> {
+  const trimmed = args.trim();
+
+  if (trimmed) {
+    dispatchReview(ctx, "uncommitted", "", trimmed);
+    return;
+  }
+
+  if (!ctx.promptCommandPicker) {
+    ctx.showMessage("Usage: /review [instructions]");
+    return;
+  }
+
+  const picked = await ctx.promptCommandPicker(
+    reviewOptions({ session: ctx.session, store: ctx.store }),
+  );
+  if (!picked) return;
+
+  const note = picked.note ?? "";
+  const value = picked.value;
+
+  if (value === "custom") {
+    if (!note) {
+      ctx.showMessage("Custom review requires instructions. Use Tab to add instructions when selecting this option, or run /review <instructions>.");
+      return;
+    }
+    dispatchReview(ctx, "custom", "", note);
+    return;
+  }
+
+  if (value === "uncommitted") {
+    dispatchReview(ctx, "uncommitted", "", note);
+    return;
+  }
+
+  // For drill-down children (base branch or commit), the picker already
+  // resolved to the leaf value (branch name or commit SHA).
+  // Determine which kind by checking if it looks like a commit SHA.
+  const isSha = /^[0-9a-f]{7,40}$/.test(value);
+  if (isSha) {
+    dispatchReview(ctx, "commit", value, note);
+  } else {
+    dispatchReview(ctx, "base", value, note);
+  }
+}
+
+// ------------------------------------------------------------------
 // Registry builder
 // ------------------------------------------------------------------
 
@@ -1739,6 +1911,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme, options: themeModeOptions });
   registry.register({ name: "/diff", description: "Set write/edit diff display (compact / full)", handler: cmdDiff, options: diffDisplayOptions, pickerTitle: "Diff Display" });
   registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate, options: autoUpdateOptions });
+  registry.register({ name: "/review", description: "Review code changes", handler: cmdReview, options: reviewOptions, pickerTitle: "Review" });
   return registry;
 }
 
@@ -2159,7 +2332,7 @@ async function cmdPermission(ctx: CommandContext, args: string): Promise<void> {
     if (ctx.promptCommandPicker) {
       const picked = await ctx.promptCommandPicker(permissionOptions({ session, store: ctx.store }));
       if (!picked) return;
-      mode = picked;
+      mode = picked.value;
     } else {
       const current = session.permissionMode ?? "reversible";
       ctx.showMessage(
@@ -2290,10 +2463,10 @@ async function cmdRewind(ctx: CommandContext, args: string): Promise<void> {
   } else if (ctx.promptCommandPicker) {
     const picked = await ctx.promptCommandPicker(rewindOptions({ session, store: ctx.store }));
     if (!picked) return;
-    const colonIdx = picked.indexOf(":");
+    const colonIdx = picked.value.indexOf(":");
     if (colonIdx < 0) return;
-    turnIndex = parseInt(picked.slice(0, colonIdx), 10);
-    mode = picked.slice(colonIdx + 1) as "both" | "conversation" | "files" | "cancel";
+    turnIndex = parseInt(picked.value.slice(0, colonIdx), 10);
+    mode = picked.value.slice(colonIdx + 1) as "both" | "conversation" | "files" | "cancel";
     if (isNaN(turnIndex)) return;
   } else {
     ctx.showMessage("Usage: /rewind <turn_number>");

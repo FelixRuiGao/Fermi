@@ -12,11 +12,18 @@ export interface CommandPickerState {
   title?: string;
   maxVisible: number;
   stack: CommandPickerLevel[];
+  note: string;
+  noteEditing: boolean;
 }
 
 export type CommandPickerAcceptResult =
   | { kind: "drill_down"; picker: CommandPickerState }
-  | { kind: "submit"; command: string };
+  | { kind: "submit"; command: string; note?: string };
+
+export interface CommandPickerResult {
+  value: string;
+  note?: string;
+}
 
 function clampSelection(selected: number, options: CommandOption[]): number {
   if (options.length === 0) return 0;
@@ -55,6 +62,8 @@ export function createCommandPicker(
     title,
     maxVisible,
     stack: [{ label: commandName, options, selected, visibleStart: 0 }],
+    note: "",
+    noteEditing: false,
   };
 }
 
@@ -170,6 +179,19 @@ export function exitCommandPickerLevel(picker: CommandPickerState): CommandPicke
   };
 }
 
+export function toggleCommandPickerNoteEditing(
+  picker: CommandPickerState,
+): CommandPickerState {
+  return { ...picker, noteEditing: !picker.noteEditing };
+}
+
+export function setCommandPickerNote(
+  picker: CommandPickerState,
+  note: string,
+): CommandPickerState {
+  return { ...picker, note };
+}
+
 export function acceptCommandPickerSelection(
   picker: CommandPickerState,
 ): CommandPickerAcceptResult | null {
@@ -196,8 +218,10 @@ export function acceptCommandPickerSelection(
     };
   }
 
+  const trimmedNote = picker.note.trim();
   return {
     kind: "submit",
     command: `${picker.commandName} ${option.value}`.trim(),
+    note: trimmedNote || undefined,
   };
 }

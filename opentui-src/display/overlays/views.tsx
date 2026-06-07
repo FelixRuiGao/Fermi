@@ -169,12 +169,18 @@ export function CommandPickerView(
     contentWidth,
     maxVisible,
     onItemClick,
+    noteInputRef,
+    noteValue,
+    onNoteInput,
   }: {
     picker: CommandPickerState | null;
     theme: DisplayTheme;
     contentWidth: number;
     maxVisible: number;
     onItemClick: (index: number) => void;
+    noteInputRef?: React.RefObject<InputRenderable | null>;
+    noteValue?: string;
+    onNoteInput?: (value: string) => void;
   },
 ): React.ReactNode {
   if (!isCommandPickerActive(pickerProp)) return null;
@@ -184,7 +190,9 @@ export function CommandPickerView(
   const path = getCommandPickerPath(picker);
   const { start, end } = getCommandPickerVisibleRange(picker);
   const visibleOptions = level.options.slice(start, end);
-  const pickerHeight = 1 + visibleOptions.length;
+  const noteLines = picker.noteEditing ? 2 : 0;
+  const hintLine = 1;
+  const pickerHeight = 1 + visibleOptions.length + noteLines + hintLine;
   const rootTitle = picker.title ?? picker.commandName;
   const title = path.length > 0
     ? `${rootTitle} › ${path.join(" › ")}`
@@ -195,6 +203,10 @@ export function CommandPickerView(
   const detailColumnWidth = hasAnyDetail
     ? Math.max(...visibleOptions.map(o => (o.detail ?? "").length))
     : 0;
+
+  const hintText = picker.noteEditing
+    ? "Enter confirm · Esc cancel"
+    : "↑↓ navigate · Enter select · Tab add instructions · Esc cancel";
 
   return (
     <OverlayFrame theme={theme} height={pickerHeight}>
@@ -215,6 +227,23 @@ export function CommandPickerView(
           />
         );
       })}
+      {picker.noteEditing && (
+        <box flexDirection="column">
+          <text fg={theme.colors.yellow} content="Instructions:" />
+          <input
+            ref={(node) => { if (noteInputRef) (noteInputRef as React.MutableRefObject<InputRenderable | null>).current = node; }}
+            value={noteValue ?? ""}
+            focused={picker.noteEditing}
+            placeholder="Add review instructions..."
+            textColor={theme.colors.text}
+            focusedTextColor={theme.colors.text}
+            placeholderColor={theme.colors.dim}
+            onInput={onNoteInput}
+            onChange={onNoteInput}
+          />
+        </box>
+      )}
+      <text fg={theme.colors.dim} content={truncateToWidth(hintText, contentWidth)} />
     </OverlayFrame>
   );
 }

@@ -9,6 +9,12 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: Windows startup deadlock — the staged-update PowerShell helper had `$ErrorActionPreference` before `param()` (a parse error), causing the handoff to silently fail and `~/.fermi/staged/` to persist, locking every subsequent launch into a silent `process.exit(0)`. Also renamed `$Args` to avoid shadowing PowerShell's automatic variable.
+- Added: handoff marker guard (`.update-handoff-pending`) so a failed PS1 handoff self-heals on the next launch instead of looping forever.
+- Added: `/review [prompt]` slash command for code review. Picker offers Uncommitted changes, Against base branch, Specific commit, or Custom instructions. Review prompt uses P0–P3 severity levels and 8-point bug qualification criteria.
+- Added: command picker now supports inline note input — press Tab on any option to attach instructions (used by `/review` for adding focus to a selected review target).
+- Removed: `csv-data`, `explain-code`, `tui-test` bundled skills (prompt-only, no non-obvious knowledge).
+
 ## v0.3.5
 
 - Added: init wizard now prompts for a web search API key (Serper recommended — Google index, 2,500 free queries/month). Pasted keys are saved to `~/.fermi/.env` alongside provider keys. Users who skip get the built-in free fallback chain.

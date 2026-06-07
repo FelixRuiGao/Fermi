@@ -86,6 +86,9 @@ export interface OpenTuiScreenProps {
   getAskQuestions: () => AgentQuestionItem[];
   commandOverlay: CommandOverlayState;
   commandPicker: CommandPickerState | null;
+  pickerNoteInputRef: React.RefObject<InputRenderable | null>;
+  pickerNoteValue: string;
+  onPickerNoteInput: (value: string) => void;
   checkboxPicker: CheckboxPickerState | null;
   promptSelect: PromptSelectState | null;
   promptSecret: PromptSecretState | null;
@@ -171,6 +174,9 @@ export function OpenTuiScreen({
   getAskQuestions,
   commandOverlay,
   commandPicker,
+  pickerNoteInputRef,
+  pickerNoteValue,
+  onPickerNoteInput,
   checkboxPicker,
   promptSelect,
   promptSecret,
@@ -340,6 +346,9 @@ export function OpenTuiScreen({
         contentWidth={pickerContentWidth}
         maxVisible={pickerMaxVisible}
         onItemClick={onCommandPickerItemClick}
+        noteInputRef={pickerNoteInputRef}
+        noteValue={pickerNoteValue}
+        onNoteInput={onPickerNoteInput}
       />
       <CheckboxPickerView
         picker={checkboxPicker}
