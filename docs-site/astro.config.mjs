@@ -8,6 +8,34 @@ export default defineConfig({
     starlight({
       title: "Fermi",
       customCss: ["./src/styles/custom.css"],
+      // Self-hosted fonts (no Google Fonts round-trip / FOUT). Preload the
+      // Instrument Serif faces used above the fold (wordmark + page title).
+      head: [
+        {
+          tag: "link",
+          attrs: {
+            rel: "preload",
+            href: "/fonts/instrument-serif-400-normal-latin.woff2",
+            as: "font",
+            type: "font/woff2",
+            crossorigin: true,
+          },
+        },
+        {
+          tag: "link",
+          attrs: {
+            rel: "preload",
+            href: "/fonts/instrument-serif-400-italic-latin.woff2",
+            as: "font",
+            type: "font/woff2",
+            crossorigin: true,
+          },
+        },
+        {
+          tag: "link",
+          attrs: { rel: "stylesheet", href: "/fonts/fonts.css" },
+        },
+      ],
       disable404Route: false,
       expressiveCode: {
         themes: ["github-dark"],
@@ -34,10 +62,6 @@ export default defineConfig({
           href: "https://github.com/FelixRuiGao/Fermi",
         },
       ],
-      editLink: {
-        baseUrl:
-          "https://github.com/FelixRuiGao/Fermi/edit/main/docs-site/",
-      },
       sidebar: [
         {
           label: "Introduction",
