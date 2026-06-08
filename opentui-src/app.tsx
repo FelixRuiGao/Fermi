@@ -74,7 +74,6 @@ import type { TabState } from "./sidebar/sidebar-tabs.js";
 import { getCurrentModelDescriptor } from "../src/model-presentation.js";
 import {
   UsagePoller,
-  fetchCopilotUsage,
   formatUsageLine,
   type UsageSnapshot,
 } from "../src/provider-usage.js";
@@ -92,7 +91,6 @@ import {
   deviceCodeLoginHeadless as copilotDeviceCodeLoginHeadless,
   saveGitHubTokens,
   hasGitHubTokens,
-  getGitHubAccessToken,
   type GitHubOAuthTokens,
 } from "../src/auth/github-copilot-oauth.js";
 import {
@@ -533,7 +531,9 @@ export function OpenTuiApp({
       setUsageSnapshot(null);
     };
 
-    if (provider !== "openai-codex" && provider !== "copilot") {
+    // Copilot moved to usage-based billing (AI Credits) with no per-account
+    // quota endpoint, so there's no usage indicator for it — only Codex.
+    if (provider !== "openai-codex") {
       teardown();
       return;
     }
@@ -572,33 +572,6 @@ export function OpenTuiApp({
       };
     }
 
-    // provider === "copilot"
-    // GitHub token is long-lived and read synchronously from disk — no await
-    // needed. `getGitHubAccessToken` throws when credentials are missing; in
-    // that case we just hide the usage indicator.
-    let ghToken: string;
-    try {
-      ghToken = getGitHubAccessToken();
-    } catch {
-      setUsageSnapshot(null);
-      return;
-    }
-    if (usagePollerRef.current) {
-      usagePollerRef.current.updateToken(ghToken);
-      return;
-    }
-    const poller = new UsagePoller({ fetchFn: fetchCopilotUsage });
-    usagePollerRef.current = poller;
-    usagePollerProviderRef.current = "copilot";
-    poller.on("update", (snapshot: UsageSnapshot) => setUsageSnapshot(snapshot));
-    poller.start(ghToken);
-    return () => {
-      poller.stop();
-      if (usagePollerRef.current === poller) {
-        usagePollerRef.current = null;
-        usagePollerProviderRef.current = null;
-      }
-    };
   }, [session.primaryAgent?.modelConfig?.provider]);
 
   useEffect(() => {

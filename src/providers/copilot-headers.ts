@@ -38,6 +38,11 @@ export function buildCopilotRequestHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = {
     ...COPILOT_EDITOR_HEADERS,
+    // Chat + /models live on the Copilot gateway, which tracks the usage-based
+    // billing era by API version. The copilot_internal/* token-exchange
+    // endpoints keep COPILOT_EDITOR_HEADERS' older version; this overrides it
+    // for gateway requests only.
+    "x-github-api-version": "2026-06-01",
     "copilot-integration-id": "vscode-chat",
     "openai-intent": "conversation-panel",
     "x-initiator": opts.isAgent ? "agent" : "user",

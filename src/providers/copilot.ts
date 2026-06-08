@@ -35,25 +35,20 @@ import {
 } from "./copilot-headers.js";
 
 // =============================================================================
-// Model routing table
+// Model routing
 // =============================================================================
 
-/** Models served via Copilot's Anthropic-shaped /v1/messages endpoint. */
-const ANTHROPIC_MODELS: ReadonlySet<string> = new Set([
-  "claude-opus-4.6",
-  "claude-opus-4.6-fast",
-  "claude-sonnet-4.6",
-]);
-
-/** Models served via Copilot's OpenAI-shaped /responses endpoint. */
-const RESPONSES_MODELS: ReadonlySet<string> = new Set([
-  "gpt-5.2",
-  "gpt-5.2-codex",
-  "gpt-5.3-codex",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5-mini",
-]);
+/**
+ * Route by model family rather than a hardcoded allowlist, so new Copilot
+ * models (fetched live from /models) work without a code change:
+ *   - Claude models → Anthropic-shaped /v1/messages
+ *   - everything else (GPT/Codex, Gemini, MAI, …) → OpenAI-shaped /responses
+ * A hardcoded set previously drifted from Copilot's catalog and threw
+ * "Unknown Copilot model" for valid models (e.g. claude-opus-4.7, gpt-5.5).
+ */
+function isAnthropicShapedModel(modelId: string): boolean {
+  return modelId.startsWith("claude");
+}
 
 // =============================================================================
 // Helpers
@@ -190,15 +185,10 @@ export class CopilotProvider extends BaseProvider {
     super();
     const modelId = config.model;
 
-    if (ANTHROPIC_MODELS.has(modelId)) {
+    if (isAnthropicShapedModel(modelId)) {
       this._inner = new CopilotAnthropicImpl(config);
-    } else if (RESPONSES_MODELS.has(modelId)) {
-      this._inner = new CopilotResponsesImpl(config);
     } else {
-      throw new Error(
-        `Unknown Copilot model '${modelId}'. Supported models: ` +
-          [...ANTHROPIC_MODELS, ...RESPONSES_MODELS].join(", "),
-      );
+      this._inner = new CopilotResponsesImpl(config);
     }
 
     this.requiresAlternatingRoles = this._inner.requiresAlternatingRoles;

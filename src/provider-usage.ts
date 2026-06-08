@@ -276,7 +276,7 @@ export class UsagePoller extends EventEmitter {
 }
 
 // ------------------------------------------------------------------
-// Copilot usage fetch
+// Copilot usage fetch (legacy premium-request quota — annual plans only)
 // ------------------------------------------------------------------
 
 type CopilotQuotaDetail = {

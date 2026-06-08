@@ -9,6 +9,9 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: GitHub Copilot model selection broke after GitHub's 2026-06-01 usage-based-billing migration. The `/model` picker now follows your plan's live `/models` catalog — models GitHub no longer offers you are hidden instead of failing with `model_not_available_for_integrator` (HTTP 400) — routing is by model family so Claude Opus 4.7/4.8 and GPT-5.5 no longer throw "Unknown Copilot model", and the gateway API version is bumped to `2026-06-01`.
+- Removed: Copilot per-model premium-request "multiplier" labels and the Copilot usage card. Copilot moved to usage-based billing (AI Credits, charged by token), so the legacy premium-request quota no longer applies to most accounts.
+
 ## v0.3.6
 
 - Fixed: Windows startup deadlock — the staged-update PowerShell helper had `$ErrorActionPreference` before `param()` (a parse error), causing the handoff to silently fail and `~/.fermi/staged/` to persist, locking every subsequent launch into a silent `process.exit(0)`. Also renamed `$Args` to avoid shadowing PowerShell's automatic variable.

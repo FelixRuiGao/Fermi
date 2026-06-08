@@ -1124,7 +1124,27 @@ async function cmdAddProvider(ctx: CommandContext): Promise<boolean> {
         [preset.id]: { api_key_env: "_COPILOT_OAUTH" },
       },
     }, ctx.fermiHomeDir);
-    for (const model of preset.models) {
+
+    // Register the intersection of our bundled preset and GitHub's live Copilot
+    // catalog: only curated models the account can actually call. This keeps
+    // our per-model parameters (context length, vision, store flag, multiplier
+    // notes) — which `/models` doesn't provide — while dropping models the
+    // account can't use (which would 400 with model_not_available_for_integrator).
+    // Falls back to the full preset if the catalog can't be fetched, or if the
+    // filter would leave nothing (defensive against a malformed catalog).
+    let registerModels = preset.models;
+    try {
+      const { refreshCopilotModelsCache, isModelVisibleForCurrentPlan } =
+        await import("./providers/copilot-models-cache.js");
+      await refreshCopilotModelsCache();
+      const available = preset.models.filter((m) =>
+        isModelVisibleForCurrentPlan(m.id),
+      );
+      if (available.length > 0) registerModels = available;
+    } catch {
+      // Offline / fetch failure → fall back to the full bundled preset list.
+    }
+    for (const model of registerModels) {
       config.upsertModelRaw(`${preset.id}:${model.key}`, {
         provider: preset.id,
         model: model.id,

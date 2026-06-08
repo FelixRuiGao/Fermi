@@ -219,8 +219,16 @@ export function isModelVisibleForCurrentPlan(modelId: string): boolean {
   }
 
   const entry = cache.models.find((m) => m.id === modelId);
-  if (!entry) return true;
-  return entry.policy_state === "enabled";
+  // Absent from a populated catalog = GitHub does not offer this model to the
+  // current account/integrator. Selecting it would 400 with
+  // model_not_available_for_integrator, so hide it. (When there's no cache at
+  // all we already returned true above — optimistic for offline/first-run.)
+  if (!entry) return false;
+  // Hide only models the plan explicitly disables (e.g. Pro+-exclusive models
+  // on a Pro account). "enabled" and "unconfigured" are both callable —
+  // "unconfigured" just means no org policy is pinned, which is the default
+  // for individual accounts (e.g. gpt-5.3-codex).
+  return entry.policy_state !== "disabled";
 }
 
 /**
