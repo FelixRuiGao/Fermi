@@ -14,7 +14,7 @@ config.local.yaml
 .DS_Store
 .venv/
 .claude/
-Docs/
+/Docs/
 AGENTS.md
 .archive/
 *.cast
