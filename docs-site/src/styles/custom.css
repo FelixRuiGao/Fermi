@@ -1,0 +1,357 @@
+/* ==========================================================================
+   Fermi docs — dark theme, matching the homepage hero
+   Palette: blue-black bg + soft ink text + blue accent
+   Fonts: Instrument Serif (page title) · Source Serif 4 (body) · JetBrains Mono (code/meta)
+   ========================================================================== */
+
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap");
+
+/* ---------- Design tokens ---------- */
+:root {
+  --fm-bg: #0a0c11;
+  --fm-bg-soft: #0e1014;
+  --fm-panel: #15171c;
+  --fm-panel-2: #16181d;
+  --fm-border: #1c1f25;
+  --fm-border-2: #23262d;
+  --fm-ink: #f4f6fa;
+  --fm-ink-2: #c8cdd6;
+  --fm-ink-3: #aeb6c1;
+  --fm-ink-4: #80838a;
+  --fm-accent: #8ab4f8;
+  --fm-accent-2: #5d8fea;
+  --fm-radius: 8px;
+
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-serif: "Source Serif 4", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* ---------- Starlight overrides (force dark palette in both modes) ---------- */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+  --sl-color-white: #f4f6fa;
+  --sl-color-gray-1: #e8ecf2;
+  --sl-color-gray-2: #c8cdd6;
+  --sl-color-gray-3: #aeb6c1;
+  --sl-color-gray-4: #80838a;
+  --sl-color-gray-5: #23262d;
+  --sl-color-gray-6: #16181d;
+  --sl-color-gray-7: #101216;
+  --sl-color-black: #0a0c11;
+
+  --sl-color-accent-low: #15233a;
+  --sl-color-accent: #5d8fea;
+  --sl-color-accent-high: #cfe0ff;
+
+  --sl-color-bg: var(--fm-bg);
+  --sl-color-bg-nav: color-mix(in srgb, var(--fm-bg) 88%, transparent);
+  --sl-color-bg-sidebar: var(--fm-bg);
+  --sl-color-bg-inline-code: var(--fm-panel-2);
+  --sl-color-hairline-light: var(--fm-border);
+  --sl-color-hairline-shade: var(--fm-border);
+
+  --sl-color-text: var(--fm-ink-2);
+  --sl-color-text-accent: var(--fm-accent);
+
+  --sl-font: var(--font-serif);
+  --sl-font-system: var(--font-serif);
+
+  --sl-text-sm: 0.875rem;
+  --sl-text-base: 1rem;
+  --sl-text-lg: 1.125rem;
+  --sl-text-xl: 1.25rem;
+  --sl-text-2xl: 1.625rem;
+  --sl-text-3xl: 2rem;
+  --sl-text-4xl: 2.5rem;
+  --sl-text-5xl: 3.25rem;
+
+  --sl-content-width: 50rem;
+  --sl-sidebar-width: 17rem;
+}
+
+/* ---------- Typography ---------- */
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: var(--fm-bg);
+}
+
+starlight-content,
+.sl-markdown-content {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
+  line-height: 1.65;
+  color: var(--fm-ink-2);
+}
+
+/* Page title (h1) — display serif, like the hero */
+.sl-markdown-content h1,
+.content-panel h1 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 3rem;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--fm-ink);
+  margin-block-end: 1rem;
+}
+
+/* Section headings — Source Serif, semibold */
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+.sl-markdown-content h5 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--fm-ink);
+}
+
+.sl-markdown-content h2 {
+  font-size: var(--sl-text-2xl);
+  margin-block-start: 2.75rem;
+  padding-block-end: 0.4rem;
+  border-bottom: 1px solid var(--fm-border);
+}
+
+/* ---------- Code & monospace ---------- */
+code,
+kbd,
+pre,
+.sl-markdown-content code {
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+
+/* Inline code only — smaller relative size (code blocks keep Expressive Code's size) */
+.sl-markdown-content :not(pre) > code {
+  font-size: 0.85em;
+  background: var(--fm-panel-2);
+  border: 1px solid var(--fm-border-2);
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+  color: var(--fm-ink-2);
+}
+
+.sl-markdown-content pre {
+  background: var(--fm-panel) !important;
+  border: 1px solid var(--fm-border-2);
+  border-radius: var(--fm-radius);
+}
+
+/* ---------- Sidebar ---------- */
+nav.sidebar a {
+  font-family: var(--font-serif);
+  letter-spacing: -0.005em;
+  color: var(--fm-ink-3);
+}
+
+nav.sidebar a:hover {
+  color: var(--fm-ink);
+}
+
+nav.sidebar .top-level > li > details > summary,
+nav.sidebar .top-level > li > a {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Sidebar group labels — mono */
+.sl-sidebar-group-heading span,
+starlight-menu-button {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fm-ink-4);
+}
+
+/* Active sidebar link — blue text, no fill */
+nav a[aria-current="page"],
+nav a[aria-current="page"]:hover,
+nav a[aria-current="page"]:focus {
+  background-color: transparent !important;
+  color: var(--fm-accent) !important;
+  font-weight: 600;
+}
+
+/* ---------- Header / nav ---------- */
+header.header {
+  backdrop-filter: blur(12px);
+  background: var(--sl-color-bg-nav);
+  border-bottom: 1px solid var(--fm-border);
+}
+
+/* "Fermi" wordmark — Instrument Serif italic, matching the homepage */
+.site-title {
+  font-family: var(--font-display) !important;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.55rem;
+  letter-spacing: 0;
+  color: var(--fm-ink);
+}
+
+/* ---------- "On this page" right TOC ---------- */
+starlight-toc a {
+  font-family: var(--font-serif);
+  color: var(--fm-ink-4);
+}
+starlight-toc a[aria-current="true"] {
+  color: var(--fm-accent);
+}
+
+/* Mobile "On this page" toggle */
+.toggle {
+  background-color: var(--fm-panel) !important;
+  color: var(--fm-ink-2) !important;
+  border-color: var(--fm-border-2) !important;
+}
+
+/* ---------- Links ---------- */
+.sl-markdown-content a {
+  color: var(--fm-accent);
+  text-decoration-color: color-mix(in srgb, var(--fm-accent) 40%, transparent);
+  text-underline-offset: 0.15em;
+  transition: text-decoration-color 0.2s ease, color 0.2s ease;
+}
+
+.sl-markdown-content a:hover {
+  color: #a9c8fb;
+  text-decoration-color: var(--fm-accent);
+}
+
+/* ---------- Blockquotes ---------- */
+.sl-markdown-content blockquote {
+  border-left: 3px solid var(--fm-accent);
+  background: var(--fm-panel-2);
+  padding: 0.75rem 1.25rem;
+  border-radius: 0 var(--fm-radius) var(--fm-radius) 0;
+  font-style: italic;
+  color: var(--fm-ink-2);
+}
+
+/* ---------- Tables ---------- */
+.sl-markdown-content table {
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.sl-markdown-content th {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--fm-panel-2);
+  color: var(--fm-ink-2);
+}
+
+.sl-markdown-content th,
+.sl-markdown-content td {
+  border: 1px solid var(--fm-border-2);
+  padding: 0.5rem 0.75rem;
+}
+
+/* ---------- Selection ---------- */
+::selection {
+  color: var(--fm-ink);
+  background-color: #24405f;
+}
+
+/* ---------- Asides (note/tip/caution) ---------- */
+.starlight-aside {
+  border-radius: var(--fm-radius);
+  border-left-width: 3px;
+}
+
+/* ---------- Search ---------- */
+site-search button {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  background-color: var(--fm-panel) !important;
+  color: var(--fm-ink-4) !important;
+  border: 1px solid var(--fm-border-2) !important;
+  border-radius: var(--fm-radius) !important;
+}
+
+site-search button:hover {
+  border-color: var(--fm-ink-4) !important;
+  color: var(--fm-ink-2) !important;
+}
+
+/* ---------- Footer ---------- */
+.page-footer,
+footer {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  letter-spacing: 0.01em;
+}
+
+/* ---------- Pagination links ---------- */
+.pagination-links a {
+  border: 1px solid var(--fm-border-2);
+  border-radius: var(--fm-radius);
+  background: var(--fm-bg-soft);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.pagination-links a:hover {
+  background: var(--fm-panel);
+  border-color: var(--fm-accent);
+}
+
+.pagination-links a .link-title {
+  color: var(--fm-ink);
+}
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--fm-border-2); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--fm-ink-4); }
+
+/* ---------- Heading anchor links ---------- */
+/* Starlight shows these on hover via .sl-heading-wrapper:hover, and sizes the
+   icon with --sl-anchor-icon-size (default .8275em — scales huge on serif
+   headings). Override it on the wrapper with a fixed small rem and mute the color. */
+.sl-markdown-content .sl-heading-wrapper {
+  --sl-anchor-icon-size: 0.9rem;
+}
+.sl-markdown-content .sl-anchor-link {
+  color: var(--fm-ink-4);
+  transition: color 0.15s ease;
+}
+.sl-markdown-content .sl-anchor-link:hover {
+  color: var(--fm-accent);
+}
+
+/* ---------- Expressive Code copy button (shrink it) ---------- */
+.expressive-code .copy {
+  inset-block-start: 0.6rem !important;
+  inset-inline-end: 0.6rem !important;
+}
+.expressive-code .copy button {
+  width: 1.85rem !important;
+  height: 1.85rem !important;
+  border-radius: 6px !important;
+}
+.expressive-code .copy button::before {
+  border-radius: 6px !important;
+}
+.expressive-code .copy button::after {
+  --copy-icon-size: 0.95rem;
+  background-size: var(--copy-icon-size) var(--copy-icon-size) !important;
+  inset: 0 !important;
+}
+
+/* ---------- Smooth transitions ---------- */
+a, button, .pagination-links a, nav.sidebar a {
+  transition-duration: 0.2s;
+  transition-timing-function: ease;
+}

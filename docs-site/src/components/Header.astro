@@ -1,0 +1,58 @@
+---
+const base = import.meta.env.BASE_URL; // "/"
+const homeHref = base;
+const docsHref = base + "getting-started/";
+const blogHref = base + "blog/";
+const githubHref = "https://github.com/FelixRuiGao/Fermi";
+---
+
+<div class="header fm-header">
+  <a href={homeHref} class="fm-wordmark" translate="no">Fermi</a>
+  <nav class="fm-nav" aria-label="Primary">
+    <a href={docsHref}>Docs</a>
+    <a href={blogHref}>Blog</a>
+    <a href={githubHref}>GitHub ↗</a>
+  </nav>
+</div>
+
+<style>
+  .fm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 100%;
+    width: 100%;
+  }
+  .fm-wordmark {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 1.6rem;
+    line-height: 1;
+    color: var(--fm-ink, #f4f6fa);
+    text-decoration: none;
+  }
+  .fm-wordmark:hover { text-decoration: none; }
+
+  .fm-nav {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+  }
+  .fm-nav a {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8125rem;
+    letter-spacing: 0.01em;
+    color: var(--fm-ink-3, #aeb6c1);
+    text-decoration: none;
+    transition: color 0.2s ease;
+  }
+  .fm-nav a:hover { color: var(--fm-ink, #f4f6fa); }
+
+  @media (max-width: 50rem) {
+    .fm-nav { gap: 1.25rem; }
+  }
+  @media (max-width: 30rem) {
+    .fm-nav a:not(:last-child) { display: none; }
+  }
+</style>

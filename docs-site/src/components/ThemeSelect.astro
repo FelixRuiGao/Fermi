@@ -1,0 +1,9 @@
+---
+// Empty component — disables the theme switcher, locks to dark mode
+---
+
+<script is:inline>
+  // Force dark mode
+  document.documentElement.dataset.theme = 'dark';
+  window.StarlightThemeProvider = { updatePickers() {} };
+</script>

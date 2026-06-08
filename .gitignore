@@ -49,5 +49,7 @@ gui/dist/
 # VSCode extension package artifacts
 vscode/*.vsix
 
-# Staging site (not ready for release)
-site-staging/
+# Astro docs site build/cache artifacts
+docs-site/.astro/
+docs-site/node_modules/
+docs-site/dist/
