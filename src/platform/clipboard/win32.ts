@@ -21,10 +21,13 @@
  * relevant, return null / false instead of throwing.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { readFileSync, unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 import type { ClipboardImage, ClipboardProvider } from "../types.js";
 import { osc52Clipboard } from "./osc52.js";
@@ -71,19 +74,23 @@ function buildReadImageScript(outPath: string): string {
   ].join("; ");
 }
 
-function readImageViaPowerShell(): ClipboardImage | null {
+async function readImageViaPowerShell(): Promise<ClipboardImage | null> {
   const tempPath = join(tmpdir(), `fermi-clipboard-${process.pid}-${Date.now()}.png`);
 
   try {
-    const result = spawnSync(
+    // Async spawn (not spawnSync): PowerShell startup is ~300 ms and
+    // the call can run up to the 5 s timeout. A synchronous spawn would
+    // block the single Node event loop for that whole window, freezing
+    // all TUI rendering and input while the user pastes. execFile
+    // rejects on a non-zero exit, which the catch turns into null.
+    const { stdout } = await execFileAsync(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-Command", buildReadImageScript(tempPath)],
       { encoding: "utf8", windowsHide: true, timeout: 5000 },
     );
 
-    if (result.status !== 0) return null;
-    const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
-    if (stdout !== "png") return null;
+    const out = typeof stdout === "string" ? stdout.trim() : "";
+    if (out !== "png") return null;
     if (!existsSync(tempPath)) return null;
 
     const buffer = readFileSync(tempPath);

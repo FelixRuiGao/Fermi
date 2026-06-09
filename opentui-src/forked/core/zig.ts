@@ -72,7 +72,8 @@ const executableDir = dirname(process.execPath)
 const repoRoot = process.cwd()
 const zigArch =
   process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch
-const zigOs = process.platform === "darwin" ? "macos" : process.platform
+const zigOs =
+  process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : process.platform
 const nativeLibFile =
   process.platform === "darwin" ? "libopentui.dylib" : process.platform === "win32" ? "opentui.dll" : "libopentui.so"
 const isCompiledBinary = isBunfsPath(currentDir)
@@ -86,20 +87,34 @@ const localNativeCandidates = [
         join(executableDir, nativeLibFile),
       ]
     : []),
-  join(currentDir, "zig", "zig-out", "lib", "libopentui.dylib"),
-  join(currentDir, "zig", "lib", `${zigArch}-${zigOs}`, "libopentui.dylib"),
-  join(currentDir, "native", `${process.platform}-${process.arch}`, "libopentui.dylib"),
-  join(realCurrentDir, "zig", "zig-out", "lib", "libopentui.dylib"),
-  join(realCurrentDir, "zig", "lib", `${zigArch}-${zigOs}`, "libopentui.dylib"),
-  join(realCurrentDir, "native", `${process.platform}-${process.arch}`, "libopentui.dylib"),
-  join(repoRoot, "opentui-src", "forked", "core", "zig", "zig-out", "lib", "libopentui.dylib"),
-  join(repoRoot, "opentui-src", "forked", "core", "zig", "lib", `${zigArch}-${zigOs}`, "libopentui.dylib"),
+  join(currentDir, "zig", "zig-out", "lib", nativeLibFile),
+  join(currentDir, "zig", "lib", `${zigArch}-${zigOs}`, nativeLibFile),
+  join(currentDir, "native", `${process.platform}-${process.arch}`, nativeLibFile),
+  join(realCurrentDir, "zig", "zig-out", "lib", nativeLibFile),
+  join(realCurrentDir, "zig", "lib", `${zigArch}-${zigOs}`, nativeLibFile),
+  join(realCurrentDir, "native", `${process.platform}-${process.arch}`, nativeLibFile),
+  join(repoRoot, "opentui-src", "forked", "core", "zig", "zig-out", "lib", nativeLibFile),
+  join(repoRoot, "opentui-src", "forked", "core", "zig", "lib", `${zigArch}-${zigOs}`, nativeLibFile),
 ]
 
 let targetLibPath: string | undefined = localNativeCandidates.find((candidate) => existsSync(candidate))
 
-if (!targetLibPath) {
-  const nativePackage = await import(`@opentui/core-${process.platform}-${process.arch}`)
+// Platform-arch targets we publish prebuilt native packages for — mirrors
+// package.json optionalDependencies. Gating the import on this set (rather
+// than catching every error) means a target that genuinely has no prebuilt
+// (darwin-x64, linux-arm64, win32-arm64) falls straight through to the
+// friendly "not supported" error, WITHOUT masking real load failures on a
+// supported target: a corrupt/missing native lib, bad export, or dlopen
+// error now surfaces its actual stack instead of being mislabeled
+// "unsupported platform". (On a supported target with the optional package
+// uninstalled — e.g. `--omit=optional` and no local build — the import's
+// own not-found error propagates, which is more honest than the generic
+// platform message.)
+const PREBUILT_NATIVE_TARGETS = new Set(["darwin-arm64", "linux-x64", "win32-x64"])
+const nativeTarget = `${process.platform}-${process.arch}`
+
+if (!targetLibPath && PREBUILT_NATIVE_TARGETS.has(nativeTarget)) {
+  const nativePackage = await import(`@opentui/core-${nativeTarget}`)
   targetLibPath = nativePackage.default as string
 
   if (isBunfsPath(targetLibPath)) {

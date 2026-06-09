@@ -9,10 +9,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Wait-ForParentExit {
-    param([int]$Pid)
+    # NB: do NOT name this parameter $Pid — $PID is a ReadOnly + AllScope
+    # automatic variable in PowerShell (AllScope copies it into every new
+    # scope), so binding a same-named parameter throws the terminating
+    # error "Cannot overwrite variable PID because it is read-only or
+    # constant." That aborts the whole self-update before any file is
+    # copied, REGARDLESS of $ErrorActionPreference — a parameter-binding /
+    # scope-variable-creation error is unconditionally terminating.
+    param([int]$ProcessId)
 
     while ($true) {
-        $proc = Get-Process -Id $Pid -ErrorAction SilentlyContinue
+        $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
         if ($null -eq $proc) { break }
         Start-Sleep -Milliseconds 200
     }
@@ -52,7 +59,7 @@ function Copy-StagedEntries {
 $HomeDir = Split-Path $ExePath -Parent | Split-Path -Parent
 $MarkerFile = Join-Path $HomeDir ".update-handoff-pending"
 
-Wait-ForParentExit -Pid $ParentPid
+Wait-ForParentExit -ProcessId $ParentPid
 Copy-StagedEntries -SourceDir $StagedDir -TargetDir $InstallDir
 Remove-Item $StagedDir -Recurse -Force
 
@@ -69,4 +76,12 @@ if (Test-Path $ArgsFile) {
     Remove-Item $ArgsFile -Force
 }
 
-Start-Process -FilePath $ExePath -ArgumentList $RestartArgs | Out-Null
+# Windows PowerShell 5.1 rejects `-ArgumentList @()` (an empty collection
+# fails ArgumentList's validation; the fix only landed in PowerShell Core).
+# The common no-extra-args relaunch yields an empty array, so omit the
+# parameter entirely in that case rather than passing an empty array.
+if ($RestartArgs.Count -gt 0) {
+    Start-Process -FilePath $ExePath -ArgumentList $RestartArgs | Out-Null
+} else {
+    Start-Process -FilePath $ExePath | Out-Null
+}

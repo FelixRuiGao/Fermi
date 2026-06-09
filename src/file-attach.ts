@@ -19,7 +19,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { context } from "./primitives/context.js";
-import { SafePathError, safePath } from "./security/path.js";
+import { SafePathError, safePath, toPosixPath } from "./security/path.js";
 import { getSensitiveFileReadReason } from "./security/sensitive-files.js";
 import {
   isProjectedDocumentPath,
@@ -135,7 +135,11 @@ export function scanCandidates(
     for (const name of entries) {
       if (SCAN_EXCLUDE_DIRS.has(name) || name.startsWith(".")) continue;
       const full = path.join(directory, name);
-      const rel = path.relative(base, full);
+      // path.relative returns OS-native separators (backslashes on
+      // Windows); the user's @-query and the directory suffix below use
+      // forward slashes, so normalize or nested-path completion breaks
+      // on Windows (the candidate never startsWith the typed prefix).
+      const rel = toPosixPath(path.relative(base, full));
       const relLower = rel.toLowerCase();
 
       let isDir = false;

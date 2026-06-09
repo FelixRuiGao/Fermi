@@ -26,49 +26,67 @@ interface LinuxClipboardTooling {
   readImageCmd: ((mime: string) => { command: string; args: string[] }) | null;
 }
 
-function pickTooling(): LinuxClipboardTooling | null {
-  const server = linuxDisplayServer();
-
-  if (server === "wayland" && commandExists("wl-copy")) {
-    return {
-      id: "linux-wayland-wl-clipboard",
-      writeTextCmd: () => ({ command: "wl-copy", args: [] }),
-      readImageCmd: commandExists("wl-paste")
-        ? (mime) => ({ command: "wl-paste", args: ["-t", mime] })
-        : null,
-    };
-  }
-
-  if (server === "x11" && commandExists("xclip")) {
-    return {
-      id: "linux-x11-xclip",
-      writeTextCmd: () => ({
-        command: "xclip",
-        args: ["-selection", "clipboard"],
-      }),
-      readImageCmd: (mime) => ({
-        command: "xclip",
-        args: ["-selection", "clipboard", "-t", mime, "-o"],
-      }),
-    };
-  }
-
-  if (server === "x11" && commandExists("xsel")) {
-    return {
-      id: "linux-x11-xsel",
-      writeTextCmd: () => ({
-        command: "xsel",
-        args: ["--clipboard", "--input"],
-      }),
-      // xsel doesn't support image reads.
-      readImageCmd: null,
-    };
-  }
-
-  return null;
+function wlClipboardTooling(): LinuxClipboardTooling | null {
+  if (!commandExists("wl-copy")) return null;
+  return {
+    id: "linux-wayland-wl-clipboard",
+    writeTextCmd: () => ({ command: "wl-copy", args: [] }),
+    readImageCmd: commandExists("wl-paste")
+      ? (mime) => ({ command: "wl-paste", args: ["-t", mime] })
+      : null,
+  };
 }
 
-const tooling = pickTooling();
+function xclipTooling(): LinuxClipboardTooling | null {
+  if (!commandExists("xclip")) return null;
+  return {
+    id: "linux-x11-xclip",
+    writeTextCmd: () => ({ command: "xclip", args: ["-selection", "clipboard"] }),
+    readImageCmd: (mime) => ({
+      command: "xclip",
+      args: ["-selection", "clipboard", "-t", mime, "-o"],
+    }),
+  };
+}
+
+function xselTooling(): LinuxClipboardTooling | null {
+  if (!commandExists("xsel")) return null;
+  return {
+    id: "linux-x11-xsel",
+    writeTextCmd: () => ({ command: "xsel", args: ["--clipboard", "--input"] }),
+    // xsel doesn't support image reads.
+    readImageCmd: null,
+  };
+}
+
+/**
+ * Ordered list of available clipboard tools. The display server sets
+ * *priority*, not *exclusivity*: under Wayland, XWayland is near-
+ * universal so xclip/xsel still work against the bridged clipboard and
+ * must remain fallbacks when wl-clipboard is absent (the M-2 bug:
+ * Wayland session + xclip-but-no-wl-clipboard previously fell straight
+ * through to OSC 52). When no display server is detected we build an
+ * empty chain so writeText goes straight to the OSC 52 tail and
+ * readImage returns null. This realizes the wl-copy → xclip → OSC 52
+ * cascade documented in types.ts.
+ */
+function pickToolingChain(): LinuxClipboardTooling[] {
+  const server = linuxDisplayServer();
+  if (server === "none") return [];
+
+  const wl = wlClipboardTooling();
+  const xclip = xclipTooling();
+  const xsel = xselTooling();
+
+  // Prefer the active display server's native tool first, keep the
+  // other GUI tools as fallbacks.
+  const ordered = server === "wayland"
+    ? [wl, xclip, xsel]
+    : [xclip, xsel, wl];
+  return ordered.filter((t): t is LinuxClipboardTooling => t !== null);
+}
+
+const toolingChain = pickToolingChain();
 
 async function writeViaTooling(t: LinuxClipboardTooling, text: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -125,15 +143,16 @@ const IMAGE_MIME_TYPES: { mime: string; mediaType: ClipboardImageMediaType }[] =
 ];
 
 export const linuxClipboard: ClipboardProvider = {
-  // Reflects the primary mechanism chosen at module load. Note that
-  // a single writeText() call may transparently fall through to OSC 52
-  // when the primary tool returns a non-zero status, so the actual
-  // mechanism used for an individual call may differ from this id.
-  // Treated as diagnostic context, not a per-call accuracy guarantee.
-  id: tooling ? tooling.id : "linux-osc52-fallback",
+  // Reflects the primary mechanism chosen at module load. Note that a
+  // single writeText() call walks the whole tool chain and may fall
+  // through to OSC 52, so the actual mechanism used for an individual
+  // call may differ from this id. Treated as diagnostic context, not a
+  // per-call accuracy guarantee.
+  id: toolingChain[0] ? toolingChain[0].id : "linux-osc52-fallback",
 
   async writeText(text: string): Promise<boolean> {
-    if (tooling) {
+    // Walk the chain in priority order; first tool that succeeds wins.
+    for (const tooling of toolingChain) {
       const ok = await writeViaTooling(tooling, text);
       if (ok) return true;
     }
@@ -142,11 +161,13 @@ export const linuxClipboard: ClipboardProvider = {
   },
 
   async readImage(): Promise<ClipboardImage | null> {
-    if (!tooling || !tooling.readImageCmd) return null;
-    for (const { mime, mediaType } of IMAGE_MIME_TYPES) {
-      const buffer = await readImageBytes(tooling, mime);
-      if (buffer && buffer.length > 0) {
-        return { buffer, mediaType };
+    for (const tooling of toolingChain) {
+      if (!tooling.readImageCmd) continue;
+      for (const { mime, mediaType } of IMAGE_MIME_TYPES) {
+        const buffer = await readImageBytes(tooling, mime);
+        if (buffer && buffer.length > 0) {
+          return { buffer, mediaType };
+        }
       }
     }
     return null;

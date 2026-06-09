@@ -1081,18 +1081,34 @@ async function toolReadFile(
 
   if (lineTrimCount > 0) {
     // Single-line precision reads aren't supported by read_file itself
-    // (every line is capped at READ_MAX_LINE_CHARS), but `head`, `tail`,
-    // and `cut` are pre-approved bash commands — no permission prompt —
-    // so the model has a straightforward escape hatch. Use the full
-    // absolute path so the model can paste the command verbatim from any
-    // working directory.
-    const safePath = filePath.replace(/'/g, "'\\''");
+    // (every line is capped at READ_MAX_LINE_CHARS), so point the model
+    // at a pre-approved (read-class) shell escape hatch. The command and
+    // quoting depend on the resolved shell — head/tail/cut don't exist
+    // under PowerShell and its single-quote escaping differs — so render
+    // a shell-appropriate hint. Use the full absolute path so the model
+    // can paste it verbatim from any working directory.
+    const isPwsh = shell.kind === "pwsh" || shell.kind === "powershell";
+    let escapeHatch: string;
+    if (isPwsh) {
+      const psPath = filePath.replace(/'/g, "''");
+      // @(...) forces an array even for a single-line/minified file —
+      // without it Get-Content returns a bare string, indexing yields a
+      // [char], and .Substring throws. This windowing form may prompt for
+      // approval (it's not on the pre-approved read list like the bash
+      // pipeline below).
+      escapeHatch =
+        `run \`@(Get-Content '${psPath}')[LINE_NUM - 1].Substring(START_INDEX, LENGTH)\` ` +
+        `(START_INDEX is 0-based; may prompt for approval).`;
+    } else {
+      const safePath = filePath.replace(/'/g, "'\\''");
+      escapeHatch =
+        `use bash: \`head -n LINE_NUM '${safePath}' | tail -n 1 | cut -c FROM-TO\` ` +
+        `(head/tail/cut are pre-approved, no permission prompt).`;
+    }
     result +=
       `\n\n[Note: ${lineTrimCount} line${lineTrimCount === 1 ? "" : "s"} ` +
       `exceeded ${READ_MAX_LINE_CHARS} chars and ${lineTrimCount === 1 ? "was" : "were"} truncated. ` +
-      `To read the full content of a specific long line, use bash: ` +
-      `\`head -n LINE_NUM '${safePath}' | tail -n 1 | cut -c FROM-TO\` ` +
-      `(head/tail/cut are pre-approved, no permission prompt).]`;
+      `To read the full content of a specific long line, ${escapeHatch}]`;
   }
 
   return result;
@@ -1347,7 +1363,10 @@ async function toolEditFileAppend(
     }
 
     const totalLineCount = countFileLines(before);
-    const finalContent = before + appendStr;
+    // Re-encode the appended text to the file's existing EOL so appending
+    // model-authored LF text to a CRLF file doesn't seed mixed line
+    // endings (the same churn write_file/edit_file guard against).
+    const finalContent = before + reencodeEol(appendStr, detectFileEol(before));
 
     const beforeLines = before.length > 0 ? before.split("\n") : [];
     const afterLines = finalContent.length > 0 ? finalContent.split("\n") : [];
@@ -1432,6 +1451,34 @@ function snippetFor(s: string, maxLen = 60): string {
   return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
 }
 
+/**
+ * The dominant line ending of a file's contents, by majority vote.
+ * A file is treated as CRLF only when CRLF lines outnumber lone-LF lines.
+ * "Any CRLF present" was too aggressive: a single stray CRLF in an
+ * otherwise-LF file would force the model's LF old_str to CRLF and then
+ * match nothing — the edit silently fails while read_file shows LF-only
+ * content, so the model can't see the CR and can't self-correct.
+ */
+function detectFileEol(content: string): "\r\n" | "\n" {
+  const crlf = (content.match(/\r\n/g) ?? []).length;
+  const loneLf = (content.match(/\n/g) ?? []).length - crlf;
+  return crlf > loneLf ? "\r\n" : "\n";
+}
+
+/**
+ * Re-encode a string's line endings to the target file's convention.
+ * read_file presents content as LF-only (it strips CR), so a multi-line
+ * old_str copied from that output is LF even when the file on disk is
+ * CRLF — a literal byte match would then never succeed. Normalizing
+ * CRLF→LF first makes this idempotent regardless of what the caller
+ * passed. Applied to new_str too, so a replacement preserves the file's
+ * existing EOL instead of seeding lone-LF lines into a CRLF file.
+ */
+function reencodeEol(s: string, eol: "\r\n" | "\n"): string {
+  const lf = s.replace(/\r\n/g, "\n");
+  return eol === "\r\n" ? lf.replace(/\n/g, "\r\n") : lf;
+}
+
 async function toolEditFileMulti(
   filePath: string,
   edits: Array<{ old_str: string; new_str: string; replace_all?: boolean }>,
@@ -1458,6 +1505,13 @@ async function toolEditFileMulti(
       return `ERROR: ${e instanceof Error ? e.message : String(e)}`;
     }
 
+    // read_file shows LF-only content, so a multi-line old_str echoed
+    // back by the model is LF even when the file is CRLF. Re-encode each
+    // edit's strings to the file's actual EOL before matching/replacing,
+    // so multi-line edits work on CRLF (Windows-authored) files and the
+    // replacement keeps the file's line-ending convention.
+    const fileEol = detectFileEol(content);
+
     // Find all matches; validate uniqueness unless replace_all is opted in.
     // No-op edits (old_str === new_str) are rejected so the model doesn't
     // confuse itself with diffs that don't change anything.
@@ -1472,13 +1526,17 @@ async function toolEditFileMulti(
     const matches: MatchInfo[] = [];
     for (let editIdx = 0; editIdx < edits.length; editIdx++) {
       const edit = edits[editIdx];
-      if (edit.old_str === edit.new_str) {
+      // Match and replace using the file's EOL; report errors with the
+      // model's original (LF) strings so messages stay readable.
+      const oldStr = reencodeEol(edit.old_str, fileEol);
+      const newStr = reencodeEol(edit.new_str, fileEol);
+      if (oldStr === newStr) {
         return (
           `ERROR: edit #${editIdx + 1} has identical old_str and new_str — ` +
           `this is a no-op. Adjust new_str or remove the edit.`
         );
       }
-      const offsets = findAllOffsets(content, edit.old_str);
+      const offsets = findAllOffsets(content, oldStr);
       if (offsets.length === 0) {
         return `ERROR: edit #${editIdx + 1}: old_str not found in file: ${JSON.stringify(snippetFor(edit.old_str))}`;
       }
@@ -1499,8 +1557,8 @@ async function toolEditFileMulti(
       for (const off of offsets) {
         matches.push({
           index: off,
-          oldStr: edit.old_str,
-          newStr: edit.new_str,
+          oldStr,
+          newStr,
         });
       }
     }
@@ -1523,9 +1581,11 @@ async function toolEditFileMulti(
       newContent = newContent.slice(0, m.index) + m.newStr + newContent.slice(m.index + m.oldStr.length);
     }
 
-    // Append always executes last, after all replacements
+    // Append always executes last, after all replacements. Re-encode to
+    // the file's EOL so an LF append doesn't seed mixed endings in a CRLF
+    // file (consistent with the old_str/new_str re-encoding above).
     if (appendStr) {
-      newContent += appendStr;
+      newContent += reencodeEol(appendStr, fileEol);
     }
 
     const totalLineCount = countFileLines(content);
@@ -1605,8 +1665,19 @@ async function toolWriteFile(
         ? readFileSync(filePath, { encoding: "utf-8" })
         : "";
 
+      // Preserve the existing file's line-ending convention. The model
+      // composes content with LF (read_file only ever shows LF), so
+      // writing it verbatim would silently rewrite a CRLF file to LF —
+      // spurious git churn, broken CRLF-expecting toolchains, and a diff
+      // that shows every line as changed (before's lines keep `\r`,
+      // after's don't, so nothing aligns). Re-encode to the file's
+      // native EOL; new files keep the content exactly as authored.
+      const finalContent = initialVersion.exists
+        ? reencodeEol(content, detectFileEol(before))
+        : content;
+
       const beforeLines = before.length > 0 ? before.split("\n") : [];
-      const afterLines = content.length > 0 ? content.split("\n") : [];
+      const afterLines = finalContent.length > 0 ? finalContent.split("\n") : [];
       const diffPreview = buildUnifiedDiffPreview(
         simpleUnifiedDiff(
           beforeLines,
@@ -1617,26 +1688,26 @@ async function toolWriteFile(
       );
 
       const originalTotalLineCount = countFileLines(before);
-      const fileModifyData = buildWriteDisplayData(filePath, content, originalTotalLineCount);
+      const fileModifyData = buildWriteDisplayData(filePath, finalContent, originalTotalLineCount);
 
-      await atomicWriteTextFile(filePath, content, mode, initialVersion);
+      await atomicWriteTextFile(filePath, finalContent, mode, initialVersion);
 
       const newMtimeMs = Math.trunc(statSync(filePath).mtimeMs);
       const tuiPreview: Record<string, unknown> = {
         kind: "diff",
         text: diffPreview.text,
         truncated: diffPreview.truncated,
-        newContent: content,
+        newContent: finalContent,
       };
       return new ToolResult({
-        content: `OK: Wrote ${content.length} characters to ${filePath} [mtime_ms=${newMtimeMs}]`,
+        content: `OK: Wrote ${finalContent.length} characters to ${filePath} [mtime_ms=${newMtimeMs}]`,
         metadata: {
           path: filePath,
           isNewFile: !initialVersion.exists,
           lineCount: afterLines.length,
           tui_preview: tuiPreview,
           fileModifyData,
-          fileMutation: buildFileMutation(filePath, before, content, initialVersion.exists),
+          fileMutation: buildFileMutation(filePath, before, finalContent, initialVersion.exists),
         },
       });
     } catch (e) {

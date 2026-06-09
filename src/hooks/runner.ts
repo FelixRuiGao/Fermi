@@ -6,6 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { osCapabilities } from "../platform/index.js";
 import type { HookManifest, HookPayload, HookOutput } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -31,12 +32,45 @@ export async function runHookCommand(
     const env: Record<string, string | undefined> = { ...process.env, ...manifest.env };
     let child;
     try {
-      child = spawn(manifest.command, manifest.args ?? [], {
-        env,
-        cwd: process.cwd(),
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: timeoutMs,
-      });
+      // Only ROUTE THROUGH cmd.exe when we actually need it. A command
+      // with an explicit native-executable extension (.exe/.com) is
+      // spawned directly (argv array, no shell) on every platform — cmd
+      // reparsing would mangle args containing its metacharacters
+      // (`&`, `|`, `<`, `>`, `%VAR%`), a regression for native hooks like
+      // `node.exe ... R&D`. Only bare names and .cmd/.bat shims (npm/npx/
+      // prettier) need the shell: a bare exec can't launch a .cmd shim and
+      // modern Node throws EINVAL for it.
+      const isNativeExe = /\.(exe|com)$/i.test(manifest.command);
+      if (osCapabilities.scriptShimsRequireShell && !isNativeExe) {
+        // Pre-quote each token into one command line so a path with spaces
+        // (C:\Program Files\...) isn't split, and so cmd metacharacters are
+        // protected: inside double quotes cmd treats &, |, <, >, (, )
+        // literally. (%VAR% still expands even when quoted — an inherent
+        // cmd /c limitation; native .exe hooks above avoid cmd entirely.)
+        const quote = (s: string) =>
+          /[\s"&|<>()^]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        const commandLine = [manifest.command, ...(manifest.args ?? [])].map(quote).join(" ");
+        child = spawn(commandLine, {
+          shell: true,
+          env,
+          cwd: process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: timeoutMs,
+          // shell:true launches cmd.exe (a console-subsystem program). In
+          // GUI/server mode the parent has no inherited console, so Windows
+          // would allocate a fresh console window per child and flash a
+          // black box on every hook firing (PreToolUse/PostToolUse run on
+          // each tool call). Hide it, matching every other win32 spawn.
+          windowsHide: true,
+        });
+      } else {
+        child = spawn(manifest.command, manifest.args ?? [], {
+          env,
+          cwd: process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: timeoutMs,
+        });
+      }
     } catch (e) {
       resolve({
         success: false,

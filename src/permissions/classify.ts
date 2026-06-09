@@ -92,9 +92,13 @@ const BASH_SAFE_COMMANDS = new Set([
 const BASH_REVERSIBLE_COMMANDS = new Set(["mkdir"]);
 const BASH_DYNAMIC_REVERSIBLE = new Set(["cp", "mv"]);
 
-// POSIX-shared danger commands. Case-sensitive lookup (Unix
-// convention — `RM` is genuinely a different file from `rm` and we
-// don't want to flag legitimate scripts named with caps).
+// POSIX-shared danger commands. Stored lowercase. The lookup is
+// case-sensitive ONLY on case-sensitive filesystems (Linux): there
+// `RM` is genuinely a different file from `rm`. On case-insensitive
+// filesystems (default macOS, Windows Git Bash) classifyParsedCommand
+// lower-cases the parsed name before comparing — see the
+// caseInsensitiveFilesystem capability — so uppercase spellings
+// cannot bypass the gate.
 //
 // Platform-specific danger commands (Windows registry/disk/network
 // tools) live in osCapabilities.platformSpecificDangerCommands and
@@ -214,6 +218,13 @@ const PS_POTENT_COMMANDS = new Set([
 /** Dangerous PowerShell patterns: eval-equivalents and code injection vectors. */
 const PS_EVAL_COMMANDS = new Set([
   "invoke-expression", "iex",
+]);
+
+// PowerShell disk-management cmdlets that irreversibly destroy data —
+// escalate to catastrophic (the only class yolo still prompts on),
+// mirroring the POSIX mkfs/fdisk/dd handling in classifyParsedCommand.
+const PS_CATASTROPHIC_COMMANDS = new Set([
+  "format-volume", "clear-disk", "initialize-disk", "remove-partition",
 ]);
 
 /** PowerShell common aliases → canonical cmdlet name (lowercase). */
@@ -407,7 +418,9 @@ export async function classifyToolAsync(
     for (const cmd of segment.commands) {
       const stripped = usePS ? cmd : stripWrappersFromParsed(cmd);
       const cls = usePS ? classifyPSCommand(stripped) : classifyParsedCommand(stripped);
-      allCommandNames.push(stripped.name);
+      // Fold so the cp/mv escalation (Phase 5) and memoized rule lookups
+      // match `CP`/`MV` like `cp`/`mv` on case-insensitive filesystems.
+      allCommandNames.push(usePS ? stripped.name : normalizedCommandName(stripped.name));
       if (CLASS_ORDER[cls] > CLASS_ORDER[segClass]) segClass = cls;
     }
     if (segment.hasFileWriteRedirect && CLASS_ORDER[segClass] < CLASS_ORDER["write_potent"]) {
@@ -458,7 +471,7 @@ export async function classifyToolAsync(
     for (const seg of effectiveSegments) {
       for (const cmd of seg.commands) {
         const stripped = stripWrappersFromParsed(cmd);
-        if (!BASH_DYNAMIC_REVERSIBLE.has(stripped.name)) continue;
+        if (!BASH_DYNAMIC_REVERSIBLE.has(normalizedCommandName(stripped.name))) continue;
         const parsed = parseTrackableBashMutation(seg.text);
         if (!parsed) {
           assessment.permissionClass = "write_potent";
@@ -489,7 +502,8 @@ export async function classifyToolAsync(
 // ------------------------------------------------------------------
 
 function classifyParsedCommand(cmd: ParsedBashCommand): PermissionClass {
-  const name = cmd.name.split("/").pop() ?? cmd.name;
+  // Case-folded on case-insensitive filesystems — see normalizedCommandName.
+  const name = normalizedCommandName(cmd.name);
 
   // Catastrophic: disk tools
   if (["mkfs", "fdisk", "parted", "wipefs", "shred", "dd"].includes(name)) {
@@ -501,6 +515,13 @@ function classifyParsedCommand(cmd: ParsedBashCommand): PermissionClass {
     } else {
       return "catastrophic";
     }
+  }
+
+  // Catastrophic: platform-specific disk-wipe tools (Windows
+  // format/diskpart via Git Bash). Empty set on POSIX, so a command
+  // coincidentally named `format` on a POSIX host is never mis-flagged.
+  if (osCapabilities.platformSpecificCatastrophicCommands.has(name)) {
+    return "catastrophic";
   }
 
   // Catastrophic: rm -rf targeting root/home
@@ -635,8 +656,28 @@ function classifyGitDetailed(cmd: ParsedBashCommand): PermissionClass {
 // Helpers
 // ------------------------------------------------------------------
 
+/**
+ * Basename of a command, case-folded on case-insensitive filesystems
+ * (default macOS APFS, Windows Git Bash over NTFS) so uppercase
+ * spellings (`RM`, `ENV`, `NICE`) resolve to the same canonical name the
+ * shell would exec. MUST be used by EVERY layer that matches a command
+ * name against a safety set — wrapper stripping, danger/catastrophic
+ * classification, and the cp/mv escalation. Folding in only one layer
+ * lets an uppercase spelling slip past an earlier case-sensitive layer
+ * and land on a more permissive branch: e.g. with wrapper-stripping left
+ * case-sensitive, `ENV rm -rf ~` is never unwrapped and the folded `env`
+ * reaches the SAFE `env` branch → `read` (auto-allowed in every mode),
+ * strictly WORSE than the unfolded `write_potent`. On case-sensitive
+ * Linux the capability is false and the original casing is preserved (a
+ * file truly named `RM` is distinct from `rm`).
+ */
+function normalizedCommandName(rawName: string): string {
+  const base = rawName.split("/").pop() ?? rawName;
+  return osCapabilities.caseInsensitiveFilesystem ? base.toLowerCase() : base;
+}
+
 function stripWrappersFromParsed(cmd: ParsedBashCommand): ParsedBashCommand {
-  const name = cmd.name.split("/").pop() ?? cmd.name;
+  const name = normalizedCommandName(cmd.name);
 
   if (name === "env") {
     let idx = 0;
@@ -668,7 +709,7 @@ function stripWrappersFromParsed(cmd: ParsedBashCommand): ParsedBashCommand {
 }
 
 function buildCanonicalPatternFromParsed(cmd: ParsedBashCommand): string {
-  const name = cmd.name.split("/").pop() ?? cmd.name;
+  const name = normalizedCommandName(cmd.name);
 
   const subcommandTools = new Set([
     "git", "npm", "npx", "pnpm", "yarn", "docker", "kubectl",
@@ -778,6 +819,12 @@ function classifyPSCommand(cmd: ParsedBashCommand): PermissionClass {
     return "write_danger";
   }
 
+  // Catastrophic: PowerShell disk-wipe cmdlets, plus the Windows
+  // format/diskpart exes when invoked from PowerShell (empty set off
+  // Windows). Checked before the danger set so they escalate fully.
+  if (PS_CATASTROPHIC_COMMANDS.has(name)) return "catastrophic";
+  if (osCapabilities.platformSpecificCatastrophicCommands.has(name)) return "catastrophic";
+
   // Check PowerShell-specific command sets.
   if (PS_DANGER_COMMANDS.has(name)) return "write_danger";
 
@@ -796,9 +843,11 @@ function classifyPSCommand(cmd: ParsedBashCommand): PermissionClass {
   // Escalate to write_potent so the user gets prompted.
   if (PS_SAFE_COMMANDS.has(name)) {
     // Script blocks and subexpressions can contain arbitrary code
-    // (including catastrophic deletes). We can't inspect their contents
-    // statically, so escalate to write_danger — this ensures yolo mode
-    // still prompts rather than auto-allowing.
+    // (including deletes). We can't inspect their contents statically,
+    // so escalate to write_danger, which prompts in read_only/reversible
+    // modes. (yolo only force-prompts `catastrophic`, so a script-block
+    // delete still auto-runs there; classifying every script-block-
+    // bearing read cmdlet as catastrophic would be far too aggressive.)
     return hasExecutableExpression(cmd) ? "write_danger" : "read";
   }
 

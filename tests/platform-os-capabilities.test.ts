@@ -31,6 +31,11 @@ describe("selectOsCapabilities", () => {
     const caps = withPlatform("darwin", selectOsCapabilities);
     expect(caps.supportsPosixPermissions).toBe(true);
     expect(caps.platformSpecificDangerCommands.size).toBe(0);
+    expect(caps.platformSpecificCatastrophicCommands.size).toBe(0);
+    // Default macOS APFS/HFS+ is case-insensitive, so command-name
+    // matching in the classifier must be case-insensitive too.
+    expect(caps.caseInsensitiveFilesystem).toBe(true);
+    expect(caps.scriptShimsRequireShell).toBe(false);
     expect(caps.toolIndicatorGlyph).toBe("⏺"); // U+23FA, renders correctly in mono fonts on macOS
     expect(caps.conversationScrollMultiplier).toBe(1);
   });
@@ -39,6 +44,11 @@ describe("selectOsCapabilities", () => {
     const caps = withPlatform("linux", selectOsCapabilities);
     expect(caps.supportsPosixPermissions).toBe(true);
     expect(caps.platformSpecificDangerCommands.size).toBe(0);
+    expect(caps.platformSpecificCatastrophicCommands.size).toBe(0);
+    // Default Linux ext4/btrfs are case-sensitive — `RM` is a distinct
+    // file from `rm`, so the classifier keeps case-sensitive matching.
+    expect(caps.caseInsensitiveFilesystem).toBe(false);
+    expect(caps.scriptShimsRequireShell).toBe(false);
     expect(caps.toolIndicatorGlyph).toBe("⏺");
     expect(caps.conversationScrollMultiplier).toBe(1);
   });
@@ -46,20 +56,30 @@ describe("selectOsCapabilities", () => {
   it("disables POSIX permissions and ships Windows danger commands on win32", () => {
     const caps = withPlatform("win32", selectOsCapabilities);
     expect(caps.supportsPosixPermissions).toBe(false);
+    // NTFS / Git Bash (MSYS2) resolve command names case-insensitively.
+    expect(caps.caseInsensitiveFilesystem).toBe(true);
+    expect(caps.scriptShimsRequireShell).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("reg")).toBe(true);
-    expect(caps.platformSpecificDangerCommands.has("format")).toBe(true);
-    expect(caps.platformSpecificDangerCommands.has("diskpart")).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("bcdedit")).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("netsh")).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("taskkill")).toBe(true);
     expect(caps.platformSpecificDangerCommands.has("wmic")).toBe(true);
+    // Disk-wipe tools are catastrophic (yolo still prompts), not merely
+    // danger — they live in the catastrophic set, not the danger set.
+    expect(caps.platformSpecificDangerCommands.has("format")).toBe(false);
+    expect(caps.platformSpecificDangerCommands.has("diskpart")).toBe(false);
+    expect(caps.platformSpecificCatastrophicCommands.has("format")).toBe(true);
+    expect(caps.platformSpecificCatastrophicCommands.has("diskpart")).toBe(true);
     expect(caps.toolIndicatorGlyph).toBe("⬤"); // U+2B24 — avoids PowerShell's square-outlined record icon fallback
     expect(caps.conversationScrollMultiplier).toBe(3);
   });
 
-  it("stores Windows danger command names lowercased so the classifier's case-insensitive lookup works", () => {
+  it("stores Windows danger/catastrophic command names lowercased so the classifier's case-insensitive lookup works", () => {
     const caps = withPlatform("win32", selectOsCapabilities);
     for (const name of caps.platformSpecificDangerCommands) {
+      expect(name).toBe(name.toLowerCase());
+    }
+    for (const name of caps.platformSpecificCatastrophicCommands) {
       expect(name).toBe(name.toLowerCase());
     }
   });

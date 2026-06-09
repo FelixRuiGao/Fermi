@@ -2530,8 +2530,13 @@ export function OpenTuiApp({
       return;
     }
 
-    // Ctrl+V: paste image from system clipboard
-    if (event.name === "v" && event.ctrl && !event.meta && !event.option && !event.super) {
+    // Ctrl+V: paste image from system clipboard. Ctrl+Y is an alternate
+    // because Windows Terminal (the default Win11 terminal) binds Ctrl+V
+    // to its own text-paste and consumes the keypress before it reaches
+    // the app, leaving image paste otherwise unreachable there; Ctrl+Y
+    // is not a Windows Terminal default binding and is unused elsewhere
+    // in Fermi, so it reaches this handler on every platform.
+    if ((event.name === "v" || event.name === "y") && event.ctrl && !event.meta && !event.option && !event.super) {
       event.preventDefault();
       event.stopPropagation();
       void (async () => {

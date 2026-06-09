@@ -11,6 +11,8 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { osCapabilities } from "../platform/index.js";
+
 /**
  * Normalize a filesystem path to forward-slash form so prefix matches
  * work the same way on Windows (where `path.resolve` returns `\`) and
@@ -93,7 +95,19 @@ export class SafePathError extends Error {
 }
 
 function isWithinBase(baseAbs: string, candidateAbs: string): boolean {
-  const rel = path.relative(baseAbs, candidateAbs);
+  // On case-insensitive filesystems (default macOS APFS, Windows) `/Data`
+  // and `/data` are the same directory, so fold both sides before the
+  // relative computation. Otherwise a path differing only in case from
+  // the base is wrongly judged outside scope — and an external-path rule
+  // that the advisor case-folds to approve would then hard-fail here in
+  // the executor (the L-3 regression). Folding never WIDENS scope: a real
+  // prefix collision (`/base` vs `/base-evil`) still yields a
+  // `..`-prefixed relative path. On case-sensitive Linux, exact casing is
+  // preserved.
+  const [base, candidate] = osCapabilities.caseInsensitiveFilesystem
+    ? [baseAbs.toLowerCase(), candidateAbs.toLowerCase()]
+    : [baseAbs, candidateAbs];
+  const rel = path.relative(base, candidate);
   if (rel === "") return true;
   if (path.isAbsolute(rel)) return false; // Windows cross-drive safety
   return !rel.startsWith("..");

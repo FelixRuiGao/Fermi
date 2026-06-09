@@ -19,6 +19,7 @@ import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getFermiHomeDir } from "../home-path.js";
 import { toPosixPath } from "../security/path.js";
+import { osCapabilities } from "../platform/index.js";
 import type { PermissionRule, PermissionRuleFile, InvocationAssessment, ExternalPathRule } from "./types.js";
 
 // ------------------------------------------------------------------
@@ -153,7 +154,16 @@ export class PermissionRuleStore {
     // freshly stored rules already use `/`; this normalization on
     // read covers any pathPrefix that snuck in pre-D27 or via a
     // direct file edit.
+    //
+    // On a case-insensitive filesystem (default macOS, Windows) the
+    // same directory can be resolved with different casing (`D:\Data`
+    // vs `d:\data`, drive-letter case is preserved by path.resolve), so
+    // fold case before prefix-matching — otherwise an already-approved
+    // location gets re-prompted. Fail-safe either way (never widens a
+    // match on case-sensitive Linux, where casing is significant).
+    const ci = osCapabilities.caseInsensitiveFilesystem;
     const subject = toPosixPath(resolvedPath);
+    const subjectCmp = ci ? subject.toLowerCase() : subject;
     const allRules = this._getEffectiveRules();
     for (const rule of allRules) {
       if (rule.type !== "external_path") continue;
@@ -162,7 +172,8 @@ export class PermissionRuleStore {
       const normalized = toPosixPath(rule.pathPrefix);
       // Ensure prefix ends with / to prevent /tmp/foo matching /tmp/foobar
       const prefix = normalized.endsWith("/") ? normalized : normalized + "/";
-      if (subject.startsWith(prefix) || subject === prefix.slice(0, -1)) return rule;
+      const prefixCmp = ci ? prefix.toLowerCase() : prefix;
+      if (subjectCmp.startsWith(prefixCmp) || subjectCmp === prefixCmp.slice(0, -1)) return rule;
     }
     return null;
   }

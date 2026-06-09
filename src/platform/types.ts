@@ -138,6 +138,41 @@ export interface OsCapabilities {
   readonly supportsPosixPermissions: boolean;
 
   /**
+   * True when the host's filesystem (and therefore the shell's $PATH
+   * command resolution) is case-insensitive: default macOS (APFS/HFS+)
+   * and Windows (NTFS / Git Bash over MSYS2). False on Linux, whose
+   * default ext4/btrfs are case-sensitive.
+   *
+   * Consumers that compare names/paths the OS resolves
+   * case-insensitively MUST consult this:
+   *  - the bash command classifier, before matching a parsed command
+   *    name against its danger/catastrophic sets (`RM`/`Sudo`/`MKFS`
+   *    resolve to the same binary as the lowercase form, so a
+   *    case-sensitive match would let an uppercase spelling slip past
+   *    the safety gate);
+   *  - external-path permission rules, when prefix-matching a resolved
+   *    path against a stored rule (`D:\Data` vs `d:\data\file`).
+   * On Linux the comparison stays case-sensitive — a file genuinely
+   * named `RM` is distinct from `rm`.
+   *
+   * Note: macOS can be formatted case-sensitive (rare); treating the
+   * default as case-insensitive is the safe, conservative choice.
+   */
+  readonly caseInsensitiveFilesystem: boolean;
+
+  /**
+   * True when launching a PATHEXT script shim (`.cmd` / `.bat`, e.g.
+   * `npm` / `npx` / `prettier` on Windows) via a bare exec — command +
+   * argv, no shell — fails, so callers that exec a configured command
+   * (hooks) must route through a shell. True on Windows; false on POSIX,
+   * where every executable on $PATH is exec-able directly.
+   *
+   * Modern Node even throws (EINVAL, post-CVE-2024-27980) when asked to
+   * spawn a `.bat`/`.cmd` without `shell: true`.
+   */
+  readonly scriptShimsRequireShell: boolean;
+
+  /**
    * Names of dangerous executables that exist primarily on this
    * platform. Used by the bash command classifier to flag commands
    * the LLM might invoke through the shell.
@@ -154,6 +189,21 @@ export interface OsCapabilities {
    * collide with `rm`.
    */
   readonly platformSpecificDangerCommands: ReadonlySet<string>;
+
+  /**
+   * Names of platform-specific *catastrophic* (irreversible disk-wipe)
+   * executables — e.g. Windows `format` / `diskpart`. Empty on POSIX,
+   * where the catastrophic disk tools (mkfs/fdisk/dd/...) are matched
+   * directly in `classify.ts`; keeping the Windows ones here rather
+   * than in that shared list is deliberate, so `format my-document.tex`
+   * on a POSIX host is never mis-flagged as a disk wipe.
+   *
+   * Stored lowercased (same case-insensitivity rationale as
+   * `platformSpecificDangerCommands`). The classifier checks this
+   * before the danger set so these escalate to `catastrophic` — the
+   * only class that still forces a prompt in yolo mode.
+   */
+  readonly platformSpecificCatastrophicCommands: ReadonlySet<string>;
 
   /**
    * Glyph used as the left-side indicator on completed tool-call

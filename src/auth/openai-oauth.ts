@@ -102,6 +102,13 @@ export function saveAuthStore(store: AuthStoreData): void {
   const p = authStorePath();
   const stateDir = join(getFermiHomeDir(), "state");
   mkdirSync(stateDir, { recursive: true });
+  // mode 0o600 restricts this token file (OpenAI Codex + GitHub Copilot
+  // access/refresh tokens) to the owner on POSIX. On Windows `mode` only
+  // toggles the read-only attribute — the 0o600 bits don't map to NTFS
+  // ACLs — so confidentiality there relies on the default ACL inherited
+  // from %USERPROFILE% (which already excludes other standard users).
+  // Accepted residual risk; tightening would need an explicit ACL helper
+  // (icacls / SetNamedSecurityInfo) in the PAL — see decisions.md L-4.
   writeFileSync(p, JSON.stringify(store, null, 2) + "\n", {
     encoding: "utf-8",
     mode: 0o600,

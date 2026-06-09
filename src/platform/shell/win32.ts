@@ -166,6 +166,26 @@ function isPowerShell(kind: ShellKind): boolean {
   return kind === "pwsh" || kind === "powershell";
 }
 
+/**
+ * Whether a PowerShell command's FIRST real statement is a `using` or a
+ * top-level `param(...)` block. Both MUST precede every other statement
+ * (only blank lines, comments, and `#requires` may come before them), so
+ * prepending the OutputEncoding statement to such a command raises a parse
+ * error ("Using statement must appear before any other statements"). When
+ * this is true we leave the command untouched (accepting that its non-ASCII
+ * output may mojibake) rather than break it. `#requires` is intentionally
+ * NOT included: PowerShell evaluates it regardless of position, so a prefix
+ * doesn't break it.
+ */
+function leadsWithFirstStatementConstruct(command: string): boolean {
+  for (const rawLine of command.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue; // blanks, comments, #requires
+    return /^(?:using\b|param[ \t]*\()/i.test(line);
+  }
+  return false;
+}
+
 const RESOLVED: ResolvedShell = resolveShell();
 
 // ------------------------------------------------------------------
@@ -182,7 +202,16 @@ function buildEnv(): NodeJS.ProcessEnv {
       env[key] = value;
     }
   }
-  if (!env["PATH"]) {
+  // Only synthesize a PATH when the inherited env has none. The guard
+  // must be case-INSENSITIVE: Windows stores the variable as "Path", so
+  // it is forwarded under that exact key, and a case-sensitive
+  // `env["PATH"]` lookup on this plain object would always miss it and
+  // inject a second, minimal PATH key. The child would then see two
+  // case-equivalent keys (Path=<full>, PATH=<System32-only>), and the
+  // spawn layer's case-insensitive dedup can let the truncated one win,
+  // hiding git/node/etc. from the shell.
+  const hasPath = Object.keys(env).some((k) => k.toUpperCase() === "PATH");
+  if (!hasPath) {
     env["PATH"] = "C:\\Windows\\System32;C:\\Windows";
   }
   return env;
@@ -201,8 +230,24 @@ export const win32Shell: ShellProvider = {
       // PowerShell: -NoLogo suppresses the startup banner,
       // -NoProfile skips user profile scripts (deterministic env),
       // -NonInteractive prevents prompts blocking the subprocess.
+      //
+      // Both Windows PowerShell 5.1 AND pwsh 7+ encode redirected stdout
+      // using [Console]::OutputEncoding, which still defaults to the
+      // OEM/ANSI code page on a stock Windows install (pwsh 7 only changes
+      // $OutputEncoding, the input-to-native-command encoding — not the
+      // console output encoding that governs captured stdout). Non-ASCII
+      // output (CJK, box-drawing, accents) then mojibakes when the
+      // collector decodes the captured bytes as UTF-8. Force UTF-8 (no
+      // BOM, via the parameterless ctor) up front for every PowerShell
+      // variant. Detection tries pwsh BEFORE powershell, so gating on the
+      // narrow kind==="powershell" would have left the common
+      // pwsh-installed boxes mojibaked. Skip the prefix when the command
+      // opens with a using/param block that must stay first (see helper).
+      const command = leadsWithFirstStatementConstruct(request.command)
+        ? request.command
+        : `[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); ${request.command}`;
       return spawn(RESOLVED.path, [
-        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", request.command,
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command,
       ], {
         cwd: request.cwd,
         env: request.env ?? buildEnv(),
@@ -225,8 +270,16 @@ export const win32Shell: ShellProvider = {
     const pid = child.pid;
     if (pid != null) {
       try {
-        const force = signal === "SIGKILL" ? ["/F"] : [];
-        spawnSync("taskkill", ["/PID", String(pid), "/T", ...force], {
+        // Always force (`/F`). The `signal` argument exists for parity
+        // with the POSIX provider but has no Windows analogue: the
+        // shells we spawn (windowsHide) and their console grandchildren
+        // (node/vite/python) have no message-pump window, so taskkill's
+        // graceful WM_CLOSE (omitting `/F`) cannot terminate them — it
+        // exits non-zero, spawnSync swallows the failure, and the tree
+        // survives. Forcing is the only kill that actually works for a
+        // windowless console process, regardless of the requested
+        // signal, and matches this provider's documented contract.
+        spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
           stdio: "ignore",
           windowsHide: true,
         });
