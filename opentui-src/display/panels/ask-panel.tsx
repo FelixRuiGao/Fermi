@@ -119,8 +119,8 @@ export function AskPanelView({
           return (
             <box key={`ask-review-${index}`} flexDirection="column">
               <text content={`${index + 1}. ${question.question}`} />
-              <text fg={!answer ? theme.colors.yellow : selected?.kind === "discuss_further" ? theme.colors.yellow : theme.colors.green} content={`   → ${answerDisplay}`} />
-              {note ? <text fg={theme.colors.yellow} content={`     Note: ${note}`} /> : null}
+              <text fg={!answer ? theme.colors.accent : selected?.kind === "discuss_further" ? theme.colors.accent : theme.colors.green} content={`   → ${answerDisplay}`} />
+              {note ? <text fg={theme.colors.accent} content={`     Note: ${note}`} /> : null}
             </box>
           );
         })}
@@ -151,7 +151,7 @@ export function AskPanelView({
 
   return (
     <PanelSurface colors={theme.colors} spacing={theme.spacing} height={panelHeight}>
-      <text fg={theme.colors.yellow} content={`Question ${currentQuestionIndex + 1}/${totalQuestions}: ${question.question}`} />
+      <text fg={theme.colors.accent} content={`Question ${currentQuestionIndex + 1}/${totalQuestions}: ${question.question}`} />
       <text fg={theme.colors.dim} content={formatAskSource(ask)} />
       {question.options.map((option, index) => {
         const isSelected = index === selectedIndex;
@@ -164,13 +164,13 @@ export function AskPanelView({
               content={`${isSelected ? "> " : isAnswered ? "✓ " : "  "}${option.label}`}
             />
             {option.description ? <text fg={theme.colors.dim} content={`   ${option.description}`} /> : null}
-            {note ? <text fg={theme.colors.yellow} content={`   Note: ${note}${isSelected ? " (Tab to edit)" : ""}`} /> : null}
+            {note ? <text fg={theme.colors.accent} content={`   Note: ${note}${isSelected ? " (Tab to edit)" : ""}`} /> : null}
           </box>
         );
       })}
       {customInputMode || noteInputMode ? (
         <box flexDirection="column">
-          <text fg={customInputMode ? theme.colors.accent : theme.colors.yellow} content={customInputMode ? "Your answer:" : "Note:"} />
+          <text fg={customInputMode ? theme.colors.accent : theme.colors.accent} content={customInputMode ? "Your answer:" : "Note:"} />
           <input
             ref={(node) => {
               inputRef.current = node;

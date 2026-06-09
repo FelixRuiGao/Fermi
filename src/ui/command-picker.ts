@@ -14,10 +14,15 @@ export interface CommandPickerState {
   stack: CommandPickerLevel[];
   note: string;
   noteEditing: boolean;
+  /** When true, Tab opens an inline note input for attaching instructions. */
+  allowNote: boolean;
+  /** When true, the user is typing into a custom-input option's inline text field. */
+  customInputMode: boolean;
 }
 
 export type CommandPickerAcceptResult =
   | { kind: "drill_down"; picker: CommandPickerState }
+  | { kind: "custom_input"; picker: CommandPickerState }
   | { kind: "submit"; command: string; note?: string };
 
 export interface CommandPickerResult {
@@ -55,6 +60,7 @@ export function createCommandPicker(
   options: CommandOption[],
   maxVisible = options.length,
   title?: string,
+  allowNote = false,
 ): CommandPickerState {
   const selected = firstSelectableIndex(options);
   return {
@@ -64,6 +70,8 @@ export function createCommandPicker(
     stack: [{ label: commandName, options, selected, visibleStart: 0 }],
     note: "",
     noteEditing: false,
+    allowNote,
+    customInputMode: false,
   };
 }
 
@@ -171,6 +179,16 @@ export function setCommandPickerSelection(
   };
 }
 
+export function isCommandPickerCustomInputOption(picker: CommandPickerState): boolean {
+  const level = getCommandPickerLevel(picker);
+  const option = level.options[clampSelection(level.selected, level.options)];
+  return Boolean(option?.customInput);
+}
+
+export function exitCommandPickerCustomInput(picker: CommandPickerState): CommandPickerState {
+  return { ...picker, customInputMode: false };
+}
+
 export function exitCommandPickerLevel(picker: CommandPickerState): CommandPickerState | null {
   if (picker.stack.length <= 1) return null;
   return {
@@ -182,6 +200,7 @@ export function exitCommandPickerLevel(picker: CommandPickerState): CommandPicke
 export function toggleCommandPickerNoteEditing(
   picker: CommandPickerState,
 ): CommandPickerState {
+  if (!picker.allowNote) return picker;
   return { ...picker, noteEditing: !picker.noteEditing };
 }
 
@@ -215,6 +234,13 @@ export function acceptCommandPickerSelection(
           },
         ],
       },
+    };
+  }
+
+  if (option.customInput) {
+    return {
+      kind: "custom_input",
+      picker: { ...picker, customInputMode: true },
     };
   }
 

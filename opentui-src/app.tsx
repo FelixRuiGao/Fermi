@@ -36,7 +36,9 @@ import {
   acceptCommandPickerSelection,
   createCommandPicker,
   exitCommandPickerLevel,
+  exitCommandPickerCustomInput,
   isCommandPickerActive,
+  isCommandPickerCustomInputOption,
   moveCommandPickerSelection,
   setCommandPickerSelection,
   setCommandPickerNote,
@@ -1232,6 +1234,7 @@ export function OpenTuiApp({
         options,
         pickerMaxVisible,
         command?.pickerTitle,
+        command?.allowPickerNote,
       ),
     );
     return true;
@@ -1899,6 +1902,12 @@ export function OpenTuiApp({
       return;
     }
 
+    if (result.kind === "custom_input") {
+      setPickerNoteValue("");
+      setCommandPicker(result.picker);
+      return;
+    }
+
     setCommandPicker(null);
     setPickerNoteValue("");
     const pickerResolver = commandPickerResolverRef.current;
@@ -1921,6 +1930,11 @@ export function OpenTuiApp({
       return;
     }
     if (result.kind === "drill_down") {
+      setCommandPicker(result.picker);
+      return;
+    }
+    if (result.kind === "custom_input") {
+      setPickerNoteValue("");
       setCommandPicker(result.picker);
       return;
     }
@@ -2415,6 +2429,30 @@ export function OpenTuiApp({
         return;
       }
 
+      if (commandPicker.customInputMode) {
+        if (event.name === "return") {
+          event.preventDefault();
+          event.stopPropagation();
+          // Write custom input text into note, exit custom input, then submit
+          setCommandPicker((current) => {
+            if (!current) return current;
+            return { ...exitCommandPickerCustomInput(current), note: pickerNoteValue };
+          });
+          // Defer submit to next tick so state is settled
+          queueMicrotask(() => acceptCommandPickerSelectionLocal());
+          return;
+        }
+        if (event.name === "escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setPickerNoteValue("");
+          setCommandPicker((current) => current ? exitCommandPickerCustomInput(current) : current);
+          return;
+        }
+        // All other keys go to the custom input — don't intercept
+        return;
+      }
+
       if (event.name === "up") {
         setCommandPicker((current) => current ? moveCommandPickerSelection(current, -1) : current);
         event.preventDefault();
@@ -2428,10 +2466,12 @@ export function OpenTuiApp({
         return;
       }
       if (event.name === "tab" && !event.shift) {
-        event.preventDefault();
-        event.stopPropagation();
-        setCommandPicker((current) => current ? toggleCommandPickerNoteEditing(current) : current);
-        return;
+        if (commandPicker.allowNote && !isCommandPickerCustomInputOption(commandPicker)) {
+          event.preventDefault();
+          event.stopPropagation();
+          setCommandPicker((current) => current ? toggleCommandPickerNoteEditing(current) : current);
+          return;
+        }
       }
       if (event.name === "return") {
         event.preventDefault();

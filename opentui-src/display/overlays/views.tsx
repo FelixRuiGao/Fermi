@@ -9,6 +9,7 @@ import {
   getCommandPickerPath,
   getCommandPickerVisibleRange,
   isCommandPickerActive,
+  isCommandPickerCustomInputOption,
 } from "../../../src/ui/command-picker.js";
 import type { CheckboxPickerState } from "../../../src/ui/checkbox-picker.js";
 import {
@@ -190,9 +191,9 @@ export function CommandPickerView(
   const path = getCommandPickerPath(picker);
   const { start, end } = getCommandPickerVisibleRange(picker);
   const visibleOptions = level.options.slice(start, end);
-  const noteLines = picker.noteEditing ? 2 : 0;
+  const inlineInputLines = (picker.noteEditing || picker.customInputMode) ? 2 : 0;
   const hintLine = 1;
-  const pickerHeight = 1 + visibleOptions.length + noteLines + hintLine;
+  const pickerHeight = 1 + visibleOptions.length + inlineInputLines + hintLine;
   const rootTitle = picker.title ?? picker.commandName;
   const title = path.length > 0
     ? `${rootTitle} › ${path.join(" › ")}`
@@ -204,9 +205,13 @@ export function CommandPickerView(
     ? Math.max(...visibleOptions.map(o => (o.detail ?? "").length))
     : 0;
 
-  const hintText = picker.noteEditing
+  const isOnCustomInputOption = isCommandPickerCustomInputOption(picker);
+  const showTabHint = picker.allowNote && !isOnCustomInputOption;
+  const hintText = picker.noteEditing || picker.customInputMode
     ? "Enter confirm · Esc cancel"
-    : "↑↓ navigate · Enter select · Tab add instructions · Esc cancel";
+    : showTabHint
+      ? "↑↓ navigate · Enter select · Tab add instructions · Esc cancel"
+      : "↑↓ navigate · Enter select · Esc cancel";
 
   return (
     <OverlayFrame theme={theme} height={pickerHeight}>
@@ -227,14 +232,14 @@ export function CommandPickerView(
           />
         );
       })}
-      {picker.noteEditing && (
+      {(picker.noteEditing || picker.customInputMode) && (
         <box flexDirection="column">
-          <text fg={theme.colors.yellow} content="Instructions:" />
+          <text fg={theme.colors.accent} content={picker.customInputMode ? "Your instructions:" : "Instructions:"} />
           <input
             ref={(node) => { if (noteInputRef) (noteInputRef as React.MutableRefObject<InputRenderable | null>).current = node; }}
             value={noteValue ?? ""}
-            focused={picker.noteEditing}
-            placeholder="Add review instructions..."
+            focused={picker.noteEditing || picker.customInputMode}
+            placeholder={picker.customInputMode ? "Type your instructions" : "Add review instructions..."}
             textColor={theme.colors.text}
             focusedTextColor={theme.colors.text}
             placeholderColor={theme.colors.dim}
@@ -318,7 +323,7 @@ export function PromptSelectView(
 
   return (
     <OverlayFrame theme={theme} height={promptHeight}>
-      <text fg={theme.colors.yellow} content={truncateToWidth(prompt.message, contentWidth)} />
+      <text fg={theme.colors.accent} content={truncateToWidth(prompt.message, contentWidth)} />
       {visibleOptions.map((option, index) => {
         const actualIndex = start + index;
         return (
@@ -358,7 +363,7 @@ export function PromptSecretView(
 
   return (
     <OverlayFrame theme={theme} height={promptHeight}>
-      <text fg={theme.colors.yellow} content={prompt.message} />
+      <text fg={theme.colors.accent} content={prompt.message} />
       <input
         ref={(node) => {
           inputRef.current = node;
@@ -401,7 +406,7 @@ export function OAuthOverlayView(
     ];
     return (
       <OverlayFrame theme={theme} height={options.length + 2}>
-        <text fg={theme.colors.yellow} content={titleText} />
+        <text fg={theme.colors.accent} content={titleText} />
         {options.map((label, index) => (
           <OverlayOptionRow
             key={`oauth-opt-${index}`}
@@ -438,7 +443,7 @@ export function OAuthOverlayView(
 
   return (
     <OverlayFrame theme={theme} height={lines.length + 2}>
-      <text fg={theme.colors.yellow} content={titleText} />
+      <text fg={theme.colors.accent} content={titleText} />
       {lines.map((line, index) => (
         <text key={`oauth-line-${index}`} fg={theme.colors.text} content={truncateToWidth(line, contentWidth)} />
       ))}

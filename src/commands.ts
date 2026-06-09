@@ -172,6 +172,8 @@ export interface CommandOption {
   children?: CommandOption[];
   /** Checked state for checkbox picker mode. */
   checked?: boolean;
+  /** When true, Enter opens an inline text input instead of submitting immediately. */
+  customInput?: boolean;
 }
 
 /** Context available when building dynamic picker options for a slash command. */
@@ -202,6 +204,8 @@ export interface SlashCommand {
   aliases?: string[];
   /** Optional display title for the picker; the command name is still submitted. */
   pickerTitle?: string;
+  /** When true, the picker shows a Tab-activated note input for attaching instructions. */
+  allowPickerNote?: boolean;
 }
 
 export class CommandExitSignal extends Error {
@@ -1853,7 +1857,7 @@ function reviewOptions(_ctx: CommandOptionsContext): CommandOption[] {
       value: "commit",
       children: gitCommitOptions(),
     },
-    { label: "Custom review instructions", value: "custom" },
+    { label: "Custom review instructions", value: "custom", customInput: true },
   ];
 }
 
@@ -1893,7 +1897,7 @@ async function cmdReview(ctx: CommandContext, args: string): Promise<void> {
       return;
     }
     if (trimmed === "custom") {
-      ctx.showMessage("Custom review requires instructions. Use /review <instructions>.");
+      dispatchReview(ctx, "custom", "", "");
       return;
     }
     if (/^[0-9a-f]{7,40}$/.test(trimmed)) {
@@ -1931,10 +1935,6 @@ async function cmdReview(ctx: CommandContext, args: string): Promise<void> {
   const value = picked.value;
 
   if (value === "custom") {
-    if (!note) {
-      ctx.showMessage("Custom review requires instructions. Use Tab to add instructions when selecting this option, or run /review <instructions>.");
-      return;
-    }
     dispatchReview(ctx, "custom", "", note);
     return;
   }
@@ -1988,7 +1988,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme, options: themeModeOptions });
   registry.register({ name: "/diff", description: "Set write/edit diff display (compact / full)", handler: cmdDiff, options: diffDisplayOptions, pickerTitle: "Diff Display" });
   registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate, options: autoUpdateOptions });
-  registry.register({ name: "/review", description: "Review code changes", handler: cmdReview, options: reviewOptions, pickerTitle: "Review" });
+  registry.register({ name: "/review", description: "Review code changes", handler: cmdReview, options: reviewOptions, pickerTitle: "Review", allowPickerNote: true });
   return registry;
 }
 
