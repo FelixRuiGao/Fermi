@@ -505,6 +505,8 @@ export class Session {
   readonly hookRuntime = new HookRuntime();
 
   _createdAt: string;
+  /** Model identity snapshot taken at session creation. Stable across resumes and /model switches. */
+  private _initialModel: string;
   private _title: string | undefined;
   private _cachedSummary: string | undefined;
 
@@ -957,6 +959,7 @@ export class Session {
     this.toolGate.addAdvisor(this._permissionAdvisor);
 
     this._createdAt = new Date().toISOString();
+    this._initialModel = this._describeInitialModel();
     this._promptCacheKey = opts.promptCacheKey ?? randomUUID();
     if (opts.hooks && opts.hooks.length > 0) {
       this.hookRuntime.setHooks([...opts.hooks]);
@@ -999,6 +1002,7 @@ export class Session {
 
   _initConversation(): void {
     this._createdAt = new Date().toISOString();
+    this._initialModel = this._describeInitialModel();
     this._title = undefined;
     this._cachedSummary = undefined;
     this._log = [];
@@ -2644,6 +2648,7 @@ export class Session {
     this._preferredThinkingLevel = shadow._preferredThinkingLevel;
     this._thinkingLevel = shadow._thinkingLevel;
     this._createdAt = shadow._createdAt;
+    this._initialModel = shadow._initialModel;
     this._title = shadow._title;
     this._cachedSummary = shadow._cachedSummary;
     this._usedContextIds = new Set(shadow._usedContextIds);
@@ -2772,6 +2777,7 @@ export class Session {
       restoredThinkingPreference,
     );
     this._createdAt = meta.createdAt || this._createdAt;
+    this._initialModel = (meta as any).initialModel || this._describeInitialModel();
     this._title = meta.title;
     this._cachedSummary = meta.summary || undefined;
 
@@ -3128,6 +3134,7 @@ export class Session {
     return {
       meta: createLogSessionMeta({
         createdAt: this._createdAt,
+        initialModel: this._initialModel,
         projectPath: this._projectRoot,
         modelConfigName: this._persistedModelSelection.modelConfigName ?? "",
         modelProvider: this._persistedModelSelection.modelProvider,
@@ -6235,6 +6242,16 @@ export class Session {
    * Assemble the full system prompt using the layered assembler.
    * Called by _reloadPromptAndTools(), not per-call.
    */
+  private _describeInitialModel(): string {
+    const mc = this.primaryAgent.modelConfig;
+    const d = describeModel({
+      providerId: mc.provider,
+      selectionKey: mc.model,
+      modelId: mc.model,
+    });
+    return d.compactScopedLabel || mc.model;
+  }
+
   private _assembleSystemPrompt(): string {
     const recipe = this.primaryAgent.promptRecipe;
     const agentPrompt = recipe
@@ -6248,6 +6265,7 @@ export class Session {
         ?? this._resolveSessionArtifacts({ allowUnresolved: true }),
       systemData: this._resolveSystemData({ allowUnresolved: true }),
       sessionStartedAt: this._createdAt,
+      initialModel: this._initialModel,
       agentModels: this.config.agentModels,
       shellNotes: buildShellNotes(shell.kind),
     });

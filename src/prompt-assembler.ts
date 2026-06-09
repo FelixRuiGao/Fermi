@@ -8,8 +8,7 @@
  *     agent.prompt                    ← from template (role + tools + knowledge)
  *     + memory layer (AGENTS.md)      ← from disk, refreshed per-reload
  *     + agent model pins              ← from config
- *     + variable rendering            ← {PROJECT_ROOT}/{SESSION_ARTIFACTS}/{SYSTEM_DATA} → real paths
- *     + Session Configuration         ← session start timestamp, appended last
+ *     + variable rendering            ← {PROJECT_ROOT}/{SESSION_ARTIFACTS}/{SYSTEM_DATA}/{INITIAL_MODEL}/{SESSION_STARTED} → real values
  *
  * All layers are assembled here — Session no longer does ad-hoc string concatenation.
  */
@@ -29,7 +28,7 @@ export interface PromptLayer {
 }
 
 // ------------------------------------------------------------------
-// Session Configuration (dynamic appendix, appended last for cache stability)
+// Prompt variables and session context
 // ------------------------------------------------------------------
 
 export interface PromptVariables {
@@ -38,6 +37,8 @@ export interface PromptVariables {
   systemData: string;
   /** ISO timestamp of when this session began (its first message). Stable across resumes. */
   sessionStartedAt?: string;
+  /** Model identity at session creation. Stable across resumes and /model switches. */
+  initialModel?: string;
   /** Shell-specific notes injected into the tools prompt (bash vs PowerShell). */
   shellNotes?: string;
 }
@@ -48,8 +49,7 @@ export interface PromptVariables {
  * Renders the session's start time in the runtime's local timezone so the agent
  * can reason about time of day naturally. We deliberately do NOT instruct the
  * agent to comment on it — providing the fact is enough; forcing a reaction would
- * turn into a tic. The value is stable for the whole session (and across resumes),
- * so it stays cache-friendly even though it lives in the dynamic appendix.
+ * turn into a tic.
  */
 function formatSessionStartLine(iso: string | undefined): string | null {
   if (!iso) return null;
@@ -70,11 +70,7 @@ function formatSessionStartLine(iso: string | undefined): string | null {
   } catch {
     formatted = d.toISOString();
   }
-  return (
-    `This conversation began on ${formatted} (${tz}) — the time of the user's first message. ` +
-    "A session can be resumed after an arbitrarily long gap, so treat this as the *start* time, " +
-    "not necessarily the current time. When you need the current time, call the `time` tool."
-  );
+  return `This conversation began on ${formatted} (${tz}). When you need the current time, call the \`time\` tool.`;
 }
 
 /**
@@ -91,21 +87,20 @@ export function renderPromptVariables(prompt: string, vars: PromptVariables): st
     .replace(/\{PROJECT_ROOT\}/g, vars.projectRoot)
     .replace(/\{SESSION_ARTIFACTS\}/g, vars.sessionArtifacts)
     .replace(/\{SYSTEM_DATA\}/g, vars.systemData)
-    .replace(/\{SHELL_NOTES\}/g, vars.shellNotes ?? "");
+    .replace(/\{SHELL_NOTES\}/g, vars.shellNotes ?? "")
+    .replace(/\{INITIAL_MODEL\}/g, vars.initialModel ?? "unknown")
+    .replace(/\{SESSION_STARTED\}/g, buildSessionStartedVar(vars.sessionStartedAt));
 }
 
 /**
- * Build the Session Configuration appendix.
- *
- * Path variables are substituted inline in the prompt body (see
- * renderPromptVariables), so this trailing section carries only the session
- * start timestamp — a small piece of ambient context kept at the very end.
- * Returns "" when no valid start time is available.
+ * Build the {SESSION_STARTED} replacement value.
+ * Returns the formatted line with a trailing newline (so the template
+ * can place it as its own paragraph), or "" when no valid timestamp
+ * is available (the placeholder and its surrounding blank line collapse).
  */
-export function buildSessionConfigSection(vars: PromptVariables): string {
-  const startedLine = formatSessionStartLine(vars.sessionStartedAt);
-  if (!startedLine) return "";
-  return ["", "---", "", "# Session Configuration", "", startedLine].join("\n");
+function buildSessionStartedVar(iso: string | undefined): string {
+  const line = formatSessionStartLine(iso);
+  return line ? line + "\n" : "";
 }
 
 // ------------------------------------------------------------------
@@ -177,6 +172,8 @@ export interface AssembleOptions {
   systemData: string;
   /** ISO timestamp of when this session began (its first message). Stable across resumes. */
   sessionStartedAt?: string;
+  /** Model identity at session creation. Stable across resumes and /model switches. */
+  initialModel?: string;
   /** Agent model pins from config (for the model pins section). */
   agentModels?: Record<string, { provider: string; selection_key: string; model_id: string; thinking_level?: string }>;
   /** Shell-specific notes (bash vs PowerShell) for {SHELL_NOTES} variable. */
@@ -192,6 +189,15 @@ export interface AssembleOptions {
  * Called at session init and on each reload (AGENTS.md edit, /reload, etc.).
  */
 export function assembleFullSystemPrompt(opts: AssembleOptions): string {
+  const vars = {
+    projectRoot: opts.projectRoot,
+    sessionArtifacts: opts.sessionArtifacts,
+    systemData: opts.systemData,
+    sessionStartedAt: opts.sessionStartedAt,
+    initialModel: opts.initialModel,
+    shellNotes: opts.shellNotes,
+  };
+
   let prompt = opts.agentPrompt;
 
   // Layer: AGENTS.md persistent memory
@@ -224,17 +230,7 @@ export function assembleFullSystemPrompt(opts: AssembleOptions): string {
   // Substitute path variables ({PROJECT_ROOT} etc.) with the session's real
   // absolute paths. Runs last so variables in any layer (AGENTS.md, hooks) are
   // also resolved.
-  const vars = {
-    projectRoot: opts.projectRoot,
-    sessionArtifacts: opts.sessionArtifacts,
-    systemData: opts.systemData,
-    sessionStartedAt: opts.sessionStartedAt,
-    shellNotes: opts.shellNotes,
-  };
   prompt = renderPromptVariables(prompt, vars);
-
-  // Session Configuration (session start timestamp, appended last).
-  prompt += buildSessionConfigSection(vars);
 
   return prompt;
 }

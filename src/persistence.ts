@@ -467,6 +467,8 @@ export interface LogSessionMeta {
   modelProvider?: string;
   modelSelectionKey?: string;
   modelId?: string;
+  /** Model identity at session creation. Stable across resumes and /model switches. */
+  initialModel?: string;
   summary: string;
   title?: string;
   turnCount: number;
