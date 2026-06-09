@@ -9,6 +9,12 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.7
+
+- Added: system prompt now shows the model identity (e.g. "Anthropic/Claude Sonnet 4") and session start time in the opening paragraph — the model knows who it is before reading any instructions. Model name is snapshotted at session creation and stable across `/model` switches and resumes.
+- Added: command picker custom-input options — options marked `customInput` open an inline text field on Enter (like the ask panel's "Enter custom answer"). `/review`'s "Custom review instructions" now uses this instead of showing an error.
+- Changed: picker note input (Tab to add instructions) is now opt-in per command (`allowPickerNote`); only `/review` enables it. Other pickers (model selection, `/resume`, etc.) no longer show the Tab hint.
+- Changed: unified overlay/panel UI colors — replaced yellow with accent color across command picker, ask panel, prompt select, prompt secret, and OAuth overlays. Yellow is now reserved for interrupted-turn system entries only.
 - Fixed: GitHub Copilot model selection broke after GitHub's 2026-06-01 usage-based-billing migration. The `/model` picker now follows your plan's live `/models` catalog — models GitHub no longer offers you are hidden instead of failing with `model_not_available_for_integrator` (HTTP 400) — routing is by model family so Claude Opus 4.7/4.8 and GPT-5.5 no longer throw "Unknown Copilot model", and the gateway API version is bumped to `2026-06-01`.
 - Removed: Copilot per-model premium-request "multiplier" labels and the Copilot usage card. Copilot moved to usage-based billing (AI Credits, charged by token), so the legacy premium-request quota no longer applies to most accounts.
 - Fixed (security): on case-insensitive filesystems (default macOS, Windows Git Bash) uppercase or wrapper-prefixed dangerous commands (`RM -rf ~`, `ENV rm -rf ~`, `NICE rm -rf ~`) bypassed the danger/catastrophic gate and could auto-run — command-name matching is now case-folded at every layer (wrapper stripping, classification, and the cp/mv escalation). Windows `format`/`diskpart` and PowerShell `Format-Volume`/`Clear-Disk`/`Remove-Partition` now classify as catastrophic (still prompted in yolo mode).
