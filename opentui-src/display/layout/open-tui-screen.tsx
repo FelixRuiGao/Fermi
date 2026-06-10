@@ -17,6 +17,7 @@ import { GlowText } from "../glow-text.js";
 const ATTRS_BOLD = createTextAttributes({ bold: true });
 import { DetailThinkingTab } from "../../components/entry/detail-thinking-tab.js";
 import { DetailToolTab } from "../../components/entry/detail-tool-tab.js";
+import { DetailShellTab } from "../../components/entry/detail-shell-tab.js";
 import { InputArea } from "../../input/input-area.js";
 import { ScrollViewport } from "../primitives/scroll-viewport.js";
 import { osCapabilities } from "../../../src/platform/index.js";
@@ -134,6 +135,14 @@ export interface OpenTuiScreenProps {
   onTodoClick?: () => void;
   agentsPanelOpen?: boolean;
   onAgentsPanelClick?: () => void;
+  /** Number of RUNNING background shells (badge above the input box). */
+  shellRunningCount?: number;
+  /** Open the shells picker. */
+  onShellsClick?: () => void;
+  /** Live data for the active detail-shell tab. */
+  activeShellDetail?: import("../../components/entry/detail-shell-tab.js").ShellDetailData | null;
+  /** Stop a background shell from the detail tab. */
+  onStopShell?: (shellId: string) => void;
 }
 
 export function OpenTuiScreen({
@@ -217,14 +226,18 @@ export function OpenTuiScreen({
   onTodoClick,
   agentsPanelOpen,
   onAgentsPanelClick,
+  shellRunningCount,
+  onShellsClick,
+  activeShellDetail,
+  onStopShell,
 }: OpenTuiScreenProps): React.ReactNode {
   const conversationColumnWidth = terminal.width - 1;
   const conversationContentWidth = Math.max(20, conversationColumnWidth - 6);
   const pickerMaxVisible = computePickerMaxVisible(terminal.height, theme.layout);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
-  const isDetailTab = activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool";
+  const isDetailTab = activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool" || activeTab?.kind === "detail-shell";
   // Detail entry lookup: live entries → frozenEntry fallback
-  const detailEntry = isDetailTab
+  const detailEntry = (activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool")
     ? (presentationEntries.find((entry) => activeTabId === `detail:${entry.id}`)
        ?? activeTab?.frozenEntry
        ?? null) as typeof presentationEntries[number] | null
@@ -306,6 +319,8 @@ export function OpenTuiScreen({
       onTodoClick={onTodoClick}
       agentsPanelOpen={agentsPanelOpen}
       onAgentsPanelClick={onAgentsPanelClick}
+      shellRunningCount={shellRunningCount}
+      onShellsClick={onShellsClick}
     />
   );
 
@@ -453,6 +468,15 @@ export function OpenTuiScreen({
               colors={theme.colors}
               contentWidth={Math.max(20, conversationContentWidth - effectiveSidebarWidth)}
               scrollRef={detailScrollRef}
+            />
+          ) : null}
+          {activeTab?.kind === "detail-shell" ? (
+            <DetailShellTab
+              shellId={activeTab.shellId ?? ""}
+              detail={activeShellDetail ?? null}
+              colors={theme.colors}
+              scrollRef={detailScrollRef}
+              onStop={onStopShell}
             />
           ) : null}
         </box>

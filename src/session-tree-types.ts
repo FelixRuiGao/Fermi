@@ -70,6 +70,14 @@ export interface MessageEnvelope {
   sender: string;        // display only — not used for routing
   content: string;
   timestamp: number;
+  /**
+   * Delivery class. `true` (default): waking — an idle recipient schedules an
+   * auto-resume turn to process it. `false`: ride-along — queued in the inbox
+   * and delivered only when something else (user input, a waking message)
+   * starts a turn. User-initiated kills send ride-along notices: the user is
+   * present and steering; the agent must not start acting on its own.
+   */
+  wake?: boolean;
   /** When true, the TUI entry created from this message is visible to the user. Default: false for system_notice/peer_message. */
   tuiVisible?: boolean;
   /** Stable input entry created when the user submitted the message. */

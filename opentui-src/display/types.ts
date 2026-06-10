@@ -31,6 +31,14 @@ export interface PromptSelectState {
   message: string;
   options: PromptChoice[];
   selected: number;
+  /**
+   * Per-key actions applied to the highlighted option (e.g. x → stop shell).
+   * Keys are plain key names as reported by the keyboard event ("x", "d", …).
+   * Enter/Escape/arrows keep their standard select/cancel/navigate semantics.
+   */
+  actionKeys?: Record<string, (option: PromptChoice) => void>;
+  /** Dim footer line describing the available keys (e.g. "x stop · enter open"). */
+  footerHint?: string;
 }
 
 export interface PromptSecretState {

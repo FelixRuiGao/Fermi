@@ -316,4 +316,121 @@ describe("background shell tools", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("exposes snapshots and log-tail details for UI surfaces", async () => {
+    const root = makeTempDir("fermi-shell-snap-root-");
+    const session = makeSession(root);
+    try {
+      const sm = (session as any)._shellManager as BackgroundShellManager;
+      sm.execBashBackground({ id: "snappy", command: "printf 'tail-line\\n'" });
+      await waitForShellExit(sm, "snappy");
+
+      const snapshots = session.getBackgroundShellSnapshots();
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]).toMatchObject({ id: "snappy", status: "exited", exitCode: 0 });
+      expect(snapshots[0].command).toContain("tail-line");
+
+      const detail = session.getBackgroundShellDetail("snappy");
+      expect(detail?.logTail).toContain("tail-line");
+      expect(detail?.logTruncated).toBe(false);
+      expect(session.getBackgroundShellDetail("missing")).toBeNull();
+    } finally {
+      await session.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("killShell reports performed=false when nothing changed", async () => {
+    const root = makeTempDir("fermi-shell-kill-root-");
+    const session = makeSession(root);
+    try {
+      const sm = (session as any)._shellManager as BackgroundShellManager;
+
+      expect(await sm.killShell("ghost")).toMatchObject({ performed: false });
+
+      sm.execBashBackground({ id: "quick", command: "true" });
+      await waitForShellExit(sm, "quick");
+      const dead = await sm.killShell("quick");
+      expect(dead.performed).toBe(false);
+      expect(dead.message).toContain("already");
+
+      sm.execBashBackground({ id: "long", command: "sleep 30" });
+      const killed = await sm.killShell("long");
+      expect(killed.performed).toBe(true);
+      expect(killed.message).toContain("killed");
+    } finally {
+      await session.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("user stop injects a ride-along notice that neither wakes the agent nor blocks manual commands", async () => {
+    const root = makeTempDir("fermi-shell-stop-root-");
+    const session = makeSession(root);
+    try {
+      const sm = (session as any)._shellManager as BackgroundShellManager;
+      sm.execBashBackground({ id: "devish", command: "sleep 30" });
+
+      const message = await session.stopBackgroundShell("devish");
+      expect(message).toContain("killed");
+
+      const inbox = (session as any)._inbox as Array<{ content: string; wake?: boolean }>;
+      const notice = inbox.find((m) => m.content.includes("manually stopped background shell 'devish'"));
+      expect(notice).toBeTruthy();
+      expect(notice?.wake).toBe(false);
+      expect((session as any)._autoResumeScheduled).toBe(false);
+
+      // Ride-along messages must not block /summarize //compact.
+      expect((session as any)._getManualContextCommandBlocker("/summarize")).toBeNull();
+
+      // Stopping an already-dead shell performs nothing and adds no notice.
+      const before = inbox.length;
+      await session.stopBackgroundShell("devish");
+      expect(inbox.length).toBe(before);
+    } finally {
+      await session.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("moves a timed-out sync bash command to a background shell", async () => {
+    const root = makeTempDir("fermi-shell-adopt-root-");
+    const session = makeSession(root);
+    try {
+      const sm = (session as any)._shellManager as BackgroundShellManager;
+      const { executeTool } = await import("../src/tools/basic.js");
+
+      const result = await executeTool("bash", {
+        command: "printf 'early\\n'; sleep 2; printf 'late\\n'",
+        timeout: 1,
+        cwd: root,
+      }, {
+        projectRoot: root,
+        sessionArtifactsDir: root,
+        adoptShell: (req) => {
+          const entry = sm.adoptRunningProcess(req);
+          return { id: entry.id, logPath: entry.logPath };
+        },
+      });
+      const text = typeof result === "string" ? result : (result as ToolResult).content;
+
+      expect(text).toContain("MOVED TO BACKGROUND");
+      expect(text).toContain("shell-1");
+      expect(text).toContain("early");
+
+      const entry = sm.getShellEntry("shell-1");
+      expect(entry).toBeTruthy();
+      // Seeded log contains the sync-phase output.
+      expect(session.getBackgroundShellDetail("shell-1")?.logTail).toContain("early");
+
+      // The process keeps running and the manager keeps recording output.
+      await waitForShellExit(sm, "shell-1", 5_000);
+      const detail = session.getBackgroundShellDetail("shell-1");
+      expect(detail?.status).toBe("exited");
+      expect(detail?.logTail).toContain("late");
+    } finally {
+      await session.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -70,6 +70,10 @@ interface InputAreaProps {
   todoPanelOpen?: boolean;
   /** Toggle the todo panel. */
   onTodoClick?: () => void;
+  /** Number of RUNNING background shells (async only — sync bash never shows here). */
+  shellRunningCount?: number;
+  /** Open the shells picker. */
+  onShellsClick?: () => void;
   /** Whether the agents panel is currently expanded. */
   agentsPanelOpen?: boolean;
   /** Toggle the agents panel. */
@@ -144,6 +148,8 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
     onTodoClick,
     agentsPanelOpen = false,
     onAgentsPanelClick,
+    shellRunningCount = 0,
+    onShellsClick,
   } = props;
 
   const placeholder = pendingAsk
@@ -199,10 +205,25 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           </>
         ) : null}
 
+        {/* Shells indicator: running background shells only (sync bash never appears here) */}
+        {shellRunningCount > 0 && !selectedChildId ? (
+          <>
+          {((runningAgentCount + idleAgentCount + archivedAgentCount) > 0 || processing) ? <box width={1} /> : null}
+          <box
+            flexDirection="row"
+            flexShrink={0}
+            backgroundColor="#1a3325"
+            onMouseDown={(e: any) => { e.stopPropagation(); e.preventDefault(); onShellsClick?.(); }}
+          >
+            <text fg="#8fd9a8" content={` Shells (${shellRunningCount} running) `} />
+          </box>
+          </>
+        ) : null}
+
         {/* Todo indicator: show whenever checkpoints exist */}
         {(todoOpenCount + todoDoneCount) > 0 && !selectedChildId ? (
           <>
-          {((runningAgentCount + idleAgentCount + archivedAgentCount) > 0 || processing) ? <box width={1} /> : null}
+          {((runningAgentCount + idleAgentCount + archivedAgentCount) > 0 || shellRunningCount > 0 || processing) ? <box width={1} /> : null}
           <box
             flexDirection="row"
             flexShrink={0}

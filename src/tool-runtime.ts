@@ -28,6 +28,7 @@ import {
 } from "./tools/comm.js";
 import {
   executeTool,
+  type AdoptShellFn,
 } from "./tools/basic.js";
 import type { SessionCapabilities } from "./session-capabilities.js";
 import type { SkillMeta } from "./skills/loader.js";
@@ -174,6 +175,8 @@ export interface ExecutorDeps {
   onPlanFileWrite?: () => void;
   /** Dynamic getter for approved external path prefixes from permission rules. */
   getApprovedExternalPrefixes?: () => string[];
+  /** Hand a timed-out synchronous bash process over to the background shell manager. */
+  adoptShell?: AdoptShellFn;
 }
 
 export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecutor> {
@@ -187,6 +190,7 @@ export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecu
     isPlanFile,
     onPlanFileWrite,
     getApprovedExternalPrefixes,
+    adoptShell,
   } = deps;
 
   const scopedBuiltin = (toolName: string): ToolExecutor =>
@@ -199,6 +203,7 @@ export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecu
       sessionArtifactsDir: getSessionArtifactsDir(),
       supportsMultimodal,
       signal: rtCtx?.signal,
+      adoptShell,
     });
 
   const writeFileWithReload: ToolExecutor = (args, rtCtx) => {

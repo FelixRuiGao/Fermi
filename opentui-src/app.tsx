@@ -29,6 +29,7 @@ import type {
   AgentQuestionItem,
 } from "../src/ask.js";
 import type {
+  PromptChoice,
   PromptSecretRequest,
   PromptSelectRequest,
 } from "../src/provider-credential-flow.js";
@@ -251,6 +252,52 @@ function sameChildSessionList(
   return true;
 }
 
+/** UI snapshot of a tracked background shell (mirrors Session.getBackgroundShellSnapshots). */
+interface ShellSnapshotUi {
+  id: string;
+  command: string;
+  cwd: string;
+  status: "running" | "exited" | "failed" | "killed";
+  exitCode: number | null;
+  elapsedSeconds: number;
+  recentOutput: string[];
+  logPath: string;
+}
+
+/** Snapshot + log tail for the shell detail tab. */
+interface ShellDetailUi extends ShellSnapshotUi {
+  logTail: string;
+  logTruncated: boolean;
+}
+
+/**
+ * Compare ignoring elapsedSeconds so the 250ms session poll doesn't re-render
+ * the badge/sidebar four times a second while nothing visible changed.
+ */
+function sameShellSnapshotList(a: ShellSnapshotUi[], b: ShellSnapshotUi[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (
+      left?.id !== right?.id ||
+      left?.status !== right?.status ||
+      (left?.recentOutput[left.recentOutput.length - 1] ?? "") !==
+        (right?.recentOutput[right.recentOutput.length - 1] ?? "")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function formatShellElapsed(seconds: number): string {
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h${Math.floor((seconds % 3600) / 60)}m`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m${Math.round(seconds % 60)}s`;
+  return `${Math.round(seconds)}s`;
+}
+
 export function OpenTuiApp({
   session,
   commandRegistry,
@@ -321,6 +368,8 @@ export function OpenTuiApp({
   const usagePollerRef = useRef<UsagePoller | null>(null);
   const usagePollerProviderRef = useRef<string | null>(null);
   const [childSessions, setChildSessions] = useState<ChildSessionSnapshot[]>([]);
+  const [shellSnapshots, setShellSnapshots] = useState<ShellSnapshotUi[]>([]);
+  const [activeShellDetail, setActiveShellDetail] = useState<ShellDetailUi | null>(null);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const presentationEntries = usePresentationEntries({ session, selectedChildId, childSessions, processing });
   const turnElapsed = useTurnTimer(phase);
@@ -403,7 +452,7 @@ export function OpenTuiApp({
   // surface.
   const getActiveScrollBox = useCallback((): ScrollBoxRenderable | null => {
     const activeTab = tabs.find((t) => t.id === activeTabId);
-    const isDetail = activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool";
+    const isDetail = activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool" || activeTab?.kind === "detail-shell";
     return (isDetail ? detailScrollRef.current : mainScrollRef.current) ?? null;
   }, [activeTabId, tabs]);
 
@@ -423,7 +472,36 @@ export function OpenTuiApp({
     });
   }, [activeTabId]);
 
+  const openShellDetailTab = useCallback((shellId: string, commandLabel?: string) => {
+    const tabId = `shell:${shellId}`;
+    setTabs((prev) => {
+      if (prev.some((t) => t.id === tabId)) return prev;
+      const label = (commandLabel?.trim() || shellId).slice(0, 28);
+      return [...prev, {
+        id: tabId,
+        label,
+        icon: "❯",
+        closeable: true,
+        kind: "detail-shell" as const,
+        shellId,
+      }];
+    });
+    setActiveTabId(tabId);
+  }, []);
+
   const openDetailTab = useCallback((entry: import("./presentation/types.js").PresentationEntry) => {
+    // bash_background / timed-out bash entries route to the live shell tab
+    // when the shell is still tracked by the MAIN session (child sessions
+    // have their own shell managers — ids would collide).
+    if (!selectedChildId && entry.kind !== "thinking") {
+      const resultText = entry.toolResultFullText ?? "";
+      const match = resultText.match(/background shell '([^']+)'/);
+      if (match && session.getBackgroundShellDetail?.(match[1], { maxChars: 500 })) {
+        const snapshot = (session.getBackgroundShellSnapshots?.() ?? []).find((s: ShellSnapshotUi) => s.id === match[1]);
+        openShellDetailTab(match[1], snapshot?.command);
+        return;
+      }
+    }
     const tabId = `detail:${entry.id}`;
     const sourceKey = selectedChildId ? `child:${selectedChildId}` : "main";
     setTabs((prev) => {
@@ -443,7 +521,7 @@ export function OpenTuiApp({
       }];
     });
     setActiveTabId(tabId);
-  }, [selectedChildId]);
+  }, [selectedChildId, session, openShellDetailTab]);
 
   const [hint, setHint] = useState<string | null>(null);
   const [markdownMode, setMarkdownMode] = useState<"rendered" | "raw">("rendered");
@@ -802,6 +880,8 @@ export function OpenTuiApp({
     const syncFromLog = () => {
       const nextChildSessions = session.getChildSessionSnapshots?.() ?? [];
       setChildSessions((previous) => sameChildSessionList(previous, nextChildSessions) ? previous : nextChildSessions);
+      const nextShells = (session.getBackgroundShellSnapshots?.() ?? []) as ShellSnapshotUi[];
+      setShellSnapshots((previous) => sameShellSnapshotList(previous, nextShells) ? previous : nextShells);
       // Archived children stay in _childSessions (Session instance alive), so they always
       // appear in snapshots. No need for frozenChildView protection here.
       setPendingAsk(session.getPendingAsk?.() ?? null);
@@ -1125,6 +1205,91 @@ export function OpenTuiApp({
       setHint((current) => (current === message ? null : current));
     }, durationMs);
   }, []);
+
+  // ── Background shells: stop action + picker ─────────────────────────
+
+  const stopShellFromUi = useCallback((shellId: string) => {
+    void (async () => {
+      const message = await session.stopBackgroundShell?.(shellId);
+      if (message) showHint(message, 4000);
+    })();
+  }, [session, showHint]);
+
+  const buildShellPickerOptions = useCallback((): PromptChoice[] => {
+    const snapshots = (session.getBackgroundShellSnapshots?.() ?? []) as ShellSnapshotUi[];
+    return snapshots.map((snapshot) => {
+      const dot = snapshot.status === "running" ? "●" : "○";
+      const tail = snapshot.recentOutput[snapshot.recentOutput.length - 1] ?? "";
+      const statusBits = [snapshot.status, formatShellElapsed(snapshot.elapsedSeconds)];
+      if (snapshot.exitCode !== null) statusBits.push(`exit ${snapshot.exitCode}`);
+      return {
+        label: `${dot} [${snapshot.id}] ${snapshot.command.slice(0, 56)}`,
+        value: snapshot.id,
+        description: tail ? `${statusBits.join(" · ")} · ${tail}` : statusBits.join(" · "),
+      };
+    });
+  }, [session]);
+
+  const openShellsPicker = useCallback(() => {
+    const options = buildShellPickerOptions();
+    if (options.length === 0) {
+      showHint("No background shells tracked.");
+      return;
+    }
+    resolvePromptSelect(undefined);
+    resolvePromptSecret(undefined);
+    promptSelectResolverRef.current = (shellId) => {
+      if (!shellId) return;
+      const snapshot = ((session.getBackgroundShellSnapshots?.() ?? []) as ShellSnapshotUi[])
+        .find((s) => s.id === shellId);
+      openShellDetailTab(shellId, snapshot?.command);
+    };
+    setCommandOverlay(EMPTY_COMMAND_OVERLAY);
+    setCommandPicker(null);
+    setCheckboxPicker(null);
+    setPromptSelect({
+      message: "Background shells",
+      options,
+      selected: 0,
+      footerHint: "x stop · enter open · esc close",
+      actionKeys: {
+        x: (option) => {
+          void (async () => {
+            const message = await session.stopBackgroundShell?.(option.value);
+            if (message) showHint(message, 4000);
+            // Refresh rows in place; the picker stays open.
+            setPromptSelect((current) => {
+              if (!current) return current;
+              const refreshed = buildShellPickerOptions();
+              if (refreshed.length === 0) return current;
+              return {
+                ...current,
+                options: refreshed,
+                selected: Math.min(current.selected, refreshed.length - 1),
+              };
+            });
+          })();
+        },
+      },
+    });
+  }, [buildShellPickerOptions, openShellDetailTab, resolvePromptSecret, resolvePromptSelect, session, showHint]);
+
+  // Live data for the active detail-shell tab (faster than the global 250ms
+  // sync — log tails grow continuously while a shell runs).
+  useEffect(() => {
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    if (activeTab?.kind !== "detail-shell" || !activeTab.shellId) {
+      setActiveShellDetail(null);
+      return;
+    }
+    const shellId = activeTab.shellId;
+    const refresh = () => {
+      setActiveShellDetail((session.getBackgroundShellDetail?.(shellId, { maxChars: 32_000 }) ?? null) as ShellDetailUi | null);
+    };
+    refresh();
+    const timer = setInterval(refresh, 500);
+    return () => clearInterval(timer);
+  }, [activeTabId, tabs, session]);
 
   // Show one-time hint when running a non-bash shell on Windows.
   useEffect(() => {
@@ -1502,6 +1667,9 @@ export function OpenTuiApp({
       },
       onManualCompactRequested: (instruction: string) => {
         void runManualCompact(instruction);
+      },
+      onShellsRequested: () => {
+        openShellsPicker();
       },
       showHint,
       copyToClipboard: (text: string) => copyToClipboard(text, (t) => renderer.copyToClipboardOSC52(t)),
@@ -2209,6 +2377,17 @@ export function OpenTuiApp({
       }
       if (event.name === "escape" || (event.name === "c" && event.ctrl)) {
         resolvePromptSelect(undefined);
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      // Per-option action keys (e.g. x → stop shell in the shells picker).
+      const actionHandler = !event.ctrl && !event.meta
+        ? promptSelect.actionKeys?.[event.name]
+        : undefined;
+      if (actionHandler) {
+        const option = promptSelect.options[clamp(promptSelect.selected, 0, promptSelect.options.length - 1)];
+        if (option) actionHandler(option);
         event.preventDefault();
         event.stopPropagation();
       }
@@ -3113,6 +3292,11 @@ export function OpenTuiApp({
       todoDoneCount={planCheckpoints.filter((cp) => cp.status === "done").length}
       todoPanelOpen={todoPanelOpen}
       onTodoClick={() => setTodoPanelOpen((p) => !p)}
+      shellRunningCount={shellSnapshots.filter((s) => s.status === "running").length}
+      onShellsClick={openShellsPicker}
+      activeShells={shellSnapshots.map(({ id, command, status }) => ({ id, command, status }))}
+      activeShellDetail={activeShellDetail}
+      onStopShell={stopShellFromUi}
       agentsPanelOpen={agentsPanelOpen}
       onAgentsPanelClick={() => setAgentsPanelOpen((p) => !p)}
       sidebarPlanSection={undefined}

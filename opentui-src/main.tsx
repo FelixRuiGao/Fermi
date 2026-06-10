@@ -180,6 +180,19 @@ export async function launchTui(): Promise<void> {
   let exiting = false;
   let fatalCleaningUp = false;
 
+  // Background shells are detached (own process group/session), so nothing
+  // implicit reaps them when this process dies — every exit path must kill
+  // them explicitly and SYNCHRONOUSLY (signal dispatch needs no await; an
+  // un-awaited session.close() never reaches its kill step before
+  // process.exit).
+  const killShellsSync = () => {
+    try {
+      runtime.session.killAllShells?.();
+    } catch {
+      // ignore — exiting anyway
+    }
+  };
+
   const cleanupTerminalAfterFatal = () => {
     if (fatalCleaningUp) return;
     fatalCleaningUp = true;
@@ -201,6 +214,7 @@ export async function launchTui(): Promise<void> {
     writeFermiOpenTuiDiag("main.fatal", {
       error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
     });
+    killShellsSync();
     cleanupTerminalAfterFatal();
     console.error("Fatal OpenTUI error:", err);
     process.exit(1);
@@ -208,6 +222,17 @@ export async function launchTui(): Promise<void> {
 
   process.on("uncaughtException", handleFatal);
   process.on("unhandledRejection", handleFatal);
+
+  // Terminal window close / external kill: reap shells before dying.
+  // (Ctrl+C never arrives as SIGINT — the TUI runs in raw mode and handles
+  // it as a keypress through the normal exit flow.)
+  const handleTermination = () => {
+    killShellsSync();
+    cleanupTerminalAfterFatal();
+    process.exit(0);
+  };
+  process.on("SIGHUP", handleTermination);
+  process.on("SIGTERM", handleTermination);
 
   let runtimeEpoch = 0;
   let restartingRuntime = false;
@@ -415,7 +440,13 @@ export async function launchTui(): Promise<void> {
       }
     }
 
-    // 2. Best-effort session cleanup, then exit no matter what
+    // 2. Kill background shells SYNCHRONOUSLY — session.close() below is not
+    // awaited (we exit on the next line), and its own kill step sits behind
+    // two awaits it never reaches. Signal dispatch is synchronous, so this
+    // is the one cleanup that must not ride on the un-awaited close.
+    killShellsSync();
+
+    // 3. Best-effort session cleanup, then exit no matter what
     runtime.session.close().catch(() => {});
     process.exit(0);
   };

@@ -10,13 +10,15 @@ export interface TabState {
   label: string;
   icon: string;
   closeable: boolean;
-  kind: "main" | "child" | "detail-thinking" | "detail-tool";
+  kind: "main" | "child" | "detail-thinking" | "detail-tool" | "detail-shell";
   /** Which session this detail tab's entries come from: "main" or "child:{id}" */
   sourceSessionKey?: string;
   /** The entry id for detail tabs */
   detailEntryId?: string;
   /** Frozen entry data (when source session is archived) */
   frozenEntry?: import("../presentation/types.js").PresentationEntry;
+  /** Tracked background shell id for detail-shell tabs */
+  shellId?: string;
 }
 
 interface SidebarTabsProps {

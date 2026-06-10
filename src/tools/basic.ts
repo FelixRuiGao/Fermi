@@ -609,25 +609,22 @@ const WRITE: ToolDef = {
 import type { ShellKind } from "../platform/index.js";
 
 const BASH_DESCRIPTION_BASE =
-  "Execute a synchronous shell command and return stdout, stderr, and exit code. " +
-  "On timeout the entire process tree is killed with SIGKILL and the tool returns " +
-  "a timeout error that includes partial output captured so far.\n\n" +
-  "WHEN NOT TO USE bash — prefer bash_background for:\n" +
-  "  (1) Large / long-running jobs you don't want to block the turn on.\n" +
-  "  (2) Persistent tasks that never exit on their own: dev servers, file watchers, " +
-  "daemons, `npm run dev`, `vite`, `next dev`, `cargo watch`, `tail -f`, etc. " +
-  "Under bash these will always hit the timeout and be killed — always use bash_background instead.\n\n" +
-  "TIMEOUT is REQUIRED. Choose it based on the command's actual expected duration, " +
-  "not a padded \"just in case\" value.\n\n" +
-  "For commands with side effects (file writes, installs, migrations, git commits, " +
-  "database operations, build artifacts, etc.), be MORE conservative and pick a TIGHT " +
-  "timeout matching real expected duration. A mutating command killed mid-execution " +
-  "can leave partial state (half-written files, aborted transactions, torn installs). " +
-  "A larger timeout does NOT reduce that risk — it just delays the problem. A tight " +
-  "timeout gives you predictable failure points and limits the uncertainty window.\n\n" +
-  "A timeout is NOT automatically a failure: for commands that perform observable side " +
-  "effects, the effects up to the kill point may have completed successfully. Always " +
-  "inspect the partial output and resulting filesystem / state before deciding to retry.";
+  "Execute a synchronous shell command and return stdout, stderr, and exit code.\n\n" +
+  "TIMEOUT is REQUIRED — it is the synchronous wait budget, not a kill switch. If the " +
+  "command finishes in time you get its full output as usual. If the timeout elapses, " +
+  "the command is NOT killed: it keeps running and is moved to a tracked background " +
+  "shell. The tool returns the output captured so far plus the shell id — poll it with " +
+  "`bash_output`, wait with `await_event`, or stop it with `kill_shell`. Never re-run a " +
+  "command just because it timed out: its side effects are still in progress — poll the " +
+  "shell instead.\n\n" +
+  "Choose the timeout to match how long you are willing to block on the result. " +
+  "Known long-running jobs are better started with bash_background directly (clearer " +
+  "intent, cleaner logs). Persistent processes that never exit on their own — dev " +
+  "servers, file watchers, daemons, `npm run dev`, `vite`, `next dev`, `cargo watch`, " +
+  "`tail -f` — should ALWAYS use bash_background.\n\n" +
+  "After a timeout hand-off, look at the partial output: if the command appears stuck " +
+  "or was waiting for interactive input, remember to kill_shell it rather than leaving " +
+  "a zombie shell behind.";
 
 function shellLabel(kind: ShellKind): string {
   switch (kind) {
@@ -660,9 +657,9 @@ function buildBashToolDef(kind: ShellKind): ToolDef {
         timeout: {
           type: "integer",
           description:
-            `Required. Timeout in seconds (1-${BASH_MAX_TIMEOUT}). Match actual expected ` +
-            "duration; do not over-pad. On timeout the entire process tree is SIGKILLed " +
-            "and any in-flight side effects become partial.",
+            `Required. Synchronous wait budget in seconds (1-${BASH_MAX_TIMEOUT}). If the command ` +
+            "is still running when it elapses, the command is moved to a tracked background " +
+            "shell and keeps running (it is not killed).",
         },
         cwd: {
           type: "string",
@@ -825,7 +822,11 @@ export const BASH_BACKGROUND_TOOL: ToolDef = {
   name: "bash_background",
   description:
     "Start a background shell command tracked by the Session. " +
-    "Use for dev servers, watchers, and long-running commands whose output you want to inspect later.",
+    "Use for dev servers, watchers, and long-running commands whose output you want to inspect later.\n\n" +
+    "Don't leave zombie shells behind: when a background shell is no longer needed for your work " +
+    "AND has no value to the user, remember to kill_shell it. The exception is processes the user " +
+    "benefits from directly — a dev server they are clicking around in (`npm run dev`, `vite`) " +
+    "should keep running unless they say otherwise.",
   parameters: {
     type: "object",
     properties: {
@@ -1829,7 +1830,7 @@ async function toolBash(
   command: string,
   timeout: number,
   cwd = "",
-  opts: { signal?: AbortSignal; spillDir?: string } = {},
+  opts: { signal?: AbortSignal; spillDir?: string; adoptShell?: AdoptShellFn } = {},
 ): Promise<string> {
   // Clamp timeout defensively (the dispatcher already validated presence/integer).
   timeout = Math.min(Math.max(1, timeout), BASH_MAX_TIMEOUT);
@@ -1849,6 +1850,7 @@ async function toolBash(
     // so long-running grandchildren (e.g. vite under `npm run dev`)
     // don't leak as orphans.
     const child = shell.spawn({ command, cwd: runCwd });
+    const spawnedAt = performance.now();
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -1886,28 +1888,70 @@ async function toolBash(
       return parts.join("\n");
     };
 
-    const finish = (text: string) => {
+    const finish = (text: string, keepStdio = false) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
       // Release Node's references to the pipe file descriptors so the
       // parent process doesn't hold them open waiting for a late `close`.
-      try { child.stdout?.destroy(); } catch {}
-      try { child.stderr?.destroy(); } catch {}
-      try { child.stdin?.destroy(); } catch {}
+      // Skipped on the background hand-off path: the shell manager owns
+      // the child's stdio from that point on.
+      if (!keepStdio) {
+        try { child.stdout?.destroy(); } catch {}
+        try { child.stderr?.destroy(); } catch {}
+        try { child.stdin?.destroy(); } catch {}
+      }
       resolve(text);
+    };
+
+    // Timeout hand-off: the command is NOT killed — it keeps running as a
+    // tracked background shell. Output captured so far seeds the shell log;
+    // from here on the shell manager owns the child's stdio. stdin is
+    // closed (EOF) so commands stuck waiting for input get an honest "no
+    // input is coming" signal and usually exit on their own.
+    const handoffToBackground = (): boolean => {
+      if (resolved || !opts.adoptShell) return false;
+      child.stdout?.removeAllListeners("data");
+      child.stderr?.removeAllListeners("data");
+      const out = Buffer.concat(stdoutChunks).toString("utf-8");
+      const err = Buffer.concat(stderrChunks).toString("utf-8");
+      const seedOutput =
+        (out ? `==== STDOUT (sync phase) ====\n${out}\n` : "") +
+        (err ? `==== STDERR (sync phase) ====\n${err}\n` : "");
+      let adopted: { id: string; logPath: string };
+      try {
+        adopted = opts.adoptShell({
+          child,
+          command,
+          cwd: runCwd ?? process.cwd(),
+          seedOutput,
+          startedAt: spawnedAt,
+        });
+      } catch {
+        return false; // adoption failed — caller falls back to the kill path
+      }
+      try { child.stdin?.destroy(); } catch {}
+      const partial = collectPartial();
+      const header =
+        `MOVED TO BACKGROUND: the command did not finish within ${timeout}s. It was NOT killed — ` +
+        `it continues running as background shell '${adopted.id}' (log: ${adopted.logPath}).\n` +
+        `Do not re-run it: its side effects are still in progress. Poll with \`bash_output(id="${adopted.id}")\`, ` +
+        `wait with \`await_event\`, or stop it with \`kill_shell\` when it is no longer needed.\n` +
+        `If the partial output below suggests the command was stuck or waiting for interactive input, ` +
+        `remember to kill_shell it rather than leaving a zombie shell behind.`;
+      finish(partial ? `${header}\n\n${partial}` : header, /* keepStdio */ true);
+      return true;
     };
 
     const finishEarly = () => {
       const partial = collectPartial();
       const header =
         cause === "timeout"
-          ? `ERROR: Command timed out after ${timeout}s and was killed (SIGKILL on process group). ` +
-            `NOTE: a timeout is NOT automatically a failure — for mutating commands, side effects up to ` +
-            `the kill point may have completed. Inspect the partial output and resulting filesystem / state ` +
-            `before deciding to retry. For persistent or long-running tasks (dev servers, watchers, daemons), ` +
-            `use bash_background instead.`
+          ? `ERROR: Command timed out after ${timeout}s and was killed (SIGKILL on process group; ` +
+            `background hand-off was unavailable). NOTE: a timeout is NOT automatically a failure — ` +
+            `for mutating commands, side effects up to the kill point may have completed. Inspect the ` +
+            `partial output and resulting filesystem / state before deciding to retry.`
           : `ERROR: Command was interrupted and killed (SIGKILL on process group) before completing.`;
       finish(partial ? `${header}\n\n${partial}` : header);
     };
@@ -1933,6 +1977,9 @@ async function toolBash(
 
     const timer = setTimeout(() => {
       cause = "timeout";
+      if (handoffToBackground()) return;
+      // No adoption available (standalone executeTool) or adoption failed:
+      // fall back to the legacy kill path.
       killGroup();
       finishEarly();
     }, timeout * 1000);
@@ -2235,12 +2282,32 @@ function toolTime(): string {
  * ctx object for caller convenience, but it's a per-call runtime value
  * that is extracted and passed to each executor as a separate argument.
  */
+/**
+ * Hand a live, timed-out synchronous bash process over to the session's
+ * background shell manager. Returns the tracked shell's id and log path.
+ */
+export interface AdoptShellRequest {
+  child: import("node:child_process").ChildProcess;
+  command: string;
+  cwd: string;
+  /** Output captured during the synchronous phase, seeded into the shell log. */
+  seedOutput: string;
+  /** performance.now() timestamp of the original spawn. */
+  startedAt: number;
+}
+export type AdoptShellFn = (req: AdoptShellRequest) => { id: string; logPath: string };
+
 export interface ExecuteToolContext {
   projectRoot?: string;
   externalPathAllowlist?: string[];
   sessionArtifactsDir?: string;
   supportsMultimodal?: boolean;
   signal?: AbortSignal;
+  /**
+   * When present, a synchronous bash command whose timeout elapses is moved
+   * to a tracked background shell instead of being killed.
+   */
+  adoptShell?: AdoptShellFn;
 }
 
 class ToolArgValidationError extends Error {
@@ -3149,10 +3216,13 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         const output = await toolBash(command, timeout, cwd, {
           signal: rtCtx?.signal,
           spillDir: ctx?.sessionArtifactsDir,
+          adoptShell: ctx?.adoptShell,
         });
 
-        // Post-exec: only record mutations if command succeeded (exit code 0)
-        const isError = output.startsWith("ERROR:");
+        // Post-exec: only record mutations if command succeeded (exit code 0).
+        // A timeout hand-off counts as not-finished: the command is still
+        // running, so its mutations cannot be snapshotted for rewind.
+        const isError = output.startsWith("ERROR:") || output.startsWith("MOVED TO BACKGROUND:");
         if (!isError && preExecStates.length > 0) {
           const entries: BashMutationEntry[] = [];
           for (const { state } of preExecStates) {

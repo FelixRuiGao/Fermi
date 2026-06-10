@@ -131,7 +131,7 @@ Recommended workflow for large files and logs:
 
 ## `bash`
 
-`bash(command, timeout?, cwd?)`
+`bash(command, timeout, cwd?)`
 
 Execute shell commands. Returns stdout, stderr, and exit code.
 
@@ -170,7 +170,7 @@ Some filesystem operations have no dedicated tool; these are fine via bash:
 
 ### Other notes
 
-- **Timeouts:** Default 60s, max 600s. Long-running commands should specify a timeout explicitly.
+- **Timeout (required, max 600s):** the synchronous wait budget, not a kill switch. A command still running when the timeout elapses is **not killed** — it moves to a tracked background shell and keeps running; the result includes the output so far and the shell id. Poll with `bash_output`, wait with `await_event`, or `kill_shell` it. Never re-run a command just because it timed out — its side effects are still in progress. If the partial output suggests it was stuck or waiting for input, remember to `kill_shell` it.
 - **Output limit:** ~200KB per stream. When a stream exceeds the cap the head and tail are kept and the middle is dropped; the **full untruncated output is also written to a temp file** and the path is included in the result, so you can `read_file` or `grep` the complete log if needed.
 - **Working directory:** Use the `cwd` parameter for one-off directory changes rather than changing directories inside the command.
 
@@ -183,6 +183,7 @@ Start a tracked background shell command. Use this for long-running processes li
 - Returns a shell ID and a stable log file path.
 - Use `bash_output` to inspect logs later.
 - Use `await_event(seconds=60)` if you want to await the process exit event.
+- **Don't leave zombie shells behind.** When a shell is no longer needed for your work and has no value to the user, remember to `kill_shell` it. The exception is processes the user benefits from directly — a dev server they are clicking around in (`npm run dev`, `vite`) should keep running unless they say otherwise. The user can also see and stop shells themselves from the Shells panel (`/shells`).
 
 ## `bash_output`
 

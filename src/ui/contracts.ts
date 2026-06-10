@@ -150,6 +150,20 @@ export interface Session {
   getSummarizeTargets?(): Array<{ kind: "turn" | "summary"; turnIndex: number; preview: string; timestamp: number; contextId?: string }>;
   getContextIdsForTurnRange?(startTurn: number, endTurn: number): string[];
   runManualCompact?(instruction?: string, options?: { signal?: AbortSignal }): Promise<void>;
+  getBackgroundShellSnapshots?(): Array<{
+    id: string; command: string; cwd: string;
+    status: "running" | "exited" | "failed" | "killed";
+    exitCode: number | null; elapsedSeconds: number;
+    recentOutput: string[]; logPath: string;
+  }>;
+  getBackgroundShellDetail?(id: string, opts?: { maxChars?: number }): ({
+    id: string; command: string; cwd: string;
+    status: "running" | "exited" | "failed" | "killed";
+    exitCode: number | null; elapsedSeconds: number;
+    recentOutput: string[]; logPath: string;
+    logTail: string; logTruncated: boolean;
+  }) | null;
+  stopBackgroundShell?(id: string): Promise<string>;
   thinkingLevel?: string;
   currentModelConfigName?: string;
   switchModel?(modelConfigName: string): void;

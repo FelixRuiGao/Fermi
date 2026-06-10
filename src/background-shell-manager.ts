@@ -50,6 +50,28 @@ export interface BackgroundShellEntry {
   explicitKill: boolean;
 }
 
+/** Read-only view of a tracked shell for UI surfaces (badge, picker, detail tab). */
+export interface BackgroundShellSnapshot {
+  id: string;
+  command: string;
+  cwd: string;
+  status: "running" | "exited" | "failed" | "killed";
+  exitCode: number | null;
+  /** Seconds since the shell was started. */
+  elapsedSeconds: number;
+  /** Last few output lines (trimmed, newest last). */
+  recentOutput: string[];
+  logPath: string;
+}
+
+/** Snapshot + log tail for the shell detail view. */
+export interface BackgroundShellDetail extends BackgroundShellSnapshot {
+  /** Tail of the log file (up to the requested size). */
+  logTail: string;
+  /** True when the log was longer than the tail window. */
+  logTruncated: boolean;
+}
+
 export interface BackgroundShellManagerDeps {
   projectRoot: string;
   getSessionArtifactsDir: () => string;
@@ -109,6 +131,47 @@ export class BackgroundShellManager {
    */
   getShellEntry(id: string): Readonly<BackgroundShellEntry> | null {
     return this._activeShells.get(id) ?? null;
+  }
+
+  /** Snapshots of all tracked shells, running first, then by start time (newest first). */
+  listShells(): BackgroundShellSnapshot[] {
+    const snapshots = [...this._activeShells.values()].map((entry) => this._snapshotEntry(entry));
+    return snapshots.sort((a, b) => {
+      const aRunning = a.status === "running" ? 0 : 1;
+      const bRunning = b.status === "running" ? 0 : 1;
+      if (aRunning !== bRunning) return aRunning - bRunning;
+      return a.elapsedSeconds - b.elapsedSeconds;
+    });
+  }
+
+  /** Snapshot plus a log tail for the detail view. Returns null for unknown ids. */
+  getShellDetail(id: string, opts?: { maxChars?: number }): BackgroundShellDetail | null {
+    const entry = this._activeShells.get(id);
+    if (!entry) return null;
+    const maxChars = Math.max(500, Math.min(200_000, opts?.maxChars ?? 16_000));
+    let logTail = "";
+    let logTruncated = false;
+    try {
+      if (existsSync(entry.logPath)) {
+        const full = readFileSync(entry.logPath, "utf-8");
+        logTruncated = full.length > maxChars;
+        logTail = logTruncated ? full.slice(-maxChars) : full;
+      }
+    } catch { /* unreadable log — return empty tail */ }
+    return { ...this._snapshotEntry(entry), logTail, logTruncated };
+  }
+
+  private _snapshotEntry(entry: BackgroundShellEntry): BackgroundShellSnapshot {
+    return {
+      id: entry.id,
+      command: entry.command,
+      cwd: entry.cwd,
+      status: entry.status,
+      exitCode: entry.exitCode,
+      elapsedSeconds: (performance.now() - entry.startTime) / 1000,
+      recentOutput: [...entry.recentOutput],
+      logPath: entry.logPath,
+    };
   }
 
   buildShellReport(): string {
@@ -336,6 +399,27 @@ export class BackgroundShellManager {
     };
     this._activeShells.set(shellId, entry);
 
+    this._attachShellListeners(entry);
+
+    const archiveNote = archivedLogPath
+      ? `\nprevious log (id was reused): ${archivedLogPath}`
+      : "";
+    return new ToolResult({
+      content:
+        `Started background shell '${shellId}'.\n` +
+        `cwd: ${cwd}\n` +
+        `log: ${logPath}${archiveNote}\n` +
+        `Use \`bash_output(id="${shellId}")\` to inspect logs and \`await_event(seconds=60)\` to await shell exit.`,
+    });
+  }
+
+  /**
+   * Wire output/exit handling for a tracked shell. Shared by
+   * execBashBackground (fresh spawn) and adoptRunningProcess (handoff of a
+   * timed-out synchronous bash command).
+   */
+  private _attachShellListeners(entry: BackgroundShellEntry): void {
+    const { process: child, id: shellId, logPath } = entry;
     child.stdout?.on("data", (chunk: Buffer | string) => {
       const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
       this._recordShellChunk(entry, text);
@@ -378,17 +462,59 @@ export class BackgroundShellManager {
         tuiVisible: true,
       });
     });
+  }
 
-    const archiveNote = archivedLogPath
-      ? `\nprevious log (id was reused): ${archivedLogPath}`
-      : "";
-    return new ToolResult({
-      content:
-        `Started background shell '${shellId}'.\n` +
-        `cwd: ${cwd}\n` +
-        `log: ${logPath}${archiveNote}\n` +
-        `Use \`bash_output(id="${shellId}")\` to inspect logs and \`await_event(seconds=60)\` to await shell exit.`,
-    });
+  /**
+   * Adopt a live process spawned by the synchronous bash tool whose timeout
+   * elapsed. The process keeps running as a tracked background shell: output
+   * captured so far is seeded into a fresh log file, and from this moment on
+   * the shell behaves exactly like one started via bash_background (output
+   * recording, exit notices, kill_shell, bash_output).
+   *
+   * The caller must stop consuming the child's stdio before handing it over.
+   */
+  adoptRunningProcess(opts: {
+    child: ChildProcess;
+    command: string;
+    cwd: string;
+    seedOutput?: string;
+    /** performance.now() timestamp of the original spawn. */
+    startedAt?: number;
+  }): BackgroundShellEntry {
+    const shellId = `shell-${++this._shellCounter}`;
+    const logPath = join(this._getShellsDir(), `${shellId}.log`);
+    writeFileSync(logPath, opts.seedOutput ?? "", "utf-8");
+
+    const entry: BackgroundShellEntry = {
+      id: shellId,
+      process: opts.child,
+      command: opts.command,
+      cwd: opts.cwd,
+      logPath,
+      startTime: opts.startedAt ?? performance.now(),
+      status: "running",
+      exitCode: null,
+      signal: null,
+      readOffset: 0,
+      recentOutput: [],
+      explicitKill: false,
+    };
+    // Seed recentOutput from the tail of what the sync phase captured.
+    const seedLines = (opts.seedOutput ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    entry.recentOutput = seedLines.slice(-3);
+    this._activeShells.set(shellId, entry);
+    this._attachShellListeners(entry);
+
+    // The process may have exited between the timeout firing and adoption.
+    if (opts.child.exitCode !== null || opts.child.signalCode !== null) {
+      entry.exitCode = opts.child.exitCode;
+      entry.signal = opts.child.signalCode;
+      entry.status = opts.child.exitCode === 0 ? "exited" : "failed";
+    }
+    return entry;
   }
 
   execBashOutput(args: Record<string, unknown>): ToolResult {
@@ -449,87 +575,84 @@ export class BackgroundShellManager {
     });
   }
 
+  /**
+   * Kill one tracked shell (process group, SIGTERM → SIGKILL escalation).
+   * Returns `performed: false` for unknown ids and already-terminated
+   * shells — nothing about the world changed, so callers (e.g. the UI stop
+   * path) can skip notifying the agent. Used by the kill_shell tool and the
+   * user-facing stop action.
+   */
+  async killShell(id: string, signalArg?: string): Promise<{ performed: boolean; message: string }> {
+    const rawSignal = (signalArg?.trim() || "SIGTERM").toUpperCase();
+    const signal = (rawSignal.startsWith("SIG") ? rawSignal : `SIG${rawSignal}`) as NodeJS.Signals;
+    const KILL_WAIT_MS = 3_000;
+    const KILL_FALLBACK_MS = 500;
+
+    const entry = this._activeShells.get(id);
+    if (!entry) {
+      return { performed: false, message: `'${id}': not found.` };
+    }
+    if (entry.status !== "running") {
+      return { performed: false, message: `'${id}': already ${entry.status}.` };
+    }
+
+    // Flip status synchronously: callers querying `check_status` (or
+    // reusing the id in bash_background) immediately after this call
+    // must NOT see a zombie "running" entry. Previously we relied on
+    // the close event to update status, but `close` does not fire when
+    // descendants of the shell (e.g. npm spawning vite) keep the stdio
+    // pipes open after the shell itself exits — and the entry would
+    // sit there as "running" forever.
+    entry.explicitKill = true;
+    entry.status = "killed";
+    entry.signal = signal;
+
+    // Send the signal to the entire process group so child/grandchild
+    // processes die alongside the shell. This is what makes the close
+    // event actually fire on the parent.
+    if (!BackgroundShellManager._killGroup(entry, signal)) {
+      // Both group kill and single-child kill threw. In practice this
+      // means the process is already gone (ESRCH) — we have permission
+      // to signal anything we spawned. Leaving status="killed" is the
+      // accurate description of the world after the call: there is no
+      // running process attached to this entry, regardless of whether
+      // the signal actually traveled.
+      return { performed: true, message: `'${id}': failed to send ${signal} (process likely already gone).` };
+    }
+
+    const message = await new Promise<string>((resolve) => {
+      // Already exited between dispatch and here? Resolve immediately.
+      if (entry.exitCode !== null || entry.process.exitCode !== null) {
+        resolve(`'${id}': killed (signal=${signal}).`);
+        return;
+      }
+      const onClose = () => {
+        clearTimeout(timer);
+        const exit = entry.exitCode;
+        resolve(exit != null
+          ? `'${id}': killed (signal=${entry.signal ?? signal}, exit=${exit}).`
+          : `'${id}': killed (signal=${entry.signal ?? signal}).`);
+      };
+      const timer = setTimeout(() => {
+        entry.process.removeListener("close", onClose);
+        BackgroundShellManager._killGroup(entry, "SIGKILL");
+        const escalated = `'${id}': SIGKILL after ${KILL_WAIT_MS}ms (initial ${signal} did not exit).`;
+        entry.process.once("close", () => resolve(escalated));
+        setTimeout(() => resolve(escalated), KILL_FALLBACK_MS); // fallback if close never fires
+      }, KILL_WAIT_MS);
+      entry.process.once("close", onClose);
+    });
+    return { performed: true, message };
+  }
+
   async execKillShell(args: Record<string, unknown>): Promise<ToolResult> {
     const idsArg = argRequiredStringArray("kill_shell", args, "ids");
     if (idsArg instanceof ToolResult) return idsArg;
     const signalArg = argOptionalString("kill_shell", args, "signal");
     if (signalArg instanceof ToolResult) return signalArg;
-    const rawSignal = (signalArg?.trim() || "SIGTERM").toUpperCase();
-    const signal = (rawSignal.startsWith("SIG") ? rawSignal : `SIG${rawSignal}`) as NodeJS.Signals;
 
-    const KILL_WAIT_MS = 3_000;
-    const KILL_FALLBACK_MS = 500;
-    const parts: string[] = [];
-    const waitPromises: Promise<void>[] = [];
-
-    for (const id of idsArg) {
-      const entry = this._activeShells.get(id);
-      if (!entry) {
-        parts.push(`'${id}': not found.`);
-        continue;
-      }
-      if (entry.status !== "running") {
-        parts.push(`'${id}': already ${entry.status}.`);
-        continue;
-      }
-
-      // Flip status synchronously: callers querying `check_status` (or
-      // reusing the id in bash_background) immediately after this call
-      // must NOT see a zombie "running" entry. Previously we relied on
-      // the close event to update status, but `close` does not fire when
-      // descendants of the shell (e.g. npm spawning vite) keep the stdio
-      // pipes open after the shell itself exits — and the entry would
-      // sit there as "running" forever.
-      entry.explicitKill = true;
-      entry.status = "killed";
-      entry.signal = signal;
-
-      // Send the signal to the entire process group so child/grandchild
-      // processes die alongside the shell. This is what makes the close
-      // event actually fire on the parent.
-      if (!BackgroundShellManager._killGroup(entry, signal)) {
-        // Both group kill and single-child kill threw. In practice this
-        // means the process is already gone (ESRCH) — we have permission
-        // to signal anything we spawned. Leaving status="killed" is the
-        // accurate description of the world after the call: there is no
-        // running process attached to this entry, regardless of whether
-        // the signal actually traveled.
-        parts.push(`'${id}': failed to send ${signal} (process likely already gone).`);
-        continue;
-      }
-
-      const idx = parts.length;
-      parts.push(""); // placeholder
-      waitPromises.push(
-        new Promise<void>((resolve) => {
-          // Already exited between dispatch and here? Resolve immediately.
-          if (entry.exitCode !== null || entry.process.exitCode !== null) {
-            parts[idx] = `'${id}': killed (signal=${signal}).`;
-            resolve();
-            return;
-          }
-          const onClose = () => {
-            clearTimeout(timer);
-            const exit = entry.exitCode;
-            parts[idx] = exit != null
-              ? `'${id}': killed (signal=${entry.signal ?? signal}, exit=${exit}).`
-              : `'${id}': killed (signal=${entry.signal ?? signal}).`;
-            resolve();
-          };
-          const timer = setTimeout(() => {
-            entry.process.removeListener("close", onClose);
-            BackgroundShellManager._killGroup(entry, "SIGKILL");
-            parts[idx] = `'${id}': SIGKILL after ${KILL_WAIT_MS}ms (initial ${signal} did not exit).`;
-            entry.process.once("close", () => resolve());
-            setTimeout(resolve, KILL_FALLBACK_MS); // fallback if close never fires
-          }, KILL_WAIT_MS);
-          entry.process.once("close", onClose);
-        }),
-      );
-    }
-
-    await Promise.all(waitPromises);
-    return new ToolResult({ content: parts.join(" ") || "No shells specified." });
+    const results = await Promise.all(idsArg.map((id) => this.killShell(id, signalArg)));
+    return new ToolResult({ content: results.map((r) => r.message).join(" ") || "No shells specified." });
   }
 
   // ── Private helpers ────────────────────────────────────────────────

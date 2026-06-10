@@ -102,6 +102,49 @@ describe("/summarize_hint command", () => {
     }
   });
 
+  it("opens a picker without arguments and applies the choice", async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "fermi-shint-"));
+    try {
+      const registry = buildDefaultRegistry();
+      const cmd = registry.lookup("/summarize_hint");
+      expect(cmd!.options).toBeTruthy();
+
+      const { session, setCalls } = makeSessionStub();
+      const { ctx } = makeContext(registry, session, homeDir);
+      const promptCommandPicker = mock(async (options: Array<{ label: string; value: string; customInput?: boolean }>) => {
+        expect(options.map((o) => o.value)).toEqual(["on", "off", "levels"]);
+        expect(options[0].label).toContain("(current)");
+        expect(options[2].customInput).toBe(true);
+        return { value: "off" };
+      });
+      (ctx as Record<string, unknown>).promptCommandPicker = promptCommandPicker;
+
+      await cmd!.handler(ctx, "");
+      expect(promptCommandPicker).toHaveBeenCalledTimes(1);
+      expect(setCalls).toEqual([{ enabled: false }]);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts levels typed through the picker's custom input", async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "fermi-shint-"));
+    try {
+      const registry = buildDefaultRegistry();
+      const cmd = registry.lookup("/summarize_hint");
+      const { session, setCalls } = makeSessionStub();
+      const { ctx } = makeContext(registry, session, homeDir);
+      (ctx as Record<string, unknown>).promptCommandPicker = mock(async () => ({ value: "levels", note: "30 60" }));
+
+      await cmd!.handler(ctx, "");
+      expect(setCalls).toEqual([{ level1: 30, level2: 60 }]);
+      const settings = JSON.parse(readFileSync(join(homeDir, "settings.json"), "utf-8"));
+      expect(settings.summarize_hint).toEqual({ enabled: true, level1: 30, level2: 60 });
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid levels without persisting", async () => {
     const homeDir = mkdtempSync(join(tmpdir(), "fermi-shint-"));
     try {

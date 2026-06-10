@@ -85,7 +85,7 @@ import {
   ToolGate,
   type GateAdvisor,
 } from "./tool-runtime.js";
-import { BackgroundShellManager } from "./background-shell-manager.js";
+import { BackgroundShellManager, type BackgroundShellSnapshot, type BackgroundShellDetail } from "./background-shell-manager.js";
 import { PermissionAdvisor, PermissionRuleStore, initBashParser, type PermissionMode, type PermissionRule, type ApprovalOffer } from "./permissions/index.js";
 import { HookRuntime, type HookEvent, type HookPayload } from "./hooks/index.js";
 import type { HookManifest } from "./hooks/types.js";
@@ -1319,7 +1319,10 @@ export class Session {
       this.onSaveRequest?.();
     }
     this._inbox.push(msg);
-    if (this._agentState === "idle") {
+    // Ride-along messages (wake === false) never start a turn from idle;
+    // they wait in the inbox and are drained when something else wakes the
+    // agent (user input or a waking message).
+    if (this._agentState === "idle" && msg.wake !== false) {
       this._scheduleAutoResume();
     }
     return { accepted: true };
@@ -1469,6 +1472,15 @@ export class Session {
     return this._inbox.length > 0;
   }
 
+  /**
+   * Check whether the inbox has pending WAKING messages. Ride-along messages
+   * (wake === false) don't block manual context commands — they are passive
+   * records (e.g. user-initiated kill notices) that wait for the next turn.
+   */
+  private _hasWakingInboxMessages(): boolean {
+    return this._inbox.some((msg) => msg.wake !== false);
+  }
+
   private _hasTrackedShells(): boolean {
     return this._shellManager.hasTrackedShells();
   }
@@ -1479,6 +1491,43 @@ export class Session {
 
   private _buildShellReport(): string {
     return this._shellManager.buildShellReport();
+  }
+
+  // ------------------------------------------------------------------
+  // Background shells — UI surface (badge, picker, detail tab)
+  // ------------------------------------------------------------------
+
+  /** Snapshots of all tracked background shells for UI surfaces. */
+  getBackgroundShellSnapshots(): BackgroundShellSnapshot[] {
+    return this._shellManager.listShells();
+  }
+
+  /** Snapshot + log tail for the shell detail view. Null for unknown ids. */
+  getBackgroundShellDetail(id: string, opts?: { maxChars?: number }): BackgroundShellDetail | null {
+    return this._shellManager.getShellDetail(id, opts);
+  }
+
+  /**
+   * User-initiated stop of a background shell (Shells panel / detail tab).
+   * When a kill is actually performed, a ride-along system notice is queued
+   * so the agent learns about it on its next turn — without being woken:
+   * the user is present and steering.
+   */
+  async stopBackgroundShell(id: string): Promise<string> {
+    const result = await this._shellManager.killShell(id);
+    if (result.performed) {
+      this._deliverMessage({
+        type: "system_notice",
+        sender: "system",
+        timestamp: Date.now(),
+        content:
+          `The user manually stopped background shell '${id}' from the UI (${result.message}). ` +
+          `Do not restart it unless the user asks.`,
+        wake: false,
+        tuiVisible: false,
+      });
+    }
+    return result.message;
   }
 
   // ------------------------------------------------------------------
@@ -3251,6 +3300,10 @@ export class Session {
         if (this._permissionAdvisor.sessionMode === "yolo") return ["/"];
         return this._permissionRuleStore.getApprovedExternalPrefixes();
       },
+      adoptShell: (req) => {
+        const entry = this._shellManager.adoptRunningProcess(req);
+        return { id: entry.id, logPath: entry.logPath };
+      },
     });
   }
 
@@ -3727,13 +3780,14 @@ export class Session {
       return `Cannot run ${command} while sub-agents are still running.`;
     }
     if (this._hasRunningShells()) {
-      return `Cannot run ${command} while background shells are still running.`;
+      return [
+        `Cannot run ${command} while background shells are still running.`,
+        this._buildShellReport(),
+        "Stop the shells you no longer need (open the Shells panel or run /shells), then retry.",
+      ].filter(Boolean).join("\n");
     }
-    if (this._hasInboxMessages()) {
+    if (this._hasWakingInboxMessages()) {
       return `Cannot run ${command} while queued messages are waiting to be delivered.`;
-    }
-    if (this._hasInboxMessages()) {
-      return `Cannot run ${command} while sub-agent results are waiting to be delivered.`;
     }
     return null;
   }
@@ -6849,11 +6903,17 @@ export class Session {
       this._allocateContextId(),
       agentResult.fullOutputPath,
     ), false);
+    // User-initiated kills deliver as ride-along: the user is present and
+    // steering, so the parent must not wake and start reacting on its own.
+    // Natural completions/failures keep waking the idle parent (safety net
+    // for missing await_event).
+    const userInitiatedKill = cause === "user_targeted_kill" || cause === "user_mass_interrupt";
     this._deliverMessage({
       type: "peer_message",
       sender: handle.id,
       content: agentResult.content,
       timestamp: Date.now(),
+      wake: !userInitiatedKill,
     });
     handle.terminationCause = undefined;
 

@@ -889,6 +889,22 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     return { ok: true };
   });
 
+  // ── Background shells (badge / picker / detail tab) ──
+  server.on("session.getBackgroundShellSnapshots", () => session.getBackgroundShellSnapshots());
+  server.on("session.getBackgroundShellDetail", (params) => {
+    const p = expectObject(params, "session.getBackgroundShellDetail");
+    const id = optString(p, "id");
+    if (!id) throw new Error("session.getBackgroundShellDetail: 'id' is required");
+    const maxChars = optNumber(p, "maxChars");
+    return session.getBackgroundShellDetail(id, maxChars !== undefined ? { maxChars } : undefined);
+  });
+  server.on("session.stopBackgroundShell", async (params) => {
+    const p = expectObject(params, "session.stopBackgroundShell");
+    const id = optString(p, "id");
+    if (!id) throw new Error("session.stopBackgroundShell: 'id' is required");
+    return { message: await session.stopBackgroundShell(id) };
+  });
+
   // ── Rewind ──
   server.on("session.getRewindTargets", () => session.getRewindTargets());
   server.on("session.rewind", (params) => {

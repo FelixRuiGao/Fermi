@@ -319,7 +319,8 @@ export function PromptSelectView(
   const visibleOptions = prompt.options.slice(start, end);
   const selectedOption = prompt.options[Math.max(0, Math.min(prompt.selected, prompt.options.length - 1))];
   const description = selectedOption?.description?.trim();
-  const promptHeight = 1 + visibleOptions.length + (description ? 1 : 0);
+  const footerHint = prompt.footerHint?.trim();
+  const promptHeight = 1 + visibleOptions.length + (description ? 1 : 0) + (footerHint ? 1 : 0);
 
   return (
     <OverlayFrame theme={theme} height={promptHeight}>
@@ -338,6 +339,7 @@ export function PromptSelectView(
         );
       })}
       {description ? <text fg={theme.colors.dim} content={truncateToWidth(description, contentWidth)} /> : null}
+      {footerHint ? <text fg={theme.colors.dim} content={truncateToWidth(footerHint, contentWidth)} /> : null}
     </OverlayFrame>
   );
 }

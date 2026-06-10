@@ -124,6 +124,9 @@ export interface CommandContext {
   /** Trigger a manual compact request through the TUI execution pipeline. */
   onManualCompactRequested?: (instruction: string) => void;
 
+  /** Open the background shells picker (badge / /shells command). */
+  onShellsRequested?: () => void;
+
   /**
    * Copy text to the system clipboard. Returns true on success.
    * Implementations may be async (the platform-native tool runs in
@@ -394,32 +397,66 @@ async function cmdCompact(ctx: CommandContext, args: string): Promise<void> {
   ctx.onManualCompactRequested(args.trim());
 }
 
+async function cmdShells(ctx: CommandContext, _args: string): Promise<void> {
+  if (!ctx.onShellsRequested) {
+    ctx.showMessage("The shells panel is not available in this UI.");
+    return;
+  }
+  ctx.onShellsRequested();
+}
+
 const SUMMARIZE_HINT_USAGE =
   "Usage: /summarize_hint on | off | <level1> <level2>  (integers, 0 < level1 < level2 < 85)";
+
+function summarizeHintOptions(ctx: CommandOptionsContext): CommandOption[] {
+  const current = typeof ctx.session?.getSummarizeHintConfig === "function"
+    ? ctx.session.getSummarizeHintConfig() as { enabled: boolean; level1: number; level2: number }
+    : { enabled: true, level1: 50, level2: 75 };
+  return [
+    { label: current.enabled ? "On (current)" : "On", value: "on" },
+    { label: current.enabled ? "Off" : "Off (current)", value: "off" },
+    {
+      label: `Set levels (now ${current.level1}% / ${current.level2}%)`,
+      value: "levels",
+      customInput: true,
+    },
+  ];
+}
 
 async function cmdSummarizeHint(ctx: CommandContext, args: string): Promise<void> {
   const session = ctx.session;
   const current = session.getSummarizeHintConfig();
-  const trimmed = args.trim();
+  const hint = ctx.showHint ?? ctx.showMessage;
+  let input = args.trim();
 
-  if (!trimmed) {
-    ctx.showMessage(
-      `Summarize hints: ${current.enabled ? "on" : "off"} · level1 ${current.level1}% · level2 ${current.level2}%\n${SUMMARIZE_HINT_USAGE}`,
+  // Interactive path: no args → picker (On / Off / Set levels with inline input).
+  if (!input && ctx.promptCommandPicker) {
+    const picked = await ctx.promptCommandPicker(
+      summarizeHintOptions({ session: ctx.session, store: ctx.store }),
     );
-    return;
+    if (!picked) return;
+    if (picked.value === "levels") {
+      input = (picked.note ?? "").trim();
+      if (!input) {
+        ctx.showMessage(`Enter two levels, e.g. "50 75". ${SUMMARIZE_HINT_USAGE}`);
+        return;
+      }
+    } else {
+      input = picked.value;
+    }
   }
 
-  if (trimmed === "on" || trimmed === "off") {
-    const enabled = trimmed === "on";
+  if (input === "on" || input === "off") {
+    const enabled = input === "on";
     session.setSummarizeHintConfig({ enabled });
     persistSettingsPatch({
       summarize_hint: { enabled, level1: current.level1, level2: current.level2 },
     }, ctx.fermiHomeDir);
-    ctx.showMessage(`Summarize hints turned ${trimmed}.`);
+    hint(`Summarize hints: ${enabled ? "ON" : "OFF"}`);
     return;
   }
 
-  const parts = trimmed.split(/\s+/);
+  const parts = input.split(/\s+/);
   if (parts.length === 2) {
     const level1 = Number(parts[0]);
     const level2 = Number(parts[1]);
@@ -432,11 +469,13 @@ async function cmdSummarizeHint(ctx: CommandContext, args: string): Promise<void
     persistSettingsPatch({
       summarize_hint: { enabled: current.enabled, level1, level2 },
     }, ctx.fermiHomeDir);
-    ctx.showMessage(`Summarize hint levels set to ${level1}% / ${level2}%.`);
+    hint(`Summarize hint levels: ${level1}% / ${level2}%`);
     return;
   }
 
-  ctx.showMessage(SUMMARIZE_HINT_USAGE);
+  ctx.showMessage(
+    `Summarize hints: ${current.enabled ? "on" : "off"} · level1 ${current.level1}% · level2 ${current.level2}%\n${SUMMARIZE_HINT_USAGE}`,
+  );
 }
 
 async function cmdResume(ctx: CommandContext, args: string): Promise<void> {
@@ -2015,7 +2054,8 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/new", description: "Start a new session", handler: cmdNew });
   registry.register({ name: "/session", description: "Resume a previous session", handler: cmdResume, options: resumeOptions, pickerTitle: "Sessions", aliases: ["/resume"] });
   registry.register({ name: "/summarize", description: "Manually summarize older context", handler: cmdSummarize });
-  registry.register({ name: "/summarize_hint", description: "Configure two-tier summarize hints (on/off, trigger levels)", handler: cmdSummarizeHint });
+  registry.register({ name: "/summarize_hint", description: "Configure two-tier summarize hints (on/off, trigger levels)", handler: cmdSummarizeHint, options: summarizeHintOptions, pickerTitle: "Summarize Hints" });
+  registry.register({ name: "/shells", description: "View and stop background shells", handler: cmdShells });
   registry.register({ name: "/model", description: "Switch model", handler: cmdModel, options: modelOptions });
   registry.register({ name: "/tier", description: "Configure sub-agent model tiers", handler: cmdTier, options: tierOptions });
   registry.register({ name: "/quit", description: "Exit the application", handler: cmdQuit, aliases: ["/exit"] });
