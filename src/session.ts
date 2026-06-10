@@ -182,6 +182,7 @@ import {
   type ContextThresholds,
   DEFAULT_THRESHOLDS,
   computeHysteresisThresholds,
+  validateSummarizeHintLevels,
 } from "./settings.js";
 import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
 // ------------------------------------------------------------------
@@ -297,12 +298,17 @@ function appendManualInstruction(
 }
 
 // -- Hint Prompt generators (two-tier) --
-function HINT_LEVEL1_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct}. Consider freeing space: call \`show_context\` first to see the distribution, then call \`summarize_context\` to summarize groups you no longer need in full. Prioritize completed subtasks, large tool results you've already extracted key info from, and exploratory steps that led to a conclusion. Do not summarize context groups that contain user messages, and keep each summarize_context operation within a single user turn. Always inspect with show_context before summarizing. After summarizing, continue your work normally.]`;
+function HINT_LEVEL1_PROMPT(pct: string, level2Pct: string): string {
+  return `[SYSTEM: Context usage has reached ${pct}. This is the first-level reminder — a second will arrive at ${level2Pct}. No immediate action is required:
+- If the task is mostly done, you may simply ignore this notice.
+- If a large part of the task remains and the user has NOT already stated a summarization policy (in AGENTS.md or earlier in this conversation), consider asking the user (the \`ask\` tool fits well): (1) whether you may summarize older context with \`summarize_context\` as the session grows, and (2) whether you may choose the timing yourself. The user may not be familiar with this mechanism — briefly explain that summarizing turns already-consumed tool outputs and finished exploration into shorter summaries while keeping their own messages intact, and mention they can also do it manually anytime with /summarize.
+Never summarize on your own without granted or standing permission. After handling this notice, continue your work.]`;
 }
 
 function HINT_LEVEL2_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct} — auto-compact will trigger soon. You should act now: call \`show_context\` to see the distribution, then immediately call \`summarize_context\` to summarize older groups. Prioritize completed subtasks, large tool results, and exploratory steps. Do not summarize context groups that contain user messages, and keep each summarize_context operation within a single user turn. Do not skip the show_context step. After summarizing, continue your work.]`;
+  return `[SYSTEM: Context usage has reached ${pct} — second-level reminder. When the window fills up, auto-compact will rewrite the whole conversation into a single summary, which is far more lossy than targeted summarization.
+- If the remaining work is small, just finish it — no need to ask anything.
+- If substantial work remains: with permission already granted (in this conversation or AGENTS.md), now is a good time to act — inspect with \`show_context\`, then \`summarize_context\` consumed tool results, finished exploration, and completed subtasks. Without permission, you are advised to ask the user for a summarization policy now — but if they previously declined, respect that and do not ask again.]`;
 }
 
 function formatTokenCount(value: number): string {
@@ -526,8 +532,11 @@ export class Session {
 
   // Context thresholds (from settings.json, or defaults)
   private _thresholds: ContextThresholds = { ...DEFAULT_THRESHOLDS };
-  private _hintResetNone = DEFAULT_THRESHOLDS.context_hint_level1 / 100 - 0.20;
-  private _hintResetLevel1 = (DEFAULT_THRESHOLDS.context_hint_level1 + DEFAULT_THRESHOLDS.context_hint_level2) / 200;
+  private _hintResetNone = computeHysteresisThresholds(DEFAULT_THRESHOLDS).hintResetNone / 100;
+  private _hintResetLevel1 = computeHysteresisThresholds(DEFAULT_THRESHOLDS).hintResetLevel1 / 100;
+
+  // Two-tier summarize hints master switch (settings.json `summarize_hint` / the /summarize_hint command)
+  private _summarizeHintEnabled = true;
 
   // Main-session context budget percentage (1–100).
   private _contextBudgetPercent = 100;
@@ -3579,6 +3588,19 @@ export class Session {
       this._contextBudgetPercent = Math.max(1, Math.min(100, settings.context_budget_percent));
     }
 
+    // Two-tier summarize hints: on/off + trigger levels. Invalid levels are
+    // ignored (defaults stay); the /summarize_hint command validates on input.
+    if (settings.summarize_hint) {
+      const hint = settings.summarize_hint;
+      const level1 = hint.level1 ?? this._thresholds.context_hint_level1;
+      const level2 = hint.level2 ?? this._thresholds.context_hint_level2;
+      const levelsValid = validateSummarizeHintLevels(level1, level2) === null;
+      this.setSummarizeHintConfig({
+        enabled: hint.enabled,
+        ...(levelsValid ? { level1, level2 } : {}),
+      });
+    }
+
     // Restore disabled skills
     if (settings.disabled_skills && settings.disabled_skills.length > 0) {
       this._disabledSkills = new Set(settings.disabled_skills);
@@ -3589,6 +3611,28 @@ export class Session {
     if (settings.permission_mode && ["read_only", "reversible", "yolo"].includes(settings.permission_mode)) {
       this._permissionAdvisor.sessionMode = settings.permission_mode as PermissionMode;
     }
+  }
+
+  /** Current two-tier summarize hint configuration. */
+  getSummarizeHintConfig(): { enabled: boolean; level1: number; level2: number } {
+    return {
+      enabled: this._summarizeHintEnabled,
+      level1: this._thresholds.context_hint_level1,
+      level2: this._thresholds.context_hint_level2,
+    };
+  }
+
+  /**
+   * Update the two-tier summarize hint configuration (takes effect live).
+   * Levels must be pre-validated by the caller (validateSummarizeHintLevels).
+   */
+  setSummarizeHintConfig(config: { enabled?: boolean; level1?: number; level2?: number }): void {
+    if (config.enabled !== undefined) this._summarizeHintEnabled = config.enabled;
+    if (config.level1 !== undefined) this._thresholds.context_hint_level1 = config.level1;
+    if (config.level2 !== undefined) this._thresholds.context_hint_level2 = config.level2;
+    const hysteresis = computeHysteresisThresholds(this._thresholds);
+    this._hintResetNone = hysteresis.hintResetNone / 100;
+    this._hintResetLevel1 = hysteresis.hintResetLevel1 / 100;
   }
 
   getGlobalPreferences(): GlobalTuiPreferences {
@@ -3734,8 +3778,10 @@ export class Session {
 
   /**
    * Return the list of items available for the /summarize picker.
-   * Includes real user turns and visible summary entries in the active window.
-   * Excludes the current turn.
+   * The picker is a pure turn list: summaries belong to their assigned turn
+   * (the nearest preceding surviving user message), so selecting a turn also
+   * selects the summaries assigned to it, and turns whose user messages were
+   * folded into a summary no longer appear. Excludes the current turn.
    */
   getSummarizeTargets(): Array<{
     kind: "turn" | "summary";
@@ -3757,15 +3803,21 @@ export class Session {
       sortKey: number;
     }> = [];
 
-    const visibleNonManualGroupsByTurn = new Map<number, number>();
+    const visibleGroupsByTurn = new Map<number, number>();
+    const markTurn = (turn: number, order: number): void => {
+      const current = visibleGroupsByTurn.get(turn);
+      if (current === undefined || order < current) {
+        visibleGroupsByTurn.set(turn, order);
+      }
+    };
     for (const group of view.groups) {
-      if (group.isSummary && group.summaryOrigin === "manual") continue;
       const order = groupOrder.get(group.contextId) ?? Number.MAX_SAFE_INTEGER;
+      if (group.isSummary) {
+        markTurn(group.assignedTurn, order);
+        continue;
+      }
       for (let turn = group.turnStart; turn <= group.turnEnd; turn++) {
-        const current = visibleNonManualGroupsByTurn.get(turn);
-        if (current === undefined || order < current) {
-          visibleNonManualGroupsByTurn.set(turn, order);
-        }
+        markTurn(turn, order);
       }
     }
 
@@ -3779,7 +3831,7 @@ export class Session {
       if (!t.inActiveWindow) continue;
       if (t.turnKind !== "user" && t.turnKind !== "summarize") continue;
       if (t.turnIndex > this._turnCount) continue;
-      const sortKey = visibleNonManualGroupsByTurn.get(t.turnIndex);
+      const sortKey = visibleGroupsByTurn.get(t.turnIndex);
       if (sortKey === undefined) continue;
       items.push({
         kind: "turn",
@@ -3790,21 +3842,6 @@ export class Session {
       });
     }
 
-    for (const group of view.groups) {
-      if (!group.isSummary || group.summaryOrigin !== "manual") continue;
-      const entry = group.entries.find((item) => item.entry.type === "summary")?.entry;
-      if (!entry) continue;
-      const display = (entry.display || "").slice(0, 80).replace(/\n/g, " ");
-      items.push({
-        kind: "summary",
-        turnIndex: group.turnStart,
-        preview: display || "(summary)",
-        timestamp: entry.timestamp,
-        contextId: group.contextId,
-        sortKey: groupOrder.get(group.contextId) ?? Number.MAX_SAFE_INTEGER,
-      });
-    }
-
     items.sort((a, b) => a.sortKey - b.sortKey);
     return items.map(({ sortKey: _, ...rest }) => rest);
   }
@@ -3812,12 +3849,17 @@ export class Session {
   /**
    * Map a turn range to the set of visible (non-covered) context IDs.
    * Only includes context IDs in the active window that are not already
-   * covered by a later summary.
+   * covered by a later summary. Summaries count as their assigned turn,
+   * so selecting a turn includes the summaries that belong to it.
    */
   getContextIdsForTurnRange(startTurn: number, endTurn: number): string[] {
     const view = buildActiveContextView(this._log, { includeCompactContext: false });
     return view.groups
-      .filter((group) => group.turnEnd >= startTurn && group.turnStart <= endTurn)
+      .filter((group) => {
+        const turnStart = group.isSummary ? group.assignedTurn : group.turnStart;
+        const turnEnd = group.isSummary ? group.assignedTurn : group.turnEnd;
+        return turnEnd >= startTurn && turnStart <= endTurn;
+      })
       .map((group) => group.contextId);
   }
 
@@ -3869,13 +3911,13 @@ export class Session {
         ``,
         `Instructions for this turn:`,
         `1. Call \`show_context\` to inspect the content and size of the range.`,
-        `2. You may call \`read_file\`, \`grep\`, \`glob\`, or \`list_dir\` to verify details before writing the distilled content.`,
+        `2. You may call \`read_file\`, \`grep\`, \`glob\`, or \`list_dir\` to verify details before writing the summary content.`,
         `3. Call \`summarize_context\` exactly once, with from="${rangeFrom}" and to="${rangeTo}". Do not split, shrink, or expand this range.`,
-        `4. If the range contains user messages, preserve the user's words word-for-word — do not paraphrase or omit any part. Two exceptions:`,
-        `   - When a user message is exceptionally long, you may reorganize and tighten it, but every substantive element must remain intact: requirements, constraints, preferences, clarifications, and concrete details (paths, names, numbers, decisions). Shape may change; substance cannot be lost.`,
-        `   - File contents attached to user messages (e.g., inlined via @file references, pasted code blocks, or other resolved file refs) are not the user's words — they are data. Summarize them under the normal "preserve concrete facts" rules. The user's surrounding prose, including the @-reference itself, still preserves verbatim.`,
+        `4. If the range contains user messages — or summaries carrying <user-message> blocks — reproduce the user's original words verbatim inside a <user-message> block in your summary content, as a numbered list in chronological order. Never paraphrase, tighten, or omit any part of them. Two clarifications:`,
+        `   - File contents attached to user messages (e.g., inlined via @file references, pasted code blocks, or other resolved file refs) are not the user's words — they are data. Summarize them under the normal "preserve concrete facts" rules. The user's surrounding prose, including the @-reference itself, still goes verbatim into the <user-message> block.`,
+        `   - Only an explicit user instruction (e.g., in the focus prompt below) may relax verbatim preservation.`,
         `5. For non-user-message content, match the information density of the original — preserve file paths with line numbers, key decisions and why, unresolved issues, code references you'd look back at, and any constraints the user stated.`,
-        `6. After summarizing, reply with a one-line description of what was summarized (e.g. "Summarized turns 3-5: auth exploration and test results"). Do not repeat the distilled content.`,
+        `6. After summarizing, reply with a one-line description of what was summarized (e.g. "Summarized turns 3-5: auth exploration and test results"). Do not repeat the summary content.`,
         ``,
         `Do NOT continue the main task.`,
         `</system-message>${focusTail}`,
@@ -6508,8 +6550,9 @@ export class Session {
   }
 
   /**
-   * Check and inject hint compression prompt if thresholds are met.
-   * Two-tier: level 1 and level 2, configurable via settings.json.
+   * Check and inject summarize-hint prompts if thresholds are met.
+   * Two-tier: level 1 and level 2, configurable via settings.json
+   * (`summarize_hint`) and the /summarize_hint command.
    */
   private _checkAndInjectHint(_result: ToolLoopResult): void {
     if (this._compactInProgress) return;
@@ -6538,6 +6581,8 @@ export class Session {
       return;
     }
 
+    if (!this._summarizeHintEnabled) return;
+
     const level2Ratio = this._thresholds.context_hint_level2 / 100;
     const level1Ratio = this._thresholds.context_hint_level1 / 100;
 
@@ -6545,7 +6590,8 @@ export class Session {
       this._deliverMessage({ type: "system_notice", sender: "system", content: HINT_LEVEL2_PROMPT(pct), timestamp: Date.now() });
       this._hintState = "level2_sent";
     } else if (ratio >= level1Ratio && this._hintState === "none") {
-      this._deliverMessage({ type: "system_notice", sender: "system", content: HINT_LEVEL1_PROMPT(pct), timestamp: Date.now() });
+      const level2Pct = `${Math.round(this._thresholds.context_hint_level2)}%`;
+      this._deliverMessage({ type: "system_notice", sender: "system", content: HINT_LEVEL1_PROMPT(pct, level2Pct), timestamp: Date.now() });
       this._hintState = "level1_sent";
     }
   }

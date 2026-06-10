@@ -23,7 +23,7 @@ describe("buildActiveContextView", () => {
         "s1",
         ["c1"],
         1,
-        { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1, coversUserMessage: true },
+        { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1 },
       ),
     ];
 
@@ -42,7 +42,7 @@ describe("buildActiveContextView", () => {
         "s1",
         ["c1"],
         1,
-        { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1, coversUserMessage: true },
+        { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1 },
       ),
       createAssistantText("asst-001", 5, 0, "compressed", "compressed", "s1"),
     ];
@@ -66,7 +66,7 @@ describe("buildActiveContextView", () => {
         "s1",
         ["c1"],
         1,
-        { summaryOrigin: "agent", coveredTurnStart: 1, coveredTurnEnd: 1, coversUserMessage: false },
+        { summaryOrigin: "agent", coveredTurnStart: 1, coveredTurnEnd: 1 },
       ),
       createSummary(
         "sum-002",
@@ -76,12 +76,63 @@ describe("buildActiveContextView", () => {
         "s2",
         ["s1", "c2"],
         2,
-        { summaryOrigin: "agent", coveredTurnStart: 1, coveredTurnEnd: 1, coversUserMessage: false },
+        { summaryOrigin: "agent", coveredTurnStart: 1, coveredTurnEnd: 1 },
       ),
     ];
 
     const view = buildActiveContextView(entries);
     expect(view.order).toEqual(["s2"]);
+  });
+
+  it("assigns summaries to the nearest preceding surviving user-message turn", () => {
+    const entries: LogEntry[] = [
+      createUserMessage("user-001", 1, "anchor", "anchor", "u1"),
+      createUserMessage("user-002", 2, "swallowed", "swallowed", "c1"),
+      createAssistantText("asst-001", 2, 0, "work", "work", "c2"),
+      createSummary(
+        "sum-001",
+        3,
+        "Summary",
+        "Summary",
+        "s1",
+        ["c1", "c2"],
+        1,
+        { summaryOrigin: "manual", coveredTurnStart: 2, coveredTurnEnd: 2 },
+      ),
+    ];
+
+    const view = buildActiveContextView(entries);
+    const anchor = view.groupByContextId.get("u1")!;
+    const summary = view.groupByContextId.get("s1")!;
+    expect(anchor.assignedTurn).toBe(1);
+    expect(summary.assignedTurn).toBe(1);
+    // Covered turn span is preserved as metadata.
+    expect(summary.turnStart).toBe(2);
+    expect(summary.turnEnd).toBe(2);
+  });
+
+  it("does not treat system notices as anchors for summary assignment", () => {
+    const entries: LogEntry[] = [
+      createUserMessage("user-001", 1, "anchor", "anchor", "u1"),
+      createUserMessage("notice-001", 2, "[System]", "<system-message>note</system-message>", "n1", { inputKind: "system" }),
+      createUserMessage("user-002", 3, "swallowed", "swallowed", "c1"),
+      createSummary(
+        "sum-001",
+        4,
+        "Summary",
+        "Summary",
+        "s1",
+        ["c1"],
+        1,
+        { summaryOrigin: "manual", coveredTurnStart: 3, coveredTurnEnd: 3 },
+      ),
+    ];
+
+    const view = buildActiveContextView(entries);
+    const notice = view.groupByContextId.get("n1")!;
+    const summary = view.groupByContextId.get("s1")!;
+    expect(notice.hasUserMessage).toBe(false);
+    expect(summary.assignedTurn).toBe(1);
   });
 
   it("orders queued input after current turn's assistant group", () => {

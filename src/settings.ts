@@ -1,8 +1,10 @@
 /**
  * Context management thresholds and hysteresis computation.
  *
- * Thresholds are fixed defaults — no longer loaded from settings.json.
- * The user controls effective context size via context_budget_percent.
+ * Compact thresholds are fixed defaults. The summarize-hint levels are
+ * configurable via settings.json (`summarize_hint`) and the /summarize_hint
+ * command. The user controls effective context size via
+ * context_budget_percent.
  */
 
 // ------------------------------------------------------------------
@@ -25,11 +27,25 @@ export interface ContextThresholds {
 // ------------------------------------------------------------------
 
 export const DEFAULT_THRESHOLDS: ContextThresholds = {
-  context_hint_level1: 60,
-  context_hint_level2: 80,
+  context_hint_level1: 50,
+  context_hint_level2: 75,
   compact_before_turn: 85,
   compact_mid_turn: 90,
 };
+
+/**
+ * Validate summarize-hint trigger levels. Returns an error message, or null
+ * when valid. Levels must be integers with 0 < level1 < level2 < 85.
+ */
+export function validateSummarizeHintLevels(level1: number, level2: number): string | null {
+  if (!Number.isInteger(level1) || !Number.isInteger(level2)) {
+    return "Levels must be integers.";
+  }
+  if (level1 <= 0 || level1 >= level2 || level2 >= 85) {
+    return "Levels must satisfy 0 < level1 < level2 < 85.";
+  }
+  return null;
+}
 
 // ------------------------------------------------------------------
 // Derived hysteresis thresholds

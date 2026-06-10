@@ -565,7 +565,6 @@ export function createSummary(
     summaryOrigin?: "agent" | "manual";
     coveredTurnStart?: number;
     coveredTurnEnd?: number;
-    coversUserMessage?: boolean;
   },
 ): LogEntry {
   const meta: Record<string, unknown> = {
@@ -576,7 +575,6 @@ export function createSummary(
   };
   if (opts?.coveredTurnStart !== undefined) meta.coveredTurnStart = opts.coveredTurnStart;
   if (opts?.coveredTurnEnd !== undefined) meta.coveredTurnEnd = opts.coveredTurnEnd;
-  if (opts?.coversUserMessage !== undefined) meta.coversUserMessage = opts.coversUserMessage;
   return baseEntry(id, "summary", turnIndex, {
     tuiVisible: true,
     displayKind: "user",

@@ -28,8 +28,9 @@ describe("template type validation", () => {
       "utf-8",
     );
 
-    expect(toolsPrompt).toContain("Do **not** summarize context groups that contain user messages.");
-    expect(toolsPrompt).toContain("Do not summarize ranges that contain user messages on your own initiative.");
+    expect(toolsPrompt).toContain("Never summarize context groups that contain the user's own messages.");
+    expect(toolsPrompt).toContain("never summarize ranges that contain user messages on your own initiative");
+    expect(toolsPrompt).toContain("<user-message>");
     expect(toolsPrompt).not.toContain("<summarize-request>");
     expect(toolsPrompt).not.toContain("user-requested mode");
     expect(toolsPrompt).toContain("`summarize_context`");

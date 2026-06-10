@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import type { CommandPickerResult } from "./ui/command-picker.js";
 import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, ModelTierEntry } from "./persistence.js";
 import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch, loadGlobalSettings } from "./persistence.js";
+import { validateSummarizeHintLevels } from "./settings.js";
 import { applySessionRestore, findSessionById } from "./session-resume.js";
 import { setDotenvKey } from "./dotenv.js";
 import { fetchModelsFromServer } from "./model-discovery.js";
@@ -391,6 +392,51 @@ async function cmdCompact(ctx: CommandContext, args: string): Promise<void> {
     return;
   }
   ctx.onManualCompactRequested(args.trim());
+}
+
+const SUMMARIZE_HINT_USAGE =
+  "Usage: /summarize_hint on | off | <level1> <level2>  (integers, 0 < level1 < level2 < 85)";
+
+async function cmdSummarizeHint(ctx: CommandContext, args: string): Promise<void> {
+  const session = ctx.session;
+  const current = session.getSummarizeHintConfig();
+  const trimmed = args.trim();
+
+  if (!trimmed) {
+    ctx.showMessage(
+      `Summarize hints: ${current.enabled ? "on" : "off"} · level1 ${current.level1}% · level2 ${current.level2}%\n${SUMMARIZE_HINT_USAGE}`,
+    );
+    return;
+  }
+
+  if (trimmed === "on" || trimmed === "off") {
+    const enabled = trimmed === "on";
+    session.setSummarizeHintConfig({ enabled });
+    persistSettingsPatch({
+      summarize_hint: { enabled, level1: current.level1, level2: current.level2 },
+    }, ctx.fermiHomeDir);
+    ctx.showMessage(`Summarize hints turned ${trimmed}.`);
+    return;
+  }
+
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 2) {
+    const level1 = Number(parts[0]);
+    const level2 = Number(parts[1]);
+    const error = validateSummarizeHintLevels(level1, level2);
+    if (error) {
+      ctx.showMessage(`Invalid levels: ${error}\n${SUMMARIZE_HINT_USAGE}`);
+      return;
+    }
+    session.setSummarizeHintConfig({ level1, level2 });
+    persistSettingsPatch({
+      summarize_hint: { enabled: current.enabled, level1, level2 },
+    }, ctx.fermiHomeDir);
+    ctx.showMessage(`Summarize hint levels set to ${level1}% / ${level2}%.`);
+    return;
+  }
+
+  ctx.showMessage(SUMMARIZE_HINT_USAGE);
 }
 
 async function cmdResume(ctx: CommandContext, args: string): Promise<void> {
@@ -1969,6 +2015,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/new", description: "Start a new session", handler: cmdNew });
   registry.register({ name: "/session", description: "Resume a previous session", handler: cmdResume, options: resumeOptions, pickerTitle: "Sessions", aliases: ["/resume"] });
   registry.register({ name: "/summarize", description: "Manually summarize older context", handler: cmdSummarize });
+  registry.register({ name: "/summarize_hint", description: "Configure two-tier summarize hints (on/off, trigger levels)", handler: cmdSummarizeHint });
   registry.register({ name: "/model", description: "Switch model", handler: cmdModel, options: modelOptions });
   registry.register({ name: "/tier", description: "Configure sub-agent model tiers", handler: cmdTier, options: tierOptions });
   registry.register({ name: "/quit", description: "Exit the application", handler: cmdQuit, aliases: ["/exit"] });

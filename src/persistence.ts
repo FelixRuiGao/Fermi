@@ -558,6 +558,20 @@ export interface FermiSettings {
    * - false: disable update checks entirely
    */
   auto_update?: boolean | "notify";
+
+  // -- Summarize hints --
+  /**
+   * Two-tier context summarize hints (main session). Managed by the
+   * /summarize_hint command. Levels are integers, 0 < level1 < level2 < 85.
+   */
+  summarize_hint?: {
+    /** Master switch for the two-tier hints. Default: true. */
+    enabled?: boolean;
+    /** Level-1 trigger (percentage of effective context budget). Default: 50. */
+    level1?: number;
+    /** Level-2 trigger (percentage). Default: 75. */
+    level2?: number;
+  };
 }
 
 /**
@@ -1327,6 +1341,9 @@ export function mergeSettings(global: FermiSettings, local: FermiSettings): Ferm
   if (local.model_tiers) {
     merged.model_tiers = { ...merged.model_tiers, ...local.model_tiers };
   }
+  if (local.summarize_hint) {
+    merged.summarize_hint = { ...merged.summarize_hint, ...local.summarize_hint };
+  }
   if (local.mcp_servers) {
     merged.mcp_servers = { ...merged.mcp_servers, ...local.mcp_servers };
   }
@@ -1426,6 +1443,7 @@ export function saveSettings(settings: FermiSettings, filePath: string): void {
   if (settings.sub_agent_inherit_mcp !== undefined) clean.sub_agent_inherit_mcp = settings.sub_agent_inherit_mcp;
   if (settings.sub_agent_inherit_hooks !== undefined) clean.sub_agent_inherit_hooks = settings.sub_agent_inherit_hooks;
   if (settings.auto_update !== undefined) clean.auto_update = settings.auto_update;
+  if (settings.summarize_hint !== undefined) clean.summarize_hint = settings.summarize_hint;
   writeFileSync(tmp, JSON.stringify(clean, null, 2));
   renameSync(tmp, filePath);
 }

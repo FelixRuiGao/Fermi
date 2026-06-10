@@ -373,10 +373,14 @@ export function generateContextMap(
 
   let lastTurnEnd = -1;
   for (const group of groups) {
-    if (group.turnStart !== lastTurnEnd || lastTurnEnd === -1) {
+    // Summaries display under their assigned turn (the nearest preceding
+    // surviving user message), not under the turns they cover.
+    const turnStart = group.isSummary ? group.assignedTurn : group.turnStart;
+    const turnEnd = group.isSummary ? group.assignedTurn : group.turnEnd;
+    if (turnStart !== lastTurnEnd || lastTurnEnd === -1) {
       lines.push("---");
     }
-    lastTurnEnd = group.turnEnd;
+    lastTurnEnd = turnEnd;
 
     const tokens = tokensByGroup.get(group.contextId) ?? 0;
     const tokStr = formatTokens(tokens).padStart(5);

@@ -10,7 +10,12 @@ export interface ActiveContextGroup {
   turnStart: number;
   turnEnd: number;
   hasUserMessage: boolean;
-  coversUserMessage: boolean;
+  /**
+   * The turn this group belongs to in the assembled view. Summaries belong
+   * to the turn of the nearest preceding surviving user message; all other
+   * groups keep their own turn. Computed after ordering.
+   */
+  assignedTurn: number;
   isSummary: boolean;
   summaryOrigin?: SummaryOrigin;
   summaryDepth?: number;
@@ -70,7 +75,14 @@ function getSummaryOrigin(entry: LogEntry): SummaryOrigin | undefined {
 }
 
 function isUserContextEntry(entry: LogEntry): boolean {
-  if (entry.type === "user_message") return true;
+  // Only the user's own messages are protected. System notices, peer
+  // messages, and injected command prompts share the user_message entry
+  // type but are not the user's words (entries without inputKind predate
+  // the tag and are treated as user messages for safety).
+  if (entry.type === "user_message") {
+    const inputKind = (entry.meta as Record<string, unknown>)["inputKind"];
+    return inputKind === undefined || inputKind === "user";
+  }
   if (entry.type !== "input_received") return false;
   const inputKind = (entry.meta as Record<string, unknown>)["inputKind"];
   return inputKind === "user";
@@ -84,10 +96,6 @@ function buildGroup(ctxId: string, entry: LogEntry, index: number): ActiveContex
   const coveredTurnEnd = typeof meta["coveredTurnEnd"] === "number"
     ? meta["coveredTurnEnd"]
     : entry.turnIndex;
-  const coversUserMessage = entry.type === "summary"
-    ? meta["coversUserMessage"] === true
-    : isUserContextEntry(entry);
-
   return {
     contextId: ctxId,
     entries: [{ entry, index }],
@@ -96,7 +104,7 @@ function buildGroup(ctxId: string, entry: LogEntry, index: number): ActiveContex
     turnStart: coveredTurnStart,
     turnEnd: coveredTurnEnd,
     hasUserMessage: isUserContextEntry(entry),
-    coversUserMessage,
+    assignedTurn: coveredTurnStart,
     isSummary: entry.type === "summary",
     summaryOrigin: entry.type === "summary" ? getSummaryOrigin(entry) : undefined,
     summaryDepth: entry.type === "summary"
@@ -117,7 +125,6 @@ function appendToGroup(group: ActiveContextGroup, entry: LogEntry, index: number
     group.turnStart = Math.min(group.turnStart, entry.turnIndex);
     group.turnEnd = Math.max(group.turnEnd, entry.turnIndex);
     group.hasUserMessage = group.hasUserMessage || isUserContextEntry(entry);
-    group.coversUserMessage = group.coversUserMessage || isUserContextEntry(entry);
   }
   if (entry.type === "summary") {
     group.isSummary = true;
@@ -129,9 +136,6 @@ function appendToGroup(group: ActiveContextGroup, entry: LogEntry, index: number
     }
     if (typeof meta["coveredTurnEnd"] === "number") {
       group.turnEnd = meta["coveredTurnEnd"] as number;
-    }
-    if (meta["coversUserMessage"] === true) {
-      group.coversUserMessage = true;
     }
   }
 }
@@ -217,6 +221,22 @@ export function buildActiveContextView(
     const bTurn = b.kind === "group" ? b.group.turnStart : b.entry.turnIndex;
     return aTurn - bTurn;
   });
+
+  // Assign each group to its view turn. Summaries belong to the turn of the
+  // nearest preceding surviving user message (so summaries whose covered
+  // anchors are gone fold into the previous live turn, and adjacent such
+  // summaries land in the same turn); all other groups keep their own turn.
+  let lastAnchorTurn = -1;
+  for (const item of items) {
+    if (item.kind !== "group") continue;
+    const group = item.group;
+    if (group.isSummary) {
+      group.assignedTurn = lastAnchorTurn >= 0 ? lastAnchorTurn : group.turnStart;
+    } else {
+      group.assignedTurn = group.turnStart;
+      if (group.hasUserMessage) lastAnchorTurn = group.turnStart;
+    }
+  }
 
   const groups = items
     .filter((item): item is ActiveContextGroupItem => item.kind === "group")

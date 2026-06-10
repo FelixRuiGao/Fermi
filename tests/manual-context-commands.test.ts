@@ -61,7 +61,7 @@ function makeSession(projectRoot: string): Session {
 }
 
 describe("manual summarize / compact commands", () => {
-  it("picker shows manual summaries, hides agent summaries, and maps turns to active context", () => {
+  it("picker lists turns only; summaries fold into their assigned turn", () => {
     const projectRoot = makeTempDir("fermi-summarize-targets-");
     try {
       const session = makeSession(projectRoot) as any;
@@ -87,7 +87,7 @@ describe("manual summarize / compact commands", () => {
           "sum-manual-ctx",
           ["c1"],
           1,
-          { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1, coversUserMessage: true },
+          { summaryOrigin: "manual", coveredTurnStart: 1, coveredTurnEnd: 1 },
         ),
         createSummary(
           "sum-agent",
@@ -97,14 +97,18 @@ describe("manual summarize / compact commands", () => {
           "sum-agent-ctx",
           ["c2-tool"],
           1,
-          { summaryOrigin: "agent", coveredTurnStart: 2, coveredTurnEnd: 2, coversUserMessage: false },
+          { summaryOrigin: "agent", coveredTurnStart: 2, coveredTurnEnd: 2 },
         ),
       );
 
+      // The manual summary swallowed turn 1's user message; with no earlier
+      // surviving anchor it falls back to its covered turn, so turn 1 still
+      // stands in for it. The agent summary belongs to turn 2 (its anchor).
       const targets = session.getSummarizeTargets();
       expect(targets).toHaveLength(2);
-      expect(targets[0]).toMatchObject({ kind: "summary", contextId: "sum-manual-ctx" });
+      expect(targets[0]).toMatchObject({ kind: "turn", turnIndex: 1 });
       expect(targets[1]).toMatchObject({ kind: "turn", turnIndex: 2 });
+      expect(session.getContextIdsForTurnRange(1, 1)).toEqual(["sum-manual-ctx"]);
       expect(session.getContextIdsForTurnRange(2, 2)).toEqual(["c2-user", "sum-agent-ctx"]);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });

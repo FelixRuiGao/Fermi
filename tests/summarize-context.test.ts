@@ -63,7 +63,7 @@ describe("execSummarizeContextOnLog", () => {
     const meta = result.newEntries[0].meta as Record<string, unknown>;
     expect(meta["summaryDepth"]).toBe(1);
     expect(meta["summaryOrigin"]).toBe("manual");
-    expect(meta["coversUserMessage"]).toBe(true);
+    expect(result.newEntries[0].display).toStartWith("[Summarized context");
   });
 
   it("rejects manual summarize calls that shrink the selected range", () => {
@@ -173,7 +173,7 @@ describe("execSummarizeContextOnLog", () => {
     );
 
     expect(result.output).toContain("0 succeeded");
-    expect(result.output).toContain("within a single turn");
+    expect(result.output).toContain("one operation per turn");
   });
 
   it("expands from/to range to include all context IDs between them", () => {
@@ -296,6 +296,82 @@ describe("execSummarizeContextOnLog", () => {
     expect(second.output).toContain("1 succeeded");
     expect(second.newEntries.length).toBe(1);
     expect((second.newEntries[0].meta as Record<string, unknown>)["summaryDepth"]).toBe(2);
+  });
+
+  it("allows autonomous summaries over system notices (not the user's own words)", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("notice-001", 1, "[System]", "<system-message>hint</system-message>", "n1", { inputKind: "system" }),
+    ];
+
+    const result = execSummarizeContextOnLog(
+      { operations: [{ from: "n1", to: "n1", content: "old hint summarized" }] },
+      entries,
+      allocIds("ctx-"),
+      allocIds("sum-"),
+      1,
+    );
+
+    expect(result.output).toContain("1 succeeded");
+  });
+
+  it("allows agents to re-summarize manual summaries (summaries are ordinary context)", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createAssistantText("asst-001", 1, 0, "hello", "hello", "c1"),
+      createSummary("sum-manual", 1, "manual sum", "manual sum", "m1", ["c1"], 1, {
+        summaryOrigin: "manual",
+        coveredTurnStart: 1,
+        coveredTurnEnd: 1,
+      }),
+    ];
+
+    const result = execSummarizeContextOnLog(
+      { operations: [{ from: "m1", to: "m1", content: "re-summarized" }] },
+      entries,
+      allocIds("ctx-"),
+      allocIds("sum-"),
+      1,
+    );
+
+    expect(result.output).toContain("1 succeeded");
+    expect((result.newEntries[0].meta as Record<string, unknown>)["summaryDepth"]).toBe(2);
+  });
+
+  it("merges adjacent summaries whose covered anchors are gone (same assigned turn)", () => {
+    const entries: LogEntry[] = [
+      createSystemPrompt("sys-001", "prompt"),
+      createUserMessage("user-001", 1, "anchor", "anchor", "u1"),
+      createUserMessage("user-002", 2, "a", "a", "a1"),
+      createAssistantText("asst-001", 2, 0, "work-a", "work-a", "a2"),
+      createUserMessage("user-003", 3, "b", "b", "b1"),
+      createAssistantText("asst-002", 3, 0, "work-b", "work-b", "b2"),
+      // Manual summaries swallowed turns 2 and 3 (including their user
+      // messages), so both fold into surviving turn 1 and become mergeable.
+      createSummary("sum-a", 4, "sumA", "sumA", "sA", ["a1", "a2"], 1, {
+        summaryOrigin: "manual",
+        coveredTurnStart: 2,
+        coveredTurnEnd: 2,
+      }),
+      createSummary("sum-b", 4, "sumB", "sumB", "sB", ["b1", "b2"], 1, {
+        summaryOrigin: "manual",
+        coveredTurnStart: 3,
+        coveredTurnEnd: 3,
+      }),
+    ];
+
+    const result = execSummarizeContextOnLog(
+      { operations: [{ from: "sA", to: "sB", content: "merged phases" }] },
+      entries,
+      allocIds("ctx-"),
+      allocIds("sum-"),
+      4,
+    );
+
+    expect(result.output).toContain("1 succeeded");
+    const meta = result.newEntries[0].meta as Record<string, unknown>;
+    expect(meta["coveredContextIds"]).toEqual(["sA", "sB"]);
+    expect(meta["summaryDepth"]).toBe(2);
   });
 
   it("returns a direct error when no operations are provided", () => {

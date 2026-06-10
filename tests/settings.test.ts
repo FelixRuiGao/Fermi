@@ -1,11 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { DEFAULT_THRESHOLDS, computeHysteresisThresholds } from "../src/settings.js";
+import { DEFAULT_THRESHOLDS, computeHysteresisThresholds, validateSummarizeHintLevels } from "../src/settings.js";
 
 describe("settings module", () => {
-  it("exposes the fixed default context thresholds", () => {
+  it("exposes the default context thresholds", () => {
     expect(DEFAULT_THRESHOLDS).toEqual({
-      context_hint_level1: 60,
-      context_hint_level2: 80,
+      context_hint_level1: 50,
+      context_hint_level2: 75,
       compact_before_turn: 85,
       compact_mid_turn: 90,
     });
@@ -24,11 +24,30 @@ describe("settings module", () => {
   });
 });
 
+describe("validateSummarizeHintLevels", () => {
+  it("accepts valid integer levels", () => {
+    expect(validateSummarizeHintLevels(50, 75)).toBeNull();
+    expect(validateSummarizeHintLevels(1, 84)).toBeNull();
+  });
+
+  it("rejects non-integer levels", () => {
+    expect(validateSummarizeHintLevels(50.5, 75)).toContain("integers");
+    expect(validateSummarizeHintLevels(50, Number.NaN)).toContain("integers");
+  });
+
+  it("rejects out-of-range or unordered levels", () => {
+    expect(validateSummarizeHintLevels(0, 75)).toContain("0 < level1 < level2 < 85");
+    expect(validateSummarizeHintLevels(50, 85)).toContain("0 < level1 < level2 < 85");
+    expect(validateSummarizeHintLevels(75, 50)).toContain("0 < level1 < level2 < 85");
+    expect(validateSummarizeHintLevels(50, 50)).toContain("0 < level1 < level2 < 85");
+  });
+});
+
 describe("computeHysteresisThresholds", () => {
   it("derives correct values from default thresholds", () => {
     const h = computeHysteresisThresholds(DEFAULT_THRESHOLDS);
-    expect(h.hintResetNone).toBe(40);
-    expect(h.hintResetLevel1).toBe(70);
+    expect(h.hintResetNone).toBe(30);
+    expect(h.hintResetLevel1).toBe(62.5);
   });
 
   it("derives correct values from custom thresholds", () => {

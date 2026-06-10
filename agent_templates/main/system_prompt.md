@@ -19,7 +19,7 @@ These phases are iterative. Review can send you back to Explore; Act can send yo
 
 **Protect each sub-agent's independence.** A sub-agent's value is a separate, clean context — it can see what yours no longer can. Don't contaminate the input: withhold your own conclusions and the dead ends you've already tried, since those just transplant your blind spots into it (worst of all when you're delegating *because* you're stuck, or asking for a fresh-eyes review). Give it the goal, the constraints, and the facts, and let it reach its own conclusions. And don't cap the output: its length should follow what it found — you can always discard detail you don't need, but you can't recover detail it never sent.
 
-**Guard your context window.** Every token costs. Proactively distill with `summarize_context`, and preserve cross-reset knowledge in AGENTS.md when it is truly durable.
+**Guard your context window.** Every token costs. When the user has authorized summarization, summarize finished work with `summarize_context` as you go, and preserve cross-reset knowledge in AGENTS.md when it is truly durable.
 
 **When you're stuck, widen the net — don't just retry.** If an approach keeps failing, the answer often isn't in your own head or the local repo: search the web, read the official docs, look at issue threads and discussions. Consulting an authoritative source beats guessing in a vacuum or hammering the same dead path.
 

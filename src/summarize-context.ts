@@ -135,26 +135,26 @@ function validateLogOperation(
     return { valid: true, groups };
   }
 
-  if (groups.some((group) => group.hasUserMessage || group.coversUserMessage)) {
+  if (groups.some((group) => group.hasUserMessage)) {
     return {
       valid: false,
       error: "Cannot summarize a range that contains user messages. Adjust the range to exclude user-message groups.",
     };
   }
 
-  if (groups.some((group) => group.isSummary && group.summaryOrigin === "manual")) {
-    return {
-      valid: false,
-      error: "Cannot re-summarize a previously-authorized summary block.",
-    };
-  }
-
-  const turnStart = Math.min(...groups.map((group) => group.turnStart));
-  const turnEnd = Math.max(...groups.map((group) => group.turnEnd));
+  // Summaries count as the turn they are assigned to in the view (the turn
+  // of the nearest preceding surviving user message), so adjacent summaries
+  // whose covered anchors are gone can be merged within that turn.
+  const turnStart = Math.min(
+    ...groups.map((group) => (group.isSummary ? group.assignedTurn : group.turnStart)),
+  );
+  const turnEnd = Math.max(
+    ...groups.map((group) => (group.isSummary ? group.assignedTurn : group.turnEnd)),
+  );
   if (turnStart !== turnEnd) {
     return {
       valid: false,
-      error: "Cannot summarize across multiple turns. Keep each operation within a single turn.",
+      error: "Cannot summarize across multiple turns. Split the range into one operation per turn and submit them in a single call.",
     };
   }
 
@@ -186,18 +186,11 @@ function buildSummaryEntry(
   const coveredTurnEnd = groups.length > 0
     ? Math.max(...groups.map((group) => group.turnEnd))
     : turnIndex;
-  const coversUserMessage = groups.some((group) => group.hasUserMessage || group.coversUserMessage);
 
-  let header: string;
-  if (origin === "manual") {
-    header =
-      "[User-requested compressed context — created at the user's explicit request " +
-      "and may contain verbatim user content.]";
-  } else {
-    header =
-      "[Compressed context — this is an automated summary of earlier tool output and exploration " +
-      "within this turn. You may re-summarize this if you need to free more space.]";
-  }
+  const header =
+    "[Summarized context — summarized from earlier conversation. Text inside <user-message> tags " +
+    "is the user's original words: carry these blocks verbatim into any future re-summarization. " +
+    "This block itself may be re-summarized like any other context.]";
   let display = `${header}\n`;
   if (op.reason) {
     display += `Reason: ${op.reason}\n`;
@@ -217,7 +210,6 @@ function buildSummaryEntry(
       summaryOrigin: origin,
       coveredTurnStart,
       coveredTurnEnd,
-      coversUserMessage,
     },
   );
 
