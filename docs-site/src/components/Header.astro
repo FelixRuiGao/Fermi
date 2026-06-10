@@ -1,19 +1,52 @@
 ---
 const base = import.meta.env.BASE_URL; // "/"
-const homeHref = base;
-const docsHref = base + "getting-started/";
-const blogHref = base + "blog/";
+const pathname = Astro.url.pathname;
+const isZh = pathname === base + "zh/" || pathname.startsWith(base + "zh/");
+const withoutBase = pathname.startsWith(base) ? pathname.slice(base.length) : pathname.replace(/^\//, "");
+const enPath = isZh ? withoutBase.replace(/^zh\/?/, "") : withoutBase;
+const zhPath = isZh ? withoutBase : `zh/${withoutBase}`;
+const homeHref = base + (isZh ? "zh/" : "");
+const docsHref = base + (isZh ? "zh/getting-started/" : "getting-started/");
+const blogHref = base + (isZh ? "zh/blog/" : "blog/");
+const enHref = base + enPath;
+const zhHref = base + zhPath;
 const githubHref = "https://github.com/FelixRuiGao/Fermi";
 ---
 
 <div class="header fm-header">
   <a href={homeHref} class="fm-wordmark" translate="no">Fermi</a>
   <nav class="fm-nav" aria-label="Primary">
-    <a href={docsHref}>Docs</a>
-    <a href={blogHref}>Blog</a>
+    <a href={docsHref}>{isZh ? "文档" : "Docs"}</a>
+    <a href={blogHref}>{isZh ? "博客" : "Blog"}</a>
     <a href={githubHref}>GitHub ↗</a>
+    <span class="fm-lang" aria-label={isZh ? "语言切换" : "Language switcher"}>
+      <a href={enHref} class:list={[!isZh && "active"]} data-lang-link="en" lang="en">EN</a>
+      <span aria-hidden="true">/</span>
+      <a href={zhHref} class:list={[isZh && "active"]} data-lang-link="zh" lang="zh-CN">中文</a>
+    </span>
   </nav>
 </div>
+
+<script is:inline>
+  const LANG_PREF_KEY = "fermi-docs-lang";
+  const path = window.location.pathname;
+  const isChinesePath = path === "/zh/" || path.startsWith("/zh/");
+  const savedLang = localStorage.getItem(LANG_PREF_KEY);
+  const wantsChinese =
+    !savedLang &&
+    !isChinesePath &&
+    navigator.languages?.some((lang) => /^zh\b/i.test(lang));
+
+  if (wantsChinese) {
+    window.location.replace("/zh" + path);
+  }
+
+  document.querySelectorAll("[data-lang-link]").forEach((link) => {
+    link.addEventListener("click", () => {
+      localStorage.setItem(LANG_PREF_KEY, link.getAttribute("data-lang-link"));
+    });
+  });
+</script>
 
 <style>
   .fm-header {
@@ -48,11 +81,27 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
     transition: color 0.2s ease;
   }
   .fm-nav a:hover { color: var(--fm-ink, #f4f6fa); }
+  .fm-lang {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--fm-ink-4, #80838a);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.78rem;
+  }
+  .fm-lang a {
+    font-size: inherit;
+    color: var(--fm-ink-4, #80838a);
+  }
+  .fm-lang a.active {
+    color: var(--fm-accent, #8ab4f8);
+  }
 
   @media (max-width: 50rem) {
     .fm-nav { gap: 1.25rem; }
   }
   @media (max-width: 30rem) {
-    .fm-nav a:not(:last-child) { display: none; }
+    .fm-nav > a:not(:last-of-type) { display: none; }
+    .fm-nav { gap: 0.9rem; }
   }
 </style>

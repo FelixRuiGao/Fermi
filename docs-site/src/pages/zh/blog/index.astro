@@ -1,14 +1,13 @@
 ---
 const base = import.meta.env.BASE_URL;
-const zhHref = base + "zh/blog/";
 ---
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blog — Fermi</title>
+  <title>博客 — Fermi</title>
   <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
   <link rel="preload" href={base + "fonts/instrument-serif-400-italic-latin.woff2"} as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href={base + "fonts/fonts.css"} />
@@ -16,7 +15,7 @@ const zhHref = base + "zh/blog/";
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { height: 100%; }
     body {
-      background: #0a0c11; color: #e8ecf2; font-family: "Source Serif 4", serif;
+      background: #0a0c11; color: #e8ecf2; font-family: "Source Serif 4", "Noto Serif SC", serif;
     }
     .topbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 6;
@@ -47,8 +46,8 @@ const zhHref = base + "zh/blog/";
       text-transform: uppercase; color: #8ab4f8; margin-bottom: 20px;
     }
     h1 {
-      font-family: "Instrument Serif", serif; font-weight: 400; font-size: 64px;
-      letter-spacing: -0.02em; color: #f4f6fa; margin-bottom: 14px;
+      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400; font-size: 64px;
+      letter-spacing: 0; color: #f4f6fa; margin-bottom: 14px;
     }
     p { color: #aeb6c1; font-size: 18px; }
     @media (max-width: 30rem) {
@@ -60,29 +59,25 @@ const zhHref = base + "zh/blog/";
 </head>
 <body>
   <header class="topbar">
-    <a class="wordmark" href={base}>Fermi</a>
+    <a class="wordmark" href={base + "zh/"}>Fermi</a>
     <nav class="navlinks">
-      <a href={base + "getting-started/"}>Docs</a>
-      <a href={base + "blog/"}>Blog</a>
+      <a href={base + "zh/getting-started/"}>文档</a>
+      <a href={base + "zh/blog/"}>博客</a>
       <a href="https://github.com/FelixRuiGao/Fermi">GitHub ↗</a>
-      <span class="langswitch" aria-label="Language switcher">
-        <a class="active" href={base + "blog/"} data-lang-link="en" lang="en">EN</a>
+      <span class="langswitch" aria-label="语言切换">
+        <a href={base + "blog/"} data-lang-link="en" lang="en">EN</a>
         <span aria-hidden="true">/</span>
-        <a href={zhHref} data-lang-link="zh" lang="zh-CN">中文</a>
+        <a class="active" href={base + "zh/blog/"} data-lang-link="zh" lang="zh-CN">中文</a>
       </span>
     </nav>
   </header>
   <main>
-    <div class="eyebrow">// Blog</div>
-    <h1>Coming soon.</h1>
-    <p>Writing is on the way — check back shortly.</p>
+    <div class="eyebrow">// 博客</div>
+    <h1>即将上线。</h1>
+    <p>文章正在准备中，请稍后再回来看看。</p>
   </main>
   <script is:inline>
     const LANG_PREF_KEY = 'fermi-docs-lang';
-    const savedLang = localStorage.getItem(LANG_PREF_KEY);
-    if (!savedLang && navigator.languages?.some((lang) => /^zh\b/i.test(lang))) {
-      window.location.replace('/zh/blog/');
-    }
     document.querySelectorAll('[data-lang-link]').forEach((link) => {
       link.addEventListener('click', () => {
         localStorage.setItem(LANG_PREF_KEY, link.getAttribute('data-lang-link'));

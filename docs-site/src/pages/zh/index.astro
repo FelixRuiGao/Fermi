@@ -1,18 +1,18 @@
 ---
 const base = import.meta.env.BASE_URL;
-const docsHref = base + "getting-started/";
-const blogHref = base + "blog/";
-const zhHref = base + "zh/";
+const docsHref = base + "zh/getting-started/";
+const blogHref = base + "zh/blog/";
+const enHref = base;
 const githubHref = "https://github.com/FelixRuiGao/Fermi";
 ---
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fermi — the coding agent that manages its own contexts</title>
-  <meta name="description" content="A terminal AI coding agent with surgical context management for multi-hour sessions." />
+  <title>Fermi — 会管理自己上下文的编码代理</title>
+  <meta name="description" content="一款终端 AI 编码代理，为长时间任务提供精细的上下文管理。" />
   <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
   <link rel="preload" href={base + "fonts/instrument-serif-400-italic-latin.woff2"} as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href={base + "fonts/fonts.css"} />
@@ -22,13 +22,11 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
     body {
       background: #0a0c11;
       color: #e8ecf2;
-      font-family: "Source Serif 4", serif;
+      font-family: "Source Serif 4", "Noto Serif SC", serif;
       overflow: hidden;
     }
     #stage { position: fixed; inset: 0; }
     canvas { position: absolute; inset: 0; display: block; }
-
-    /* Top bar */
     .topbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 6;
       display: flex; align-items: center; justify-content: space-between;
@@ -50,8 +48,6 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
     }
     .langswitch a { font-size: inherit; color: #80838a; }
     .langswitch a.active { color: #8ab4f8; }
-
-    /* Hero */
     .hero {
       position: relative; z-index: 2; height: 100%;
       display: flex; flex-direction: column; justify-content: center;
@@ -62,16 +58,14 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
       text-transform: uppercase; color: #8ab4f8; margin-bottom: 26px; opacity: 0.9;
     }
     h1 {
-      font-family: "Instrument Serif", serif; font-weight: 400;
-      font-size: 92px; line-height: 0.95; letter-spacing: -0.03em;
+      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400;
+      font-size: 88px; line-height: 0.98; letter-spacing: 0;
       color: #f4f6fa; margin-bottom: 28px;
     }
     h1 .it { font-style: italic; color: #8ab4f8; }
     .tagline {
-      font-size: 19px; line-height: 1.5; max-width: 30em; color: #aeb6c1; margin-bottom: 40px;
+      font-size: 19px; line-height: 1.5; max-width: 31em; color: #aeb6c1; margin-bottom: 40px;
     }
-
-    /* Install command box */
     .install {
       display: inline-flex; align-items: center;
       background: #15171c; border: 1px solid #23262d; border-radius: 11px;
@@ -118,8 +112,8 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
       .topbar { padding: 22px 28px; }
       .navlinks { gap: 18px; }
       .navlinks > a:nth-child(-n + 2) { display: none; }
-      h1 { font-size: 64px; letter-spacing: 0; }
-      .hero { padding: 0 9vw; }
+      h1 { font-size: 66px; line-height: 1.02; }
+      .tagline { font-size: 18px; }
     }
   </style>
 </head>
@@ -128,31 +122,31 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
     <canvas id="c"></canvas>
 
     <header class="topbar">
-      <a class="wordmark" href={base}>Fermi</a>
+      <a class="wordmark" href={base + "zh/"}>Fermi</a>
       <nav class="navlinks">
-        <a href={docsHref}>Docs</a>
-        <a href={blogHref}>Blog</a>
+        <a href={docsHref}>文档</a>
+        <a href={blogHref}>博客</a>
         <a href={githubHref}>GitHub ↗</a>
-        <span class="langswitch" aria-label="Language switcher">
-          <a class="active" href={base} data-lang-link="en" lang="en">EN</a>
+        <span class="langswitch" aria-label="语言切换">
+          <a href={enHref} data-lang-link="en" lang="en">EN</a>
           <span aria-hidden="true">/</span>
-          <a href={zhHref} data-lang-link="zh" lang="zh-CN">中文</a>
+          <a class="active" href={base + "zh/"} data-lang-link="zh" lang="zh-CN">中文</a>
         </span>
       </nav>
     </header>
 
     <div class="hero">
-      <div class="eyebrow">// The coding agent</div>
-      <h1><span class="it">Context</span> that<br />never resets.</h1>
-      <p class="tagline">Fermi manages its own contexts so a single session runs for hours — no blind resets, no lost decisions.</p>
+      <div class="eyebrow">// 编码代理</div>
+      <h1><span class="it">上下文</span><br />不会重置。</h1>
+      <p class="tagline">Fermi 会管理自己的上下文，让单个会话持续数小时推进任务，不盲目重置，也不丢失已做出的决定。</p>
 
       <div class="install" id="install">
         <button class="os-pill" id="osPill" aria-haspopup="true" aria-expanded="false">
-          <span id="osLabel">Install for macOS / Linux</span>
+          <span id="osLabel">安装到 macOS / Linux</span>
           <svg class="caret" viewBox="0 0 16 8" fill="none" aria-hidden="true"><path d="M1 1l7 6 7-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <code class="cmd" id="cmd"></code>
-        <button class="copy" id="copyBtn" title="Copy command" aria-label="Copy command">
+        <button class="copy" id="copyBtn" title="复制命令" aria-label="复制命令">
           <svg id="copyIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
         </button>
         <div class="os-menu" id="osMenu" role="menu">
@@ -165,17 +159,12 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
 
   <script is:inline>
     const LANG_PREF_KEY = 'fermi-docs-lang';
-    const savedLang = localStorage.getItem(LANG_PREF_KEY);
-    if (!savedLang && navigator.languages?.some((lang) => /^zh\b/i.test(lang))) {
-      window.location.replace('/zh/');
-    }
     document.querySelectorAll('[data-lang-link]').forEach((link) => {
       link.addEventListener('click', () => {
         localStorage.setItem(LANG_PREF_KEY, link.getAttribute('data-lang-link'));
       });
     });
 
-    /* Static dot field */
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     let W, H, DPR, dots = [];
@@ -203,12 +192,11 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
     window.addEventListener('resize', resize);
     resize();
 
-    /* Install command, OS-aware */
     const CMD = {
       unix: 'curl -fsSL https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.sh | sh',
       win:  'irm https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.ps1 | iex',
     };
-    const LABEL = { unix: 'Install for macOS / Linux', win: 'Install for Windows' };
+    const LABEL = { unix: '安装到 macOS / Linux', win: '安装到 Windows' };
     function detectOS() {
       const ua = navigator.userAgent, p = navigator.platform || '';
       if (/Win/i.test(p) || /Windows/i.test(ua)) return 'win';
