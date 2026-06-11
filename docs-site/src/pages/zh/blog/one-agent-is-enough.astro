@@ -8,7 +8,7 @@ const enHref = base + "blog/one-agent-is-enough/";
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>单 Agent 就够了 — Fermi 博客</title>
+  <title>单 Agent 就够了 — Fermi Blog</title>
   <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
   <link rel="preload" href={base + "fonts/instrument-serif-400-italic-latin.woff2"} as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href={base + "fonts/fonts.css"} />
@@ -16,7 +16,7 @@ const enHref = base + "blog/one-agent-is-enough/";
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       background: #0a0c11; color: #c8cdd5;
-      font-family: "Source Serif 4", "Noto Serif SC", serif; line-height: 1.85; font-size: 17px;
+      font-family: "Source Serif 4", serif; line-height: 1.75; font-size: 17px;
     }
     .topbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 6;
@@ -49,11 +49,11 @@ const enHref = base + "blog/one-agent-is-enough/";
     .meta a { color: #8ab4f8; text-decoration: none; }
     .meta a:hover { text-decoration: underline; }
     h1 {
-      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400; font-size: 48px;
-      letter-spacing: 0; line-height: 1.2; color: #f4f6fa; margin-bottom: 40px;
+      font-family: "Instrument Serif", serif; font-weight: 400; font-size: 48px;
+      letter-spacing: -0.02em; line-height: 1.1; color: #f4f6fa; margin-bottom: 40px;
     }
     h3 {
-      font-family: "Source Serif 4", "Noto Serif SC", serif; font-weight: 600; font-size: 22px;
+      font-family: "Source Serif 4", serif; font-weight: 600; font-size: 22px;
       color: #e8ecf2; margin: 48px 0 16px;
     }
     p { margin-bottom: 18px; }
@@ -71,23 +71,108 @@ const enHref = base + "blog/one-agent-is-enough/";
       font-family: "JetBrains Mono", monospace; font-size: 0.88em;
       background: #15171c; border: 1px solid #23262d; border-radius: 4px; padding: 2px 6px;
     }
+
+    /* ---- Diagram: shared ---- */
+    .diagram-wrap {
+      margin: 32px 0; display: flex; justify-content: center;
+    }
+
+    /* ---- Diagram 1: two pages comparison ---- */
+    .pages-compare {
+      display: flex; gap: 28px; align-items: flex-start;
+      font-family: "JetBrains Mono", monospace; font-size: 12px; color: #9ca3af;
+    }
+    .page-mock {
+      width: 220px; border: 1px solid #23262d; border-radius: 8px;
+      background: #12141a; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .page-mock .page-title {
+      font-size: 11px; color: #6b7280; text-align: center; margin-bottom: 2px;
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .page-mock .section-label {
+      font-size: 10px; color: #4b5060; margin-bottom: 4px;
+    }
+    /* skeleton loader */
+    .skeleton-row { display: flex; gap: 8px; }
+    .skeleton-bar {
+      height: 14px; border-radius: 3px; background: #1e2028;
+      animation: skeleton-pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes skeleton-pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 0.9; }
+    }
+    /* spinner */
+    .spinner-wrap { display: flex; justify-content: center; align-items: center; height: 36px; }
+    .spinner {
+      width: 20px; height: 20px; border: 2px solid #23262d; border-top-color: #6b7280;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* inputs */
+    .mock-input {
+      height: 28px; border: 1px solid #23262d; background: #0e1016; padding: 0 8px;
+      display: flex; align-items: center; color: #4b5060; font-size: 11px;
+    }
+    .mock-input.small-radius { border-radius: 4px; }
+    .mock-input.large-radius { border-radius: 14px; }
+    /* buttons */
+    .mock-btn {
+      height: 28px; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-family: inherit; border: none; cursor: default;
+    }
+    .mock-btn.style-a {
+      background: #2563eb; color: #e0e7ff; border-radius: 4px; width: 72px;
+    }
+    .mock-btn.style-b {
+      background: transparent; color: #8ab4f8; border: 1px solid #2d3748;
+      border-radius: 14px; width: 56px; align-self: flex-end;
+    }
+
+    /* ---- Diagram 2: communication chaos ---- */
+    .comm-chaos {
+      position: relative; width: 340px; height: 260px;
+    }
+    .agent-node {
+      position: absolute; width: 80px; height: 36px;
+      border: 1px solid #23262d; border-radius: 6px; background: #12141a;
+      display: flex; align-items: center; justify-content: center;
+      font-family: "JetBrains Mono", monospace; font-size: 12px; color: #9ca3af;
+    }
+    .agent-node.a { top: 0; left: 40px; }
+    .agent-node.b { top: 0; right: 40px; }
+    .agent-node.c { bottom: 0; left: 40px; }
+    .agent-node.d { bottom: 0; right: 40px; }
+    .comm-chaos svg {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+    }
+    .comm-chaos svg line {
+      stroke: #2d3748; stroke-width: 1.2;
+    }
+    .comm-chaos svg .arrow-head {
+      fill: #2d3748;
+    }
+
     @media (max-width: 30rem) {
       .topbar { padding: 22px 20px; }
       .navlinks { gap: 18px; }
       .navlinks > a:nth-child(-n + 1) { display: none; }
       h1 { font-size: 36px; }
       article { padding: 120px 18px 60px; }
+      .pages-compare { flex-direction: column; align-items: center; }
+      .comm-chaos { transform: scale(0.85); transform-origin: top center; }
     }
   </style>
 </head>
 <body>
   <header class="topbar">
-    <a class="wordmark" href={base + "zh/"}>Fermi</a>
+    <a class="wordmark" href={base}>Fermi</a>
     <nav class="navlinks">
       <a href={base + "zh/getting-started/"}>文档</a>
       <a href={base + "zh/blog/"}>博客</a>
       <a href="https://github.com/FelixRuiGao/Fermi">GitHub ↗</a>
-      <span class="langswitch" aria-label="语言切换">
+      <span class="langswitch" aria-label="Language switcher">
         <a href={enHref} data-lang-link="en" lang="en">EN</a>
         <span aria-hidden="true">/</span>
         <a class="active" href="#" data-lang-link="zh" lang="zh-CN">中文</a>
@@ -101,40 +186,116 @@ const enHref = base + "blog/one-agent-is-enough/";
     <p>自 GPT-4 时代以来，模型的智力与泛化能力已经经历多次飞跃，提示词和工具设计带来的差距在前沿模型下也正被抹平。但是，模型上下文目前依然有限，且长上下文下模型会出现上下文腐烂（Context Rot），在面对长程任务时，上下文工程（Context Engineering）已经成为了当前 Agent 设计的重中之重。</p>
 
     <blockquote>
-      <p>关于上下文管理的具体含义，已经被很多文章透彻分析过，这里不再详细讲解，推荐 AWS 的<a href="https://aws.amazon.com/cn/blogs/china/agentic-ai-infrastructure-practice-series-nine-context-engineering/"><em>Agentic AI基础设施实践经验系列（九）：Context Engineering 上下文工程</em></a>. 我将直接开始对比目前主流 Coding Agent 的上下文管理策略，并说明，为什么我选择了单 Agent 作为"执行者"。</p>
+      <p>关于上下文管理的具体含义，已经被很多文章透彻分析过，这里不再详细讲解，推荐 AWS 的 <a href="https://aws.amazon.com/cn/blogs/china/agentic-ai-infrastructure-practice-series-nine-context-engineering/"><em>Agentic AI基础设施实践经验系列（九）：Context Engineering 上下文工程</em></a>. 我将直接开始对比目前主流 Coding Agent 的上下文管理策略，并说明，为什么我选择了单 Agent 作为"执行者"。</p>
     </blockquote>
 
     <h3>自动压缩 - 单执行者，保守、合理、简单</h3>
 
-    <p>作为两个用户量断层领先的 Coding Agent, 无论是 Claude Code 还是 Codex, 默认状态下都一致地选择了保守而简单的做法：接近上下文的上限之后，进行一次性的自动压缩，将整个会话总结成概要，并以概要作为新的上下文继续工作。这种方式相对稳定、简单，对任何模型都是心智负担最小的方法。缺点似乎也很明显：从一个已经长时间运行的对话浓缩到一个可能只有不到原对话 5% 长度的概要，一定会丢失信息……吗？</p>
+    <p>作为两个用户量断层领先的 Coding Agent, 无论是 Claude Code 还是 Codex, 默认状态下都一致地选择了保守而简单的做法：接近上下文的上限之后，进行一次性的自动压缩（Auto-Compaction），将整个会话总结成概要，并以概要作为新的上下文继续工作。这种方法的缺点似乎很明显：从一个已经长对话浓缩到一个很短的概要，一定会丢失信息……吗？</p>
 
-    <p>自动压缩的缺点并不像"因为压缩太多，所以摘要无法概括原来对话的信息"那么简单，而是，模型目前缺乏良好的概括的能力，或者说带着长 Context 的 Agent 目前很难推断出，一个没有这些上下文的 Agent，究竟需要哪些信息。最容易在压缩过程中被错误丢掉或扭曲的，一方面是用户和 Agent 商讨过程中两边的思考、决策的过程（比如，在约束不足时，压缩完常常只剩"怎么做"，而丢失了"为什么"），另一方面是编写代码的过程中所做的一些隐性决策。而用户的意图，以及 Agent 思考过程和行动过程中的隐性决策等内容，在执行任务时实际上极其重要，它们内化了隐性约束，这些约束实际上制约了 Agent 按预期完成任务。但是，自动压缩之后，许多隐性知识被丢掉。这似乎是 Agent 的一种<a href="https://baike.baidu.com/item/知识的诅咒/58443535"><em>知识的诅咒</em></a>。</p>
+    <p>自动压缩的缺点并不那么简单，而是，模型目前缺乏良好的总结能力，或者说，有着长 Context 的 Agent 目前难以推断出，一个没有这些上下文的 Agent，究竟需要哪些信息。最容易在压缩过程中被错误丢掉或扭曲的，一方面是用户和 Agent 对话过程中做出决策的过程，另一方面是编写代码的过程中所做的一些隐性决策。而用户的意图，以及 Agent 行动过程中的隐性决策，在执行任务时非常重要，它们内化了隐性约束，这些约束实际上让 Agent 可以按用户预期完成任务，但在实际使用中，自动压缩难以保全这些隐性知识，这似乎是 Agent 的一种<a href="https://baike.baidu.com/item/知识的诅咒/58443535"><em>知识的诅咒</em></a>。</p>
 
-    <p>不过，真实的机制可能比这更复杂，如果你常用这个功能，就会发现有时自动压缩之后的对话质量意料之外地差，模型似乎以某种未知的方式不可逆地变"笨"了，这可能与概要中的思维/推理断层有关。一个类似的场景是：让 Agent 自己撰写复杂 Prompt 的时候，它们通常给出质量明显较低的 Prompt.</p>
+    <blockquote>
+      <p>不过，真实的机制可能更复杂，如果你常用这个功能，就会发现有时自动压缩之后的对话质量意料之外地差，模型似乎以某种未知的方式不可逆地变"笨"了，这可能与概要中的思维/推理断层有关。</p>
+    </blockquote>
 
-    <p>在这种问题的影响下，对于跨多个自动压缩的长程任务，Agent 的实现会无法避免地逐渐走样。Claude Code 明显对这个问题做了特别设计，他们在 prompt 中明确地要求：自动压缩时，要详细列出所有的用户消息。这种设计尽可能地保留用户的决策以及决策的意图不会被遗落，在很大程度上缓解了该问题。</p>
+    <p>这种情况下，对于需自动压缩、甚至跨多个自动压缩的长程任务，Agent 的实现无法避免地逐渐走样，我们只能尽可能用系统提示词强化自动压缩的表现。Claude Code 做了特别设计，他们在 prompt 中要求：自动压缩时，要详细列出所有的用户消息。这种设计尽可能地保留用户的决策以及决策的意图不会被遗落，一定程度上缓解了该问题。</p>
 
     <h3>多 Agent 协作 - 多执行者，模仿人类</h3>
 
-    <p>在过去几个月，尤其是 Claude Code 推出 Agent Team 功能之后，多 Agent 并行协作，成为了最热门的 Agent 设计理念之一，但这种方式并未取得显著成功。</p>
+    <p>在过去几个月，尤其是 Claude Code 推出 Agent Team 功能之后，多 Agent 并行协作，成为了最热门的 Agent 设计理念之一，但这种模仿人类的工作方式的实现，并未取得明显成功。</p>
 
-    <p>即使不谈系统设计的复杂度，包括需要考虑的边界情况等，假设是在一个没有 Bug 的消息传递的系统下，这也难以成为一个好的路线。多 Agent 协作完成同一任务的不同部分，是一种对人类工作方式的模仿，但这种工作方式在 Agent 的世界中严重水土不服：人类不受硬性上下文容量的限制，思考、完成任务的速度也有限，沟通得以在工作间隙自然发生，Agent 协作时则不同，过快的思考、执行的速度反而让沟通变得更困难。例如，不同 Agent 对实现方案的理解未必一致，做到一半，Agent A 认为 B 做的有问题，给它发消息，B 也许同意了 A 的意见，但 C 可能已经在 B 的基础上延伸出一大截了。如果削弱质疑，那么在"一团和气"的情况下，也就是由各个"还行"的部分拼凑出一个糟糕的、也许能够勉强运行的整体，就像弗兰肯斯坦的造物，混乱而失控。这是大多数大型任务的性质决定的——各个组件之间通常有联系，而不是可以完全并行的部分。</p>
+    <p>首先，在多 Agent 协作流程中，一个事无巨细的计划，只是并行工作的起步标准。假设我们要求两个 Agent 按照计划分别开发同一个应用的两个页面，计划中规划了风格、每个页面的功能、字体… 但不可能约定每一个实现细节——否则写计划的 context 成本将比直接实现还高。结果，同样的列表加载，一个页面用骨架占位，另一个却用转圈动画；同样的输入框，一个用小圆角，另一个却用大圆角，且各自造了轮子。每个页面似乎都合理，但拼凑到一起之后，处处不同的交互逻辑和视觉效果摧毁了用户的体验。</p>
 
-    <p>同时，系统设计也极其困难，易于崩溃，有硬性的 Bug 例如死锁，也有很多软性问题，例如沟通过程中很容易大量占用上下文。若 A 提出了一个方案，B 和 C 先后提出了不同的修正意见并都决定发送给全体 Sub-Agent 评判，B 先发出去了，那么在其他人那里，收到 C 的消息时，它们已经完成了对 B 的修正意见的回应，并发送出去了，那么收到 C 的消息之后该怎么办？继续评判并发回 C 吗？在这种混乱的工况下，上下文会被轻松地浪费掉。另外，如果 Agent 仅能收、发消息，那么它面对的显然是一个过度未知的世界：它看不到别人具体在做什么，只能通过其它 Sub-Agent 的具体代码，来揣摩其它 Agent 的心思。如果赋予它能看到别人在做什么（调用什么工具）的功能，它就容易经常查看，被这些反复、大多无用的信息占领了上下文。最坏的结果是——协作时有 Sub-Agent 触发了自动压缩，它将带着损坏的大脑参与共同的任务，降低最终任务完成的效果。因此，即使不谈多 Agent 协作并行所带来的成本的剧增，这也并非好的实践。</p>
+    <!-- ====== Diagram 1: Two pages built by different agents ====== -->
+    <div class="diagram-wrap">
+      <div class="pages-compare">
+        <!-- Page A -->
+        <div class="page-mock">
+          <div class="page-title">Agent A 的页面</div>
+          <div>
+            <div class="section-label">加载中</div>
+            <div class="skeleton-row"><div class="skeleton-bar" style="width:60%"></div><div class="skeleton-bar" style="width:35%"></div></div>
+            <div class="skeleton-row" style="margin-top:6px"><div class="skeleton-bar" style="width:45%"></div><div class="skeleton-bar" style="width:50%"></div></div>
+          </div>
+          <div>
+            <div class="section-label">输入</div>
+            <div class="mock-input small-radius">请输入用户名...</div>
+          </div>
+          <div>
+            <div class="section-label">操作</div>
+            <div class="mock-btn style-a">提交</div>
+          </div>
+        </div>
+        <!-- Page B -->
+        <div class="page-mock">
+          <div class="page-title">Agent B 的页面</div>
+          <div>
+            <div class="section-label">加载中</div>
+            <div class="spinner-wrap"><div class="spinner"></div></div>
+          </div>
+          <div>
+            <div class="section-label">输入</div>
+            <div class="mock-input large-radius">用户名</div>
+          </div>
+          <div>
+            <div class="section-label">操作</div>
+            <div class="mock-btn style-b">OK</div>
+          </div>
+        </div>
+      </div>
+    </div>
 
-    <p>但这也同时给出启发：人类的协作过程中到底哪一部分可以拿来借鉴？人类沟通、分工、各自完成自己的工作，关于"沟通"的部分，我将在<em>好的子 Agent 不写代码</em>这一节中详细分析，前面已经分析过的是——并行完成工作在 Agent 系统里非常困难，那么分工，然后串行完成呢？</p>
+    <p>Agent 之间的沟通系统是最困难的部分。人类没有硬性的上下文容量限制，思考、完成任务的速度也有限，沟通得以在工作间隙自然发生。但是，Agent 收到的每条消息都会永久写入上下文，并且，由于 Agent 的实现速度太快，中途发现问题时再沟通将变得异常困难，所以沟通几乎只能发生在计划阶段。几个 Agent 互相同步各自的决策，每条消息在每个 Agent 的上下文里各存一份，加上各自的回应和评估，上下文的消耗速度远超实际工作的产出。沟通越充分，每个 Agent 留给真正做事的空间就越少。最坏的情况是，某个 Agent 的上下文在协作途中被耗尽、触发了自动压缩，它将带着残缺的记忆继续参与共同的任务，不仅自身的工作质量下降，还可能把错误的理解传播给其他 Agent。不沟通，各做各的拼不到一起；沟通，又会迅速耗尽做事的空间。这是并行协作在 Agent 架构下的根本困境。</p>
+
+    <!-- ====== Diagram 2: Communication chaos (full mesh) ====== -->
+    <div class="diagram-wrap">
+      <div class="comm-chaos">
+        <svg viewBox="0 0 340 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="ah" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0 0 L8 3 L0 6 Z" class="arrow-head"/>
+            </marker>
+          </defs>
+          <!-- A↔B -->
+          <line x1="128" y1="14" x2="212" y2="14" marker-end="url(#ah)"/>
+          <line x1="212" y1="22" x2="128" y2="22" marker-end="url(#ah)"/>
+          <!-- C↔D -->
+          <line x1="128" y1="238" x2="212" y2="238" marker-end="url(#ah)"/>
+          <line x1="212" y1="246" x2="128" y2="246" marker-end="url(#ah)"/>
+          <!-- A↔C -->
+          <line x1="74" y1="42" x2="74" y2="218" marker-end="url(#ah)"/>
+          <line x1="82" y1="218" x2="82" y2="42" marker-end="url(#ah)"/>
+          <!-- B↔D -->
+          <line x1="258" y1="42" x2="258" y2="218" marker-end="url(#ah)"/>
+          <line x1="266" y1="218" x2="266" y2="42" marker-end="url(#ah)"/>
+          <!-- A↔D (diagonal) -->
+          <line x1="124" y1="38" x2="216" y2="222" marker-end="url(#ah)"/>
+          <line x1="222" y1="218" x2="130" y2="34" marker-end="url(#ah)"/>
+          <!-- B↔C (diagonal) -->
+          <line x1="216" y1="38" x2="124" y2="222" marker-end="url(#ah)"/>
+          <line x1="118" y1="218" x2="210" y2="34" marker-end="url(#ah)"/>
+        </svg>
+        <div class="agent-node a">Agent A</div>
+        <div class="agent-node b">Agent B</div>
+        <div class="agent-node c">Agent C</div>
+        <div class="agent-node d">Agent D</div>
+      </div>
+    </div>
+
+    <p>所以，人类的协作过程中，哪一部分可以拿来借鉴？人类沟通、分工、各自完成自己的工作，关于"沟通"的部分，我将在<em>子 Agent 不写代码</em>这一节中详细分析，前面已经分析过的是——并行完成工作在 Agent 系统里非常困难，那么分工，然后串行完成呢？</p>
 
     <p>Droid 做了这样的尝试。</p>
 
     <h3>依次执行（根据计划） - 多执行者，各自为政？</h3>
 
-    <p>Droid 的 Mission 功能采用了先计划、后串行实现的编排路线，Orchestrator（架构师）先与用户进行对话并商讨出详细的计划、验收契约等，包括多个子任务和里程碑。在计划完成后，让一个单独的 Runner 根据计划开始执行：根据事先写好的计划，派出 Worker 执行每个子任务节点（如果 Worker 遇到需要决策的问题，则转回到 Orchestrator 进行决策），并在每个里程碑达成后派独立的 Validator 对这一个大阶段的任务进行 Review.</p>
+    <p>Droid 的 Mission 功能采用了先计划、后串行实现的编排路线，Orchestrator（架构师）负责与用户进行对话并商讨出详细的计划、验收契约，计划好之后，让独立的 Runner 根据计划，派出 Worker 执行每个子任务节点，并在每个里程碑达成后派 Validator 对这一阶段进行 Review.</p>
 
-    <p>这类架构的首要问题是思路的断层。Orchestrator 在计划时的所思所想，尤其是决策原因，能否被 Worker 很好地吸收？下一个 Worker 做事的时候，能否真正理解上一个 Worker 所做的隐性决策？计划不可能覆盖所有细节，Worker 在实现中必然会做出一些计划之外的判断，比如选择某种数据结构，或者在两种等价方案中选了其中一种，这些决策的原因不会被下一个 Worker 显式获悉，却会影响后续 Worker 的工作。在缺少这些隐性知识的情况下，每个 Worker 只能"各自为政"，写出能运行的代码，但更难在前一个 Worker 的基础上做好优化，甚至可能做出相互矛盾的设计选择。</p>
+    <p>这类架构的首要问题仍是隐性知识的丢失。决策时的意图和意图中包含的隐性约束，能否被计划完美地传达到 Worker? 下一个 Worker 能否真正理解上一个 Worker 行动中所做的隐性决策？计划不可能覆盖所有细节，Worker 在实现中必然会做出一些计划之外的判断，比如选择某种数据结构，或者在两种等价方案中选了其中一种，这些决策的原因不会被下一个 Worker 显式获悉，却会影响后续 Worker 的工作。在缺少这些隐性知识的情况下，每个 Worker 只能"各自为政"，写出能运行的代码，但更难在前一个 Worker 的基础上做好优化，甚至可能做出相互矛盾的设计选择。</p>
 
-    <p>偏离一旦发生，纠正代价很高。Worker 被要求完成特定的子任务，即使它意识到前面的实现有可以优化的地方，也不会主动转向去修正，因为那并非它的工作。更坏的情况是，前面某个 Worker 的实现已经部分偏离了计划，后续 Worker 看到已有代码，容易把它当作权威的实现继续向下开发，导致偏离被放大。而 Orchestrator 只在里程碑处通过 Validator 获得反馈，等它发现问题时，可能已经有好几个 Worker 在错误的方向上堆叠了大量代码，此时重写契约、回滚重做的成本将很高。更重要的是计划外的部分，Validator 也只能根据计划审查代码，如果 Worker / Validator 自己对计划的解读和 Orchestrator 的实际意图有冲突，当 Orchestrator 发现时，很可能为时已晚，此时再重写一整套契约来修？或者，接受这个没那么完美的结果？</p>
+    <p>偏离一旦发生，纠正代价很高。Worker 被要求完成特定的子任务，即使它意识到前面的实现有可以优化的地方，也不会主动转向去修正，因为那并非它的工作。更坏的情况是，前面某个 Worker 的实现已经部分偏离了计划，后续 Worker 看到已有代码，容易把它当作权威的实现继续向下开发，导致偏离被放大。而 Orchestrator 只在里程碑处通过 Validator 获得反馈，等它发现问题时，可能已经有好几个 Worker 在错误的方向上堆叠了大量代码，此时重写契约、回滚重做的成本将很高。并且，Validator 也只能根据计划审查代码，如果 Worker / Validator 自己对计划的解读和 Orchestrator 的实际意图有冲突，当 Orchestrator 发现时，很可能为时已晚，此时再重写一整套契约来修？或者接受这个没那么完美的结果？</p>
 
-    <p>另一个潜在的问题是 over-engineering. Droid 为了控制较为复杂、容易失控的多 agent 架构，在中间的过程中制定了大量的规范，把几乎所有能固定的流程都进行了固定，通过大量的硬性约束来规范整套流程。比如当 Worker 碰到需要决策的问题时，并不像很多项目里那样直接通过输出的方式向上级反映，而是通过 <code>EndFeatureRun</code> 工具的字段 <code>returnToOrchestrator</code> 来控制是否转交给 Orchestrator（转交这一过程不由 Runner 决定，而是由系统自动转交），并在 handoff 中写好相关 summary. 较重的系统设计显著提升了系统运行的稳定性，保证了系统能长时间稳定运行，但重流程同样有代价：它增加模型认知负担（特别是对于不同智力、做事风格的模型，引入同一套系统带来的结果很可能相差较大），也限制了系统的灵活性，想要做什么都得写好计划、写好契约… 但这只能保证 Agent 执行稳定，不能保证实现方式更好。</p>
+    <p>另一个潜在的问题是 over-engineering. Droid 为了控制较为复杂、容易失控的多 agent 架构，在中间的过程中制定了大量的规范，把几乎所有能固定的流程都进行了固定，通过大量的硬性约束来规范整套流程。比如当 Worker 无论是正常做完还是认为有问题需要反馈，都不会通过输出的方式向上级反映，而是通过 <code>EndFeatureRun</code> 工具的字段 <code>returnToOrchestrator</code> 来控制自己的 <code>handoff</code> 是否由系统直接转交给 Orchestrator. 较重的系统设计显著提升了系统运行的稳定性，保证了系统能长时间稳定运行，但重流程同样有代价：它增加模型认知负担（特别是对于不同智力、做事风格的模型，引入同一套系统带来的结果很可能相差较大），也限制了系统的灵活性，想要做什么都要写好计划、写好契约… 但这只能保证 Agent 执行稳定，不能保证实现方式更好。</p>
 
     <p>但是，Droid 的 Mission 功能仍是当前最合理的多执行者设计，串行执行的路线避免了最严重的并行协作的混乱，重流程也确实能让系统持续运行数小时而不崩溃。</p>
 
@@ -145,7 +306,7 @@ const enHref = base + "blog/one-agent-is-enough/";
 
     <h3>Fermi 的自我压缩 - 单执行者，更灵活，但尚需实践验证</h3>
 
-    <p>无论是单 Agent 的 auto-compaction, 还是多 Agent 协作的编排，其面临的问题都是怎么保证隐性知识能够完整传递，但目前的模型似乎还并不擅长做这种任务，常常过于强调细节，而忽略其思想，这也是为什么 Worker / Executor 需要一个持久、尽可能完整的大脑来处理任务，来避免思维断层的问题。</p>
+    <p>无论是单 Agent 的 auto-compaction, 还是多 Agent 协作的编排，其面临的问题都是隐性知识能否传递，但目前的模型似乎还并不擅长做这种任务，常常过于强调细节，而忽略背后的决策逻辑，这也是为什么 Worker / Executor 需要一个持久、尽可能完整的大脑来处理任务。</p>
 
     <p>因此，在 Fermi 中，我引入了自我压缩的工具来帮助单执行者应对长程任务，为了防止全量自我压缩带来的对用户意图的破坏，以及对决策、计划过程中的思路的破坏，我采用了更细粒的压缩，让 Fermi 能够做到单工具级别的压缩，从而在不压缩关键思路和对话的情况下，对部分没那么重要的地方进行大幅压缩，例如：</p>
 
@@ -171,7 +332,7 @@ const enHref = base + "blog/one-agent-is-enough/";
       <li>误压缩之后无法自我恢复，最重要的是：误压缩之后，由于丢失了一部分不该压缩的上下文，Agent 反而更难意识到"误压缩"这件事，导致无法有效纠正</li>
     </ul>
 
-    <h3>好的子 Agent 不写代码</h3>
+    <h3>子 Agent 不写代码</h3>
 
     <p>目前为止，最行之有效的子 Agent 的工作方式仍是不直接修改代码，仅承担其余工作，如下：</p>
 
@@ -181,7 +342,7 @@ const enHref = base + "blog/one-agent-is-enough/";
     </ul>
 
     <blockquote>
-      <p>事实上，正如 Cognition 的 Walden Yan 在博客 <a href="https://cognition.ai/blog/multi-agents-working"><em>Multi-Agents: What's Actually Working</em></a> 中所提到的，子 Agent 作为 Reviewer 的效果出乎意料地好，尤其是在和执行者完全不共享上下文的情况下。他给出的解释是：Reviewer 被迫从实现反推而非根据 spec/用户指令推进，以及长上下文的 Context Rot 两个因素共同作用。但我认为还可能存在的原因是：LLM 受到的训练更多是逻辑严密的推理（reasoning），训练中可能不会要求它自己找出自己的错误（因为训练者想要训出第一次就输出最优质代码的模型，而不是输出之后自己纠错的模型），这让它在自己的代码中找到 Bug 变得更困难，而独立的 Reviewer 则完全不同，也就是代码是在 role="assistant" 还是在 role="user" 的区别（待验证）。</p>
+      <p>事实上，正如 Cognition 的 Walden Yan 在博客 <a href="https://cognition.ai/blog/multi-agents-working"><em>Multi-Agents: What's Actually Working</em></a> 中所提到的，子 Agent 作为 Reviewer 的效果出乎意料地好，尤其是在和执行者完全不共享上下文的情况下。他给出的解释是：Reviewer 被迫从实现反推而非根据 spec/用户指令推进，以及长上下文的 Context Rot 两个因素共同作用。但还可能存在的原因是：LLM 受到的训练更多是逻辑严密的推理（reasoning），训练中可能不会要求它自己找出自己的错误（因为训练者想要训出第一次就输出最优质代码的模型，而不是输出之后自己纠错的模型），这导致：它在自己的代码中找 Bug 相比让 Reviewer 来找 Bug 更困难，也就是代码是 role="assistant" 还是 role="user" 所引起的 LLM 行为的不同。</p>
     </blockquote>
 
     <ul>
@@ -209,6 +370,7 @@ const enHref = base + "blog/one-agent-is-enough/";
     <h3>写在最后</h3>
 
     <p>"执行者必须只有一个"……吗？其实，多执行者体系并非天生有错，只是：当前模型的瓶颈在于隐性知识无法可靠传递——无论是自动压缩时传给"未来的自己"，还是协作时传给别的 Agent。单执行者 + 干净上下文的辅助 Agent（探索、审查、咨询），是该瓶颈下最可靠的设计。但是，如果模型真摆脱了"知识的诅咒"，本文大部分结论便都可以重写了——但在那之前，还请先保住执行者的大脑。</p>
+
   </article>
   <script is:inline>
     document.querySelectorAll('[data-lang-link]').forEach((link) => {
