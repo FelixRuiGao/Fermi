@@ -433,4 +433,48 @@ describe("background shell tools", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("forceKillAll escalates to SIGKILL for trees that ignore SIGTERM", async () => {
+    const root = makeTempDir("fermi-shell-root-");
+    const session = makeSession(root);
+    try {
+      const sm = (session as any)._shellManager as BackgroundShellManager;
+      // The shell ignores SIGTERM and keeps respawning short-lived sleeps,
+      // so a group SIGTERM alone never brings the tree down. The "armed"
+      // marker is printed only after the trap is installed, removing the
+      // race where SIGTERM arrives before the trap exists.
+      const started = sm.execBashBackground({
+        id: "stubborn",
+        command: 'trap "" TERM; printf armed; while :; do sleep 0.2; done',
+      }) as ToolResult;
+      expect(started.content).toContain("Started background shell 'stubborn'");
+
+      const entry = sm.getShellEntry("stubborn")!;
+      const child = entry.process;
+
+      const armedDeadline = Date.now() + 3_000;
+      while (Date.now() < armedDeadline) {
+        if (existsSync(entry.logPath) && (await Bun.file(entry.logPath).text()).includes("armed")) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      sm.forceKillAll();
+
+      // SIGTERM cannot kill this tree; only the 1.5s SIGKILL escalation can.
+      const deadline = Date.now() + 5_000;
+      let exited = false;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          exited = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(exited).toBe(true);
+      // Death by SIGKILL proves the escalation fired — SIGTERM was trapped.
+      expect(child.signalCode).toBe("SIGKILL");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 12_000);
 });

@@ -228,12 +228,29 @@ export class BackgroundShellManager {
    * Also resets the shell counter.
    */
   forceKillAll(): void {
+    const KILL_ESCALATE_MS = 1_500;
     for (const entry of this._activeShells.values()) {
       if (entry.status === "running") {
         entry.explicitKill = true;
         entry.status = "killed";
         entry.signal = "SIGTERM";
         BackgroundShellManager._killGroup(entry, "SIGTERM");
+        // Escalate like killShell does: a process that ignores SIGTERM
+        // would otherwise survive as an orphan (`close` only fires once
+        // the whole tree has released the stdio pipes — if it hasn't
+        // fired by the deadline, something in the group is still alive).
+        // On Windows killTree is already an unconditional force-kill, so
+        // the escalation finds the group gone and no-ops. The timer is
+        // unref'd: on the process-exit path this stays best-effort
+        // rather than delaying shutdown.
+        let closed = false;
+        entry.process.once("close", () => {
+          closed = true;
+        });
+        const timer = setTimeout(() => {
+          if (!closed) BackgroundShellManager._killGroup(entry, "SIGKILL");
+        }, KILL_ESCALATE_MS);
+        timer.unref?.();
       }
     }
     this._activeShells.clear();
