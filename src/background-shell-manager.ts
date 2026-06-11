@@ -243,10 +243,14 @@ export class BackgroundShellManager {
         // the escalation finds the group gone and no-ops. The timer is
         // unref'd: on the process-exit path this stays best-effort
         // rather than delaying shutdown.
+        // Mock ChildProcess objects (adopted shells in tests) may lack
+        // `.once` — same compatibility note as killTree's pid fallback.
         let closed = false;
-        entry.process.once("close", () => {
-          closed = true;
-        });
+        if (typeof entry.process?.once === "function") {
+          entry.process.once("close", () => {
+            closed = true;
+          });
+        }
         const timer = setTimeout(() => {
           if (!closed) BackgroundShellManager._killGroup(entry, "SIGKILL");
         }, KILL_ESCALATE_MS);
