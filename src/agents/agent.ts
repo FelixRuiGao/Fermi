@@ -15,11 +15,9 @@ import type { LogEntry } from "../log-entry.js";
 import { createEphemeralLogState } from "../ephemeral-log.js";
 import {
   asyncRunToolLoop,
-  type BeforeToolExecuteCallback,
   type OnToolCallCallback,
-  type OnToolResultCallback,
-  type ResolveToolCallVisibilityCallback,
   type ToolExecutor,
+  type ToolLoopOptions,
   type ToolLoopResult,
 } from "./tool-loop.js";
 
@@ -195,89 +193,31 @@ export class Agent {
   /**
    * Run the tool loop with callback-based message management.
    *
-   * The caller provides getMessages/appendEntry/allocId callbacks.
+   * The caller provides the loop options minus everything the Agent owns
+   * (provider, tools, max rounds, agent name, builtin executor fallback).
    * Main agent: backed by structured log.
    * Sub-agents: backed by an ephemeral structured log.
    */
-  async asyncRunWithMessages(
-    getMessages: () => Array<Record<string, unknown>>,
-    appendEntry: (entry: LogEntry) => void,
-    allocId: (type: LogEntry["type"]) => string,
-    turnIndex: number,
-    baseRoundIndex?: number,
-    toolExecutors?: Record<string, ToolExecutor>,
-    onToolCall?: OnToolCallCallback,
-    onToolResult?: OnToolResultCallback,
-    onTextChunk?: (roundIndex: number, chunk: string) => boolean | void,
-    onReasoningChunk?: (roundIndex: number, chunk: string) => boolean | void,
-    onReasoningDone?: (roundIndex: number) => void,
-    signal?: AbortSignal,
-    contextIdAllocator?: (roundIndex: number) => string,
-    toolContextIdAllocator?: () => string,
-    compactCheck?: (
-      inputTokens: number,
-      outputTokens: number,
-      hasToolCalls: boolean,
-    ) => { compactNeeded: boolean; scenario?: "mid_turn" } | null,
-    onTokenUpdate?: (inputTokens: number, usage?: import("../providers/base.js").Usage) => void,
-    thinkingLevel?: string,
-    promptCacheKey?: string,
-    onSaveCheckpoint?: () => void,
-    beforeToolExecute?: BeforeToolExecuteCallback,
-    getNotification?: () => string | null,
-    onToolRoundComplete?: () => void,
-    streamCallbacksOwnEntries?: boolean,
-    onRetryAttempt?: (attempt: number, maxRetries: number, delaySec: number, errMsg: string) => void,
-    onRetrySuccess?: (attempt: number) => void,
-    onRetryExhausted?: (maxRetries: number, errMsg: string) => void,
-    onToolCallPartial?: (callId: string, name: string, rawArguments: string) => void,
-    resolveToolCallVisibility?: ResolveToolCallVisibilityCallback,
-    updateEntry?: (entryId: string, patch: {
-      apiRole?: LogEntry["apiRole"];
-      content?: unknown;
-      display?: string;
-      tuiVisible?: boolean;
-      displayKind?: LogEntry["displayKind"];
-      meta?: Record<string, unknown>;
-    }) => void,
-    discardEntry?: (entryId: string) => void,
-  ): Promise<ToolLoopResult> {
+  async asyncRunWithMessages(opts: AgentRunWithMessagesOptions): Promise<ToolLoopResult> {
     return asyncRunToolLoop({
+      ...opts,
       provider: this._provider,
-      getMessages,
-      appendEntry,
-      allocId,
-      turnIndex,
-      baseRoundIndex,
       tools: this.tools.length > 0 ? this.tools : undefined,
-      toolExecutors: toolExecutors ?? {},
+      toolExecutors: opts.toolExecutors ?? {},
       maxRounds: this.maxToolRounds,
       agentName: this.name,
-      onToolCall,
-      onToolResult,
-      onTextChunk,
-      onReasoningChunk,
-      onReasoningDone,
       builtinExecutor: executeTool,
-      signal,
-      contextIdAllocator,
-      toolContextIdAllocator,
-      onTokenUpdate,
-      compactCheck,
-      thinkingLevel,
-      promptCacheKey,
-      onSaveCheckpoint,
-      beforeToolExecute,
-      getNotification,
-      onToolRoundComplete,
-      streamCallbacksOwnEntries,
-      onRetryAttempt,
-      onRetrySuccess,
-      onRetryExhausted,
-      onToolCallPartial,
-      resolveToolCallVisibility,
-      updateEntry,
-      discardEntry,
     });
   }
 }
+
+/**
+ * Tool-loop options owned by the caller. The Agent supplies provider, tools,
+ * max rounds, agent name, and the builtin executor fallback itself.
+ */
+export type AgentRunWithMessagesOptions = Omit<
+  ToolLoopOptions,
+  "provider" | "tools" | "toolsMap" | "maxRounds" | "agentName" | "builtinExecutor" | "toolExecutors"
+> & {
+  toolExecutors?: Record<string, ToolExecutor>;
+};

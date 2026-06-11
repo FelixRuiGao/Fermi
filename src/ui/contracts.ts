@@ -114,10 +114,11 @@ export interface Session {
       contextLength?: number;
     };
   };
-  _progress?: ProgressReporter;
-  _turnCount: number;
-  _compactCount: number;
-  _createdAt?: string;
+  setProgressReporter?(reporter: ProgressReporter | undefined): void;
+  clearProgressReporter?(reporter: ProgressReporter): void;
+  turnCount?: number;
+  compactCount?: number;
+  createdAt?: string;
   lastInputTokens: number;
   lastTotalTokens: number;
   lastCacheReadTokens?: number;
@@ -186,7 +187,6 @@ export interface Session {
   getChildSessionSnapshots?(): ChildSessionSnapshot[];
   getChildSessionLog?(childId: string): readonly LogEntry[] | null;
   interruptChildSession?(childId: string): { accepted: boolean; reason?: string };
-  interruptAllChildSessions?(): { accepted: boolean; interrupted: number; reason?: string };
   restoreFromLog?(meta: LogSessionMeta, entries: LogEntry[], idAllocator: LogIdAllocator): void;
   getLogForPersistence?(): { meta: LogSessionMeta; entries: readonly LogEntry[] };
   resetForNewSession?(newStore?: any): void;

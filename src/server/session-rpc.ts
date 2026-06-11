@@ -135,7 +135,7 @@ interface AgentModelPinsPayload {
 
 function buildMeta(s: Session, workDir: string, sessionDir: string | null): MetaPayload {
   return {
-    sessionId: sessionDir ? basename(sessionDir) : s._createdAt,
+    sessionId: sessionDir ? basename(sessionDir) : s.createdAt,
     title: s.getTitle(),
     displayName: s.getDisplayName(),
     sessionDir,
@@ -144,7 +144,7 @@ function buildMeta(s: Session, workDir: string, sessionDir: string | null): Meta
     modelProvider: s.primaryAgent?.modelConfig?.provider ?? "",
     thinkingLevel: s.thinkingLevel ?? "none",
     accentColor: s.accentColor,
-    turnCount: s._turnCount,
+    turnCount: s.turnCount,
   };
 }
 
@@ -588,16 +588,16 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     // The peer subscribes to log events to observe progress.
     void (async () => {
       try {
-        server.emit("turn.started", { input, turnCount: session._turnCount + 1 });
+        server.emit("turn.started", { input, turnCount: session.turnCount + 1 });
         await session.turn(input);
         server.emit("turn.ended", {
           status: session.lastTurnEndStatus ?? "completed",
-          turnCount: session._turnCount,
+          turnCount: session.turnCount,
         });
       } catch (err) {
         server.emit("turn.ended", {
           status: "error",
-          turnCount: session._turnCount,
+          turnCount: session.turnCount,
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -608,16 +608,16 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.resumePendingTurn", () => {
     void (async () => {
       try {
-        server.emit("turn.started", { resumed: true, turnCount: session._turnCount });
+        server.emit("turn.started", { resumed: true, turnCount: session.turnCount });
         await session.resumePendingTurn();
         server.emit("turn.ended", {
           status: session.lastTurnEndStatus ?? "completed",
-          turnCount: session._turnCount,
+          turnCount: session.turnCount,
         });
       } catch (err) {
         server.emit("turn.ended", {
           status: "error",
-          turnCount: session._turnCount,
+          turnCount: session.turnCount,
           error: err instanceof Error ? err.message : String(err),
         });
       }

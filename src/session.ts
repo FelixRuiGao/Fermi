@@ -496,7 +496,7 @@ export class Session {
   agentTemplates: Record<string, Agent>;
   private _promptsDirs?: string[];
 
-  _progress?: ProgressReporter;
+  private _progress?: ProgressReporter;
   private _mcpManager?: MCPClientManager;
   private _mcpConnected = false;
 
@@ -510,7 +510,7 @@ export class Session {
   /** Hook runtime — fires events and evaluates hook commands. */
   readonly hookRuntime = new HookRuntime();
 
-  _createdAt: string;
+  private _createdAt: string;
   /** Model identity snapshot taken at session creation. Stable across resumes and /model switches. */
   private _initialModel: string;
   private _title: string | undefined;
@@ -625,17 +625,16 @@ export class Session {
 
   // Turn serialization — prevents concurrent turn() calls from corrupting state
   private _turnInFlight: Promise<string | void> | null = null;
-  private _turnRelease: (() => void) | null = null;
 
   /** Callback for incremental persistence — called at save-worthy checkpoints. */
   onSaveRequest?: () => void;
 
   // Counters
-  _turnCount = 0;
+  private _turnCount = 0;
   private _workCount = 0;
   private _currentWorkId: string | null = null;
   private _currentWorkStartedAt = 0;
-  _compactCount = 0;
+  private _compactCount = 0;
   private _usedContextIds = new Set<string>();
 
   // Last time we ran a sync GC at idle (ms epoch). Used to throttle the
@@ -711,6 +710,33 @@ export class Session {
 
   get currentTurnRunning(): boolean {
     return this._turnInFlight !== null;
+  }
+
+  /** Current input/turn index (1-based; advances as user inputs are delivered). */
+  get turnCount(): number {
+    return this._turnCount;
+  }
+
+  /** ISO timestamp of session creation. Stable across resumes. */
+  get createdAt(): string {
+    return this._createdAt;
+  }
+
+  /** Number of compactions performed in this session. */
+  get compactCount(): number {
+    return this._compactCount;
+  }
+
+  /** Attach the progress reporter that receives streaming UI events. */
+  setProgressReporter(reporter: ProgressReporter | undefined): void {
+    this._progress = reporter;
+  }
+
+  /** Detach the given reporter only if it is still the active one. */
+  clearProgressReporter(reporter: ProgressReporter): void {
+    if (this._progress === reporter) {
+      this._progress = undefined;
+    }
   }
 
   get lastTurnEndStatus(): "completed" | "interrupted" | "error" | null {
@@ -1037,6 +1063,20 @@ export class Session {
     return Math.round(mc.contextLength * this._contextBudgetPercent / 100);
   }
 
+  /**
+   * Context budget for pressure decisions (hints, compact triggers,
+   * show_context), per the provider's accounting mode: fullContext budgets
+   * the whole window and checks input tokens only; otherwise output headroom
+   * is reserved out of the window.
+   */
+  private _contextBudgetInfo(): { budget: number; fullContext: boolean } {
+    const mc = this.primaryAgent.modelConfig;
+    const provider = (this.primaryAgent as unknown as { _provider?: { budgetCalcMode?: string } })._provider;
+    const fullContext = provider?.budgetCalcMode === "full_context";
+    const effective = this._effectiveContextLength(mc);
+    return { budget: fullContext ? effective : effective - mc.maxTokens, fullContext };
+  }
+
   // ==================================================================
   // Message infrastructure
   // ==================================================================
@@ -1172,7 +1212,10 @@ export class Session {
     const inputIndex = maxInputIndex + 1;
     const inputId = this._nextLogId("input_received");
     const inputContextId = contextId ?? this._allocateContextId();
-    if (this._agentState === "idle") {
+    // Advance the current input index only when nothing is in flight or
+    // suspended: a pending ask / pending resume still owns the current turn,
+    // and its bookkeeping (tool_calls awaiting results) must keep pairing up.
+    if (this._agentState === "idle" && !this._activeAsk && !this._pendingTurnState) {
       this._turnCount = inputIndex;
     }
     this._appendEntry(
@@ -1270,23 +1313,50 @@ export class Session {
     if (changed) this._touchLog();
   }
 
-  private _findToolCallContextId(toolCallId: string, roundIndex?: number): string | undefined {
+  /** Index of the first entry after the last live compact_marker (active window start). */
+  private _activeWindowStartIdx(): number {
     for (let i = this._log.length - 1; i >= 0; i--) {
+      if (this._log[i].type === "compact_marker" && !this._log[i].discarded) {
+        return i + 1;
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Find a tool_call entry by id within the active window (newest first).
+   * Not scoped to the current turn: ask bookkeeping must keep pairing with
+   * its tool_call even when the turn counter has moved on.
+   */
+  private _findToolCallEntry(toolCallId: string): LogEntry | undefined {
+    if (!toolCallId) return undefined;
+    const windowStart = this._activeWindowStartIdx();
+    for (let i = this._log.length - 1; i >= windowStart; i--) {
       const entry = this._log[i];
-      if (entry.turnIndex < this._turnCount) break;
       if (entry.discarded) continue;
       if (entry.type !== "tool_call") continue;
-      if (entry.turnIndex !== this._turnCount) continue;
-      const meta = entry.meta as Record<string, unknown>;
-      if (String(meta["toolCallId"] ?? "") !== toolCallId) continue;
-      const contextId = meta["contextId"];
-      if (typeof contextId === "string" && contextId.trim()) {
-        return contextId;
-      }
-      break;
+      if (String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "") !== toolCallId) continue;
+      return entry;
+    }
+    return undefined;
+  }
+
+  /** Turn/round anchor for ask bookkeeping, derived from the gated tool_call. */
+  private _toolCallAnchor(toolCallId: string, ask?: AskRequest | null): { turnIndex: number; roundIndex: number } {
+    const entry = this._findToolCallEntry(toolCallId);
+    const turnIndex = ask?.turnIndex ?? entry?.turnIndex ?? this._turnCount;
+    const roundIndex = ask?.roundIndex ?? entry?.roundIndex ?? this._computeNextRoundIndex(turnIndex);
+    return { turnIndex, roundIndex };
+  }
+
+  private _findToolCallContextId(toolCallId: string, roundIndex?: number): string | undefined {
+    const entry = this._findToolCallEntry(toolCallId);
+    const contextId = entry ? (entry.meta as Record<string, unknown>)["contextId"] : undefined;
+    if (typeof contextId === "string" && contextId.trim()) {
+      return contextId;
     }
     if (typeof roundIndex === "number") {
-      return this._findRoundContextId(this._turnCount, roundIndex);
+      return this._findRoundContextId(entry?.turnIndex ?? this._turnCount, roundIndex);
     }
     return undefined;
   }
@@ -1301,6 +1371,12 @@ export class Session {
    * Working/waiting: the activation boundary or await_event poll drains.
    */
   private _deliverMessage(msg: MessageEnvelope): DeliverMessageResult {
+    // Compacting rewrites the conversation; user input arriving mid-compact
+    // would be folded behind the marker and effectively vanish. Reject it
+    // (Q6) — automatic messages still queue and are delivered after compact.
+    if (msg.type === "user_input" && this._compactInProgress) {
+      return { accepted: false, reason: "compact_in_progress" };
+    }
     if (msg.type === "user_input" && msg.sender === "user") {
       const queued = this._getQueuedUserInputs();
       if (queued.length > 0) {
@@ -1458,7 +1534,10 @@ export class Session {
       if (entry.discarded) continue;
       if (entry.type !== "input_received") continue;
       const inputKind = entry.meta["inputKind"];
-      if (inputKind !== "user" && inputKind !== "summarize" && inputKind !== "compact") continue;
+      // "compact" inputs are consumed by the compact phase itself and never
+      // await a model reply — counting them here would schedule ghost
+      // auto-resume turns after every /compact.
+      if (inputKind !== "user" && inputKind !== "summarize") continue;
       const inputId = entry.meta["inputId"];
       return typeof inputId === "string" && !delivered.has(inputId);
     }
@@ -1686,12 +1765,10 @@ export class Session {
     await this.waitForTurnComplete();
     let release!: () => void;
     this._turnInFlight = new Promise<void>((r) => { release = r; });
-    this._turnRelease = release;
     try {
       return await fn();
     } finally {
       this._turnInFlight = null;
-      this._turnRelease = null;
       release();
     }
   }
@@ -1706,9 +1783,24 @@ export class Session {
     // Abort main turn ONLY. Sub-agents and background shells are independent
     // background work — they continue running. Explicit Ctrl+X / Ctrl+K
     // kills them separately.
+    //
+    // A pending ask means there is no live turn to abort — the turn already
+    // returned when it suspended. Every stop entry point resolves the ask as
+    // deny-and-stop (Q9) so the log gets a definite outcome instead of an
+    // orphan ask_request + unresolved tool_call.
+    if (this._activeAsk) {
+      const decision = this.denyAndInterruptPendingAsk();
+      if (decision.accepted) return { accepted: true };
+    }
     this._currentTurnAbortController?.abort();
-    this._activeAsk = null;
-    this._pendingTurnState = null;
+    if (this._pendingTurnState) {
+      // Suspended-but-resolved work (approval granted, resume not started):
+      // finalize it so no approved-but-unexecuted tool_call survives as an
+      // orphan that would poison every later API projection.
+      const startIdx = this._findEarliestPendingToolCallLogIndex();
+      this._pendingTurnState = null;
+      this._finalizeDrainInterruptedWork(startIdx);
+    }
     return { accepted: true };
   }
 
@@ -1790,21 +1882,22 @@ export class Session {
     }
 
     // agent_question: synthesize decline resolution + error tool_result.
+    const toolCallId = (ask.payload as Record<string, unknown>)["toolCallId"] as string ?? "ask";
+    const anchor = this._toolCallAnchor(toolCallId, ask);
     this._appendEntry(createAskResolution(
       this._nextLogId("ask_resolution"),
-      this._turnCount,
+      anchor.turnIndex,
       { declined: true },
       ask.id,
       "agent_question",
     ), false);
 
-    const toolCallId = (ask.payload as Record<string, unknown>)["toolCallId"] as string ?? "ask";
     const contextId = this._findToolCallContextId(toolCallId, ask.roundIndex)
       ?? this._allocateContextId();
     this._appendEntry(createToolResultEntry(
       this._nextLogId("tool_result"),
-      this._turnCount,
-      ask.roundIndex ?? this._computeNextRoundIndex(),
+      anchor.turnIndex,
+      anchor.roundIndex,
       {
         toolCallId,
         toolName: "ask",
@@ -2686,7 +2779,6 @@ export class Session {
     this._currentTurnSignal = null;
     this._currentTurnAbortController = null;
     this._turnInFlight = null;
-    this._turnRelease = null;
     // _waitHandle removed — await_event uses polling now
     this.primaryAgent.replaceModelConfig({ ...shadow.primaryAgent.modelConfig });
     this._persistedModelSelection = { ...shadow._persistedModelSelection };
@@ -3835,7 +3927,8 @@ export class Session {
    * The picker is a pure turn list: summaries belong to their assigned turn
    * (the nearest preceding surviving user message), so selecting a turn also
    * selects the summaries assigned to it, and turns whose user messages were
-   * folded into a summary no longer appear. Excludes the current turn.
+   * folded into a summary no longer appear. The /summarize operation's own
+   * (future) turn is excluded; the just-finished turn is a valid target.
    */
   getSummarizeTargets(): Array<{
     kind: "turn" | "summary";
@@ -4041,6 +4134,11 @@ export class Session {
         this._restoreCurrentTurnSignal(turnSignalState);
         this._agentState = prevAgentState;
       }
+      // Waking messages held back during compact (Q6) get their delivery turn
+      // now that the session is idle again.
+      if (this._hasWakingInboxMessages()) {
+        this._scheduleAutoResume();
+      }
     });
   }
 
@@ -4150,21 +4248,6 @@ export class Session {
 
   hasPendingTurnToResume(): boolean {
     return this._pendingTurnState !== null;
-  }
-
-  resolveAsk(
-    askId: string,
-    _decision: string,
-    _inputText?: string,
-  ): void {
-    const ask = this._activeAsk;
-    if (!ask) {
-      throw new Error("No active ask to resolve.");
-    }
-    if (ask.id !== askId) {
-      throw new Error(`Ask id mismatch (active=${ask.id}, got=${askId}).`);
-    }
-    throw new Error("Use resolveAgentQuestionAsk() for agent_question asks.");
   }
 
   private _emitAskRequestedProgress(ask: AskRequest): void {
@@ -4316,68 +4399,81 @@ export class Session {
         return this._turnInner(pending.userInput ?? "", options);
       }
 
-      // Install the turn signal early so that _drainPendingToolCalls can
-      // pass it to tool executors (e.g. client-side web_search).
-      const turnSignalState = this._installCurrentTurnSignal(options?.signal);
-
-      const interruptionStartIdx = this._findEarliestPendingToolCallLogIndex();
-
-      try {
-        // Drain any pending tool_calls (including the just-approved one and any
-        // siblings that were emitted in parallel but never reached). This is the
-        // single, canonical execution path post-approval. Stops on suspension.
-        const drainResult = await this._drainPendingToolCalls(turnSignalState.signal);
-        if (drainResult.kind === "suspended") {
-          return "";
-        }
-        if (drainResult.kind === "interrupted") {
-          this._finalizeDrainInterruptedWork(interruptionStartIdx);
-          return "";
-        }
-
-        // Post-resume activation boundary drain: tool_results from the
-        // just-resolved approval are in the log; drain any queued inbox
-        // messages before the model sees them in the next activation.
-        if (this._hasInboxMessages()) {
-          this._drainInboxAsEntries();
-        }
-      } finally {
-        this._restoreCurrentTurnSignal(turnSignalState);
-      }
-
-      const textAccumulator = { text: "" };
-      const reasoningAccumulator = { text: "" };
-      const result = await this._runTurnActivationLoop(options?.signal, textAccumulator, reasoningAccumulator);
-      // Notify parent of the resumed turn's output. Without this, post-approval
-      // assistant_text is lost and agent_result.content shows "(no output)".
-      if (!this._activeAsk) {
-        this._turnOutputTarget?.(result?.trim() || "");
-        if (result?.trim()) this._recordSessionEvent("returned output");
-      }
-      return result;
+      return this._resumeActivationStage(options);
     });
   }
 
   /**
+   * Continue a turn that suspended mid-activation (approval resolved, question
+   * answered). Single canonical resume path — turn() and resumePendingTurn()
+   * both land here, so pending approved tool_calls always execute and queued
+   * messages are always delivered, whichever entry point the UI used.
+   * Caller must hold the turn lock and have cleared _pendingTurnState.
+   */
+  private async _resumeActivationStage(options?: { signal?: AbortSignal }): Promise<string> {
+    // Install the turn signal early so that _drainPendingToolCalls can
+    // pass it to tool executors (e.g. client-side web_search).
+    const turnSignalState = this._installCurrentTurnSignal(options?.signal);
+
+    const interruptionStartIdx = this._findEarliestPendingToolCallLogIndex();
+
+    try {
+      // Drain any pending tool_calls (including the just-approved one and any
+      // siblings that were emitted in parallel but never reached). This is the
+      // single, canonical execution path post-approval. Stops on suspension.
+      const drainResult = await this._drainPendingToolCalls(turnSignalState.signal);
+      if (drainResult.kind === "suspended") {
+        return "";
+      }
+      if (drainResult.kind === "interrupted") {
+        this._finalizeDrainInterruptedWork(interruptionStartIdx);
+        return "";
+      }
+
+      // Post-resume activation boundary drain: tool_results from the
+      // just-resolved approval are in the log; drain any queued inbox
+      // messages before the model sees them in the next activation.
+      if (this._hasInboxMessages()) {
+        this._drainInboxAsEntries();
+      }
+    } finally {
+      this._restoreCurrentTurnSignal(turnSignalState);
+    }
+
+    const textAccumulator = { text: "" };
+    const reasoningAccumulator = { text: "" };
+    const result = await this._runTurnActivationLoop(options?.signal, textAccumulator, reasoningAccumulator);
+    // Notify parent of the resumed turn's output. Without this, post-approval
+    // assistant_text is lost and agent_result.content shows "(no output)".
+    if (!this._activeAsk) {
+      this._turnOutputTarget?.(result?.trim() || "");
+      if (result?.trim()) this._recordSessionEvent("returned output");
+    }
+    return result;
+  }
+
+  /**
    * Resume-drain interruption starts from the earliest unresolved tool_call in
-   * the current turn, not from the current log tail: orphan tool_calls were
+   * the active window, not from the current log tail: orphan tool_calls were
    * emitted before the approval ask and must be visible to interruption cleanup.
+   * Scanned window-wide (not per-turn): the turn counter may have advanced
+   * while the work was suspended, but its orphans still need completion.
    */
   private _findEarliestPendingToolCallLogIndex(): number {
+    const windowStart = this._activeWindowStartIdx();
     const resultIds = new Set<string>();
-    for (const entry of this._log) {
+    for (let index = windowStart; index < this._log.length; index += 1) {
+      const entry = this._log[index]!;
       if (entry.type !== "tool_result") continue;
       if (entry.discarded) continue;
-      if (entry.turnIndex !== this._turnCount) continue;
       const id = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
       if (id) resultIds.add(id);
     }
 
-    for (let index = 0; index < this._log.length; index += 1) {
+    for (let index = windowStart; index < this._log.length; index += 1) {
       const entry = this._log[index]!;
       if (entry.type !== "tool_call") continue;
       if (entry.discarded) continue;
-      if (entry.turnIndex !== this._turnCount) continue;
       const toolCallId = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
       if (!toolCallId || resultIds.has(toolCallId)) continue;
       return index;
@@ -4449,13 +4545,15 @@ export class Session {
         }
         if (decision && decision.kind === "ask") {
           const ask = decision.ask;
+          ask.turnIndex = next.turnIndex;
           const askContextId = this._findToolCallContextId(next.toolCallId, next.roundIndex);
           this._updateToolCallExecState(next.toolCallId, "not_started");
           this._activeAsk = ask;
+          this._agentState = "waiting";
           this._emitAskRequestedProgress(this._activeAsk);
           this._appendEntry(createAskRequest(
             this._nextLogId("ask_request"),
-            this._turnCount,
+            next.turnIndex,
             this._activeAsk.payload,
             this._activeAsk.id,
             this._activeAsk.kind,
@@ -4561,7 +4659,7 @@ export class Session {
 
       this._appendEntry(createToolResultEntry(
         this._nextLogId("tool_result"),
-        this._turnCount,
+        next.turnIndex,
         next.roundIndex,
         {
           toolCallId: next.toolCallId,
@@ -4596,30 +4694,34 @@ export class Session {
   }
 
   /**
-   * Find the next pending tool_call in the current turn (no matching result),
+   * Find the next pending tool_call in the active window (no matching result),
    * in log/emission order. Returns null when all are resolved.
+   * Window-wide rather than per-turn: an approved tool_call must execute on
+   * resume even if the turn counter advanced while the ask was pending.
    */
   private _findNextPendingToolCall(): {
     toolCallId: string;
     toolName: string;
     toolArgs: Record<string, unknown>;
+    turnIndex: number;
     roundIndex: number;
     agentName: string;
   } | null {
+    const windowStart = this._activeWindowStartIdx();
     const resultIds = new Set<string>();
-    for (const entry of this._log) {
+    for (let index = windowStart; index < this._log.length; index += 1) {
+      const entry = this._log[index]!;
       if (entry.type !== "tool_result") continue;
       if (entry.discarded) continue;
-      if (entry.turnIndex !== this._turnCount) continue;
       const meta = entry.meta as Record<string, unknown>;
       const id = String(meta["toolCallId"] ?? "");
       if (id) resultIds.add(id);
     }
 
-    for (const entry of this._log) {
+    for (let index = windowStart; index < this._log.length; index += 1) {
+      const entry = this._log[index]!;
       if (entry.type !== "tool_call") continue;
       if (entry.discarded) continue;
-      if (entry.turnIndex !== this._turnCount) continue;
       const meta = entry.meta as Record<string, unknown>;
       const toolCallId = String(meta["toolCallId"] ?? "");
       if (!toolCallId || resultIds.has(toolCallId)) continue;
@@ -4628,6 +4730,7 @@ export class Session {
         toolCallId,
         toolName: String(content.name ?? meta["toolName"] ?? ""),
         toolArgs: content.arguments ?? {},
+        turnIndex: entry.turnIndex,
         roundIndex: entry.roundIndex ?? 0,
         agentName: String(meta["agentName"] ?? this.primaryAgent.name),
       };
@@ -4721,6 +4824,7 @@ export class Session {
         this._updateHintStateAfterApiCall();
 
         if (result.suspendedAsk) {
+          result.suspendedAsk.ask.turnIndex = activationTurnIndex;
           const askContextId =
             this._findToolCallContextId(result.suspendedAsk.toolCallId, result.suspendedAsk.roundIndex);
           this._activeAsk = result.suspendedAsk.ask;
@@ -4841,6 +4945,10 @@ export class Session {
             }
             throw compactErr;
           }
+          // Messages held back during compact (Q6) land after the marker.
+          if (this._hasInboxMessages()) {
+            this._drainInboxAsEntries();
+          }
           this.onSaveRequest?.();
           // Always continue after compact — fresh context, reset activation budget.
           activationIdx = -1;
@@ -4886,7 +4994,10 @@ export class Session {
       if (turnEndStatus === "interrupted" && this._hasActiveAgents()) {
         await this._waitForAllChildTurnsSettled();
       }
-      this._agentState = "idle";
+      // A suspended ask keeps the session in "waiting" (Q1): the turn has not
+      // ended, it is parked on the user's answer. Input arriving now must
+      // queue without advancing the turn counter.
+      this._agentState = this._activeAsk ? "waiting" : "idle";
       // Finalize tool_call entries stuck in non-terminal state (e.g. abort during await_event).
       // Scan backward: only the current round's tool_calls can be affected; stop at the first
       // non-tool_call entry after seeing at least one tool_call (entries are interleaved with
@@ -4931,31 +5042,46 @@ export class Session {
 
   /** Inner turn logic, called from within the turn lock. */
   private async _turnInner(userInput: string, options?: { signal?: AbortSignal; inlineImages?: InlineImageInput[]; skipUserInput?: boolean }): Promise<string> {
+    // A pending ask owns the conversation: the turn cannot run until the user
+    // answers. New input is queued (Q5) and delivered when work resumes —
+    // never dropped, never run into the suspended round's bookkeeping.
+    if (this._activeAsk) {
+      if (!options?.skipUserInput && userInput.trim()) {
+        this._deliverMessage({
+          type: "user_input",
+          sender: "user",
+          content: userInput,
+          timestamp: Date.now(),
+        });
+      }
+      return "";
+    }
+
     this._ensureSessionStorageReady();
     if (this._mcpManager) {
       await this._ensureMcp();
     }
 
     const signal = options?.signal;
-    if (this._pendingTurnState && !this._activeAsk) {
-      // Already inside the lock via turn() — handle resume inline to avoid deadlock
-      if (this._activeAsk) {
-        throw new Error("Cannot resume while an ask is still pending approval.");
-      }
+    if (this._pendingTurnState) {
+      // Already inside the lock via turn() — resume inline (calling turn()
+      // here would deadlock on the turn lock).
       const pending = this._pendingTurnState;
-      if (!pending) return "";
       this._pendingTurnState = null;
       if (pending.stage === "pre_user_input") {
         return this._turnInner(pending.userInput ?? "", options);
       }
-      const ta = { text: "" };
-      const ra = { text: "" };
-      const resumed = await this._runTurnActivationLoop(options?.signal, ta, ra);
-      if (resumed && !this._activeAsk) {
-        this._turnOutputTarget?.(resumed);
-        this._recordSessionEvent("returned output");
+      // New input arriving through turn() while work waits to continue:
+      // queue it first so the canonical resume path delivers it (Q5).
+      if (!options?.skipUserInput && userInput.trim()) {
+        this._deliverMessage({
+          type: "user_input",
+          sender: "user",
+          content: userInput,
+          timestamp: Date.now(),
+        });
       }
-      return resumed;
+      return this._resumeActivationStage(options);
     }
 
     // skipUserInput path: auto-resume from idle. Drain inbox as individual
@@ -5037,12 +5163,7 @@ export class Session {
     // Before-turn auto-compact: if last known usage + estimated new tokens
     // exceeds the threshold, compact now so the activation runs in fresh context.
     if (this._capabilities.includeSpawnTool && !this._compactInProgress) {
-      const mc = this.primaryAgent.modelConfig;
-      const provider = (this.primaryAgent as any)._provider;
-      const effectiveMax = mc.maxTokens;
-      const budget = provider.budgetCalcMode === "full_context"
-        ? this._effectiveContextLength(mc)
-        : this._effectiveContextLength(mc) - effectiveMax;
+      const { budget } = this._contextBudgetInfo();
       if (budget > 0) {
         const estimatedTokens = this._lastInputTokens + gptEncode(userInput).length;
         const beforeTurnRatio = this._thresholds.compact_before_turn / 100;
@@ -5074,6 +5195,10 @@ export class Session {
             } else {
               throw compactErr;
             }
+          }
+          // Messages held back during compact (Q6) land after the marker.
+          if (this._hasInboxMessages()) {
+            this._drainInboxAsEntries();
           }
           this.onSaveRequest?.();
         }
@@ -5125,6 +5250,10 @@ export class Session {
     this._activeAsk = null;
     this._pendingTurnState = null;
     this._activeLogEntryId = null;
+    // Summaries staged by a summarize_context whose tool_result never landed
+    // must die with the interrupted turn — a later flush would append them
+    // under the wrong turn.
+    this._pendingSummaryEntries = [];
 
     let latestRound: number | undefined;
     let latestRoundHasToolCall = false;
@@ -5758,38 +5887,43 @@ export class Session {
       this._touchLog();
     };
 
-    return this.primaryAgent.asyncRunWithMessages(
+    return this.primaryAgent.asyncRunWithMessages({
       getMessages,
       appendEntry,
       allocId,
-      activationTurnIndex,
+      turnIndex: activationTurnIndex,
       baseRoundIndex,
-      this._toolExecutors,
+      toolExecutors: this._toolExecutors,
       onToolCall,
       onToolResult,
       onTextChunk,
       onReasoningChunk,
       onReasoningDone,
       signal,
-      (roundIndex) => getRoundContextId(roundIndex),
-      () => this._allocateContextId(),
-      this._buildCompactCheck(),
+      contextIdAllocator: (roundIndex) => getRoundContextId(roundIndex),
+      toolContextIdAllocator: () => this._allocateContextId(),
+      compactCheck: this._buildCompactCheck(),
       onTokenUpdate,
-      this._thinkingLevel === "none" ? undefined : this._thinkingLevel,
-      this._promptCacheKey,
-      this._compactInProgress ? undefined : (() => this.onSaveRequest?.()),
-      this._beforeToolExecute,
-      () => null,
-      () => this._drainInboxAsEntries(),
-      !suppressStreaming,
-      emitRetryAttempt,
-      emitRetrySuccess,
-      emitRetryExhausted,
-      onToolCallPartialCb,
-      this._resolveToolCallVisibility,
-      updateEntryFn,
-      discardEntryFn,
-    );
+      thinkingLevel: this._thinkingLevel === "none" ? undefined : this._thinkingLevel,
+      promptCacheKey: this._promptCacheKey,
+      onSaveCheckpoint: this._compactInProgress ? undefined : (() => this.onSaveRequest?.()),
+      beforeToolExecute: this._beforeToolExecute,
+      getNotification: () => null,
+      // Round-boundary inbox drain. Suppressed during compact: anything
+      // drained mid-compact would land before the upcoming compact_marker
+      // and be hidden from the model afterwards (Q6).
+      onToolRoundComplete: () => {
+        if (!this._compactInProgress) this._drainInboxAsEntries();
+      },
+      streamCallbacksOwnEntries: !suppressStreaming,
+      onRetryAttempt: emitRetryAttempt,
+      onRetrySuccess: emitRetrySuccess,
+      onRetryExhausted: emitRetryExhausted,
+      onToolCallPartial: onToolCallPartialCb,
+      resolveToolCallVisibility: this._resolveToolCallVisibility,
+      updateEntry: updateEntryFn,
+      discardEntry: discardEntryFn,
+    });
   }
 
   // ==================================================================
@@ -5957,10 +6091,13 @@ export class Session {
       throw new Error(`Ask kind mismatch (active=${ask.kind}, expected=agent_question).`);
     }
 
+    const toolCallId = ask.payload.toolCallId || "ask";
+    const anchor = this._toolCallAnchor(toolCallId, ask);
+
     // Create ask_resolution entry in log
     this._appendEntry(createAskResolution(
       this._nextLogId("ask_resolution"),
-      this._turnCount,
+      anchor.turnIndex,
       { answers: decision.answers },
       askId,
       "agent_question",
@@ -5974,14 +6111,13 @@ export class Session {
       ask.payload.questions,
       decision,
     );
-    const toolCallId = ask.payload.toolCallId || "ask";
     const toolResultContextId =
       this._findToolCallContextId(toolCallId, ask.roundIndex)
         ?? this._allocateContextId();
     this._appendEntry(createToolResultEntry(
       this._nextLogId("tool_result"),
-      this._turnCount,
-      ask.roundIndex ?? this._computeNextRoundIndex(),
+      anchor.turnIndex,
+      anchor.roundIndex,
       {
         toolCallId,
         toolName: "ask",
@@ -6036,10 +6172,12 @@ export class Session {
     const isDeny = choiceLabel === "Deny";
     const offer = !isDeny ? payload.offers[choiceIndex] : null;
 
+    const anchor = this._toolCallAnchor(payload.toolCallId, ask);
+
     // Log the resolution
     this._appendEntry(createAskResolution(
       this._nextLogId("ask_resolution"),
-      this._turnCount,
+      anchor.turnIndex,
       { choice: choiceLabel, toolName: payload.toolName },
       askId,
       "approval",
@@ -6052,8 +6190,8 @@ export class Session {
         ?? this._allocateContextId();
       this._appendEntry(createToolResultEntry(
         this._nextLogId("tool_result"),
-        this._turnCount,
-        ask.roundIndex ?? this._computeNextRoundIndex(),
+        anchor.turnIndex,
+        anchor.roundIndex,
         {
           toolCallId,
           toolName: payload.toolName,
@@ -6126,11 +6264,7 @@ export class Session {
   }
 
   private _execShowContext(_args: Record<string, unknown>): ToolResult {
-    const mc = this.primaryAgent.modelConfig;
-    const provider = (this.primaryAgent as any)._provider;
-    const effectiveMax = mc.maxTokens;
-    const budget = provider.budgetCalcMode === "full_context"
-      ? this._effectiveContextLength(mc) : this._effectiveContextLength(mc) - effectiveMax;
+    const { budget } = this._contextBudgetInfo();
 
     const contextMap = generateShowContext(this._log, this._lastInputTokens, budget);
     return new ToolResult({ content: contextMap });
@@ -6414,12 +6548,7 @@ export class Session {
     // (see _checkAndInjectHint) and are expected to finish or stop.
     if (!this._capabilities.includeSpawnTool) return undefined;
 
-    const mc = this.primaryAgent.modelConfig;
-    const provider = (this.primaryAgent as any)._provider;
-    const effectiveMax = mc.maxTokens;
-    const budget = provider.budgetCalcMode === "full_context"
-      ? this._effectiveContextLength(mc)
-      : this._effectiveContextLength(mc) - effectiveMax;
+    const { budget, fullContext } = this._contextBudgetInfo();
 
     if (budget <= 0) return undefined;
 
@@ -6430,7 +6559,7 @@ export class Session {
       // mean the turn is ending; compact at the start of the NEXT turn instead.
       if (!hasToolCalls) return { compactNeeded: false };
 
-      const tokensToCheck = provider.budgetCalcMode === "full_context"
+      const tokensToCheck = fullContext
         ? inputTokens
         : inputTokens + outputTokens;
 
@@ -6611,11 +6740,7 @@ export class Session {
   private _checkAndInjectHint(_result: ToolLoopResult): void {
     if (this._compactInProgress) return;
 
-    const mc = this.primaryAgent.modelConfig;
-    const provider = (this.primaryAgent as any)._provider;
-    const effectiveMax = mc.maxTokens;
-    const budget = provider.budgetCalcMode === "full_context"
-      ? this._effectiveContextLength(mc) : this._effectiveContextLength(mc) - effectiveMax;
+    const { budget } = this._contextBudgetInfo();
     if (budget <= 0) return;
 
     const ratio = this._lastInputTokens / budget;
@@ -6656,11 +6781,7 @@ export class Session {
    * Reset thresholds are auto-derived from trigger thresholds.
    */
   private _updateHintStateAfterApiCall(): void {
-    const mc = this.primaryAgent.modelConfig;
-    const provider = (this.primaryAgent as any)._provider;
-    const effectiveMax = mc.maxTokens;
-    const budget = provider.budgetCalcMode === "full_context"
-      ? this._effectiveContextLength(mc) : this._effectiveContextLength(mc) - effectiveMax;
+    const { budget } = this._contextBudgetInfo();
     if (budget <= 0) return;
 
     const ratio = this._lastInputTokens / budget;
@@ -7008,10 +7129,13 @@ export class Session {
       return new ToolResult({ content: `Agent '${childId}' is one-shot and cannot receive messages.` });
     }
     if (handle.lifecycle === "archived") {
-      // Persistent archived child still in _childSessions — revive in-place
+      // Persistent archived child still in _childSessions — revive in-place.
       if (handle.mode === "persistent") {
         handle.lastActivityAt = Date.now();
-        (handle.session as Session)._inbox.push(msg);
+        // Standard delivery (never a raw inbox push): it populates the
+        // bookkeeping fields the child's drain invariant requires. wake:false
+        // because we start the turn explicitly right after.
+        (handle.session as Session)._deliverMessage({ ...msg, wake: false });
         this._startChildTurn(handle, "", { skipUserInput: true });
         return new ToolResult({ content: `Agent '${childId}' revived and message sent.` });
       }
@@ -7031,8 +7155,10 @@ export class Session {
       return new ToolResult({ content: `Message sent to '${childId}'.` });
     }
 
-    // idle — queue message and start turn
-    (handle.session as Session)._inbox.push(msg);
+    // idle — queue message and start turn. Standard delivery populates the
+    // bookkeeping fields the drain invariant requires; wake:false because we
+    // start the turn explicitly right after.
+    (handle.session as Session)._deliverMessage({ ...msg, wake: false });
     this._startChildTurn(handle, "", { skipUserInput: true });
     return new ToolResult({ content: `Message sent to '${childId}'.` });
   }
@@ -7061,29 +7187,6 @@ export class Session {
       this.onSaveRequest?.();
     }
     return { accepted: true };
-  }
-
-  interruptAllChildSessions(): { accepted: boolean; interrupted: number; reason?: string } {
-    const interrupted = this._cascadeKillRunningChildren("user_mass_interrupt");
-    if (interrupted === 0) {
-      return { accepted: false, interrupted: 0, reason: "not_live" };
-    }
-    const message = `User interrupted ${interrupted} sub-agent${interrupted === 1 ? "" : "s"}.`;
-    this._appendEntry(createStatus(
-      this._nextLogId("status"),
-      this._turnCount,
-      message,
-      "children_interrupted",
-    ), false);
-    this._deliverMessage({
-      type: "system_notice",
-      sender: "system",
-      content: message,
-      timestamp: Date.now(),
-    });
-    this._notifyLogListeners();
-    this.onSaveRequest?.();
-    return { accepted: true, interrupted };
   }
 
   private async _execSpawn(args: Record<string, unknown>): Promise<ToolResult> {
@@ -7340,8 +7443,14 @@ export class Session {
     this._childSessions.set(record.id, handle);
     this._archivedChildren.delete(record.id);
 
-    // Deliver message and start turn
-    handle.session._inbox.push({ type: "user_input", sender: "main", content: messageContent, timestamp: Date.now() });
+    // Deliver message and start turn (standard delivery — see _sendMessageToChild)
+    handle.session._deliverMessage({
+      type: "user_input",
+      sender: "main",
+      content: messageContent,
+      timestamp: Date.now(),
+      wake: false,
+    });
     this._startChildTurn(handle, "", { skipUserInput: true });
 
     // Trigger root save since child references changed
@@ -7360,10 +7469,6 @@ export class Session {
       this._buildShellReport(),
     ];
     return new ToolResult({ content: sections.join("\n") });
-  }
-
-  private _sweepSettledAgents(): void {
-    // Child sessions settle themselves via _startChildTurn/_finishChildTurn.
   }
 
   // ------------------------------------------------------------------
@@ -7423,14 +7528,6 @@ export class Session {
     const shell = this._buildShellReport();
     const parts = [header, brief, shell].filter(Boolean);
     return new ToolResult({ content: parts.join("\n\n") });
-  }
-
-  // ------------------------------------------------------------------
-  // Elapsed helpers
-  // ------------------------------------------------------------------
-
-  private _getElapsed(entry: ChildSessionHandle): number {
-    return (performance.now() - entry.startTime) / 1000;
   }
 
   private _buildQueuedRootMessageSummary(): string {
@@ -7608,8 +7705,8 @@ export class Session {
     const agent = new Agent({
       name: taskId,
       modelConfig,
-      // Pass the raw template prompt — the child Session appends the single
-      // Session Configuration section itself during its own assembly.
+      // Pass the raw template prompt — the child Session layers memory, mode
+      // prompt, and path variables itself during its own assembly.
       systemPrompt: templateAgent.systemPrompt,
       tools,
       maxToolRounds: templateAgent.maxToolRounds,
@@ -7626,8 +7723,8 @@ export class Session {
     const agent = new Agent({
       name: taskId,
       modelConfig,
-      // Pass the raw template prompt — the child Session appends the single
-      // Session Configuration section itself during its own assembly.
+      // Pass the raw template prompt — the child Session layers memory, mode
+      // prompt, and path variables itself during its own assembly.
       systemPrompt: templateAgent.systemPrompt,
       tools: [...templateAgent.tools],
       maxToolRounds: templateAgent.maxToolRounds,
@@ -7963,12 +8060,9 @@ export class Session {
   // ==================================================================
 
   async close(): Promise<void> {
-    // 1. Freeze inboxes before interrupt (interrupt clears _inbox)
+    // 1. Freeze the root inbox before interrupt. Child inboxes need no
+    // freezing: _suspendAllChildSessions persists each child's live inbox.
     const frozenRootInbox = [...this._inbox];
-    const frozenChildInboxes = new Map<string, MessageEnvelope[]>();
-    for (const [id, handle] of this._childSessions) {
-      frozenChildInboxes.set(id, [...(handle.session as Session)._inbox]);
-    }
 
     // 2-3. Interrupt root turn and wait for it to complete
     this.requestTurnInterrupt();

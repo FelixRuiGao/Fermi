@@ -16,7 +16,7 @@ function baseContext(registry: ReturnType<typeof buildDefaultRegistry>): Command
 }
 
 describe("slash command chain", () => {
-  it("/help returns shortcut text aligned with current key bindings", async () => {
+  it("/help opens the help panel via the panel sentinel", async () => {
     const registry = buildDefaultRegistry();
     const help = registry.lookup("/help");
     expect(help).toBeTruthy();
@@ -24,11 +24,10 @@ describe("slash command chain", () => {
     const ctx = baseContext(registry);
     await help!.handler(ctx, "");
 
+    // The UI intercepts this sentinel and opens the help panel; the shortcut
+    // text lives in the panel component, not the command output.
     const rendered = (ctx.showMessage as ReturnType<typeof mock>).mock.calls[0]?.[0] as string;
-    expect(rendered).toContain("Option+Enter Insert newline");
-    expect(rendered).toContain("Ctrl+N       Insert newline");
-    expect(rendered).not.toContain("Shift+Enter");
-    expect(rendered).not.toContain("Alt+Enter");
+    expect(rendered).toBe("__help_panel__");
   });
 
   it("/summarize delegates selected context to the manual summarize callback", async () => {

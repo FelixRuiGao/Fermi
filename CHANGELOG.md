@@ -9,7 +9,13 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
-## v0.3.8
+- Fixed: sending a message while an approval prompt (or agent question) was pending could permanently break the session — the approved tool silently never ran, and every later turn failed with an API projection error until the session was resumed from disk. The pending ask now keeps the session in a true waiting state: messages queue and are delivered when work resumes, and the approved tool always executes. GUI/VSCode (server mode) were the most exposed since they have no UI-level guard.
+- Fixed: pressing stop/interrupt while an approval prompt was pending through the server API (GUI/VSCode) erased the question without an outcome and corrupted the conversation record. All stop entry points now resolve a pending ask as "deny and stop" — same clean wrap-up the TUI's Esc already did.
+- Fixed: sending a message to an idle or archived persistent sub-agent crashed its turn immediately (the agent reported `failed` without doing anything). All parent→child deliveries now go through the standard delivery path.
+- Fixed: a new message arriving right after an approval was granted (but before work resumed) was silently dropped when sent through `turn`; it is now queued and delivered, and both resume entry points behave identically.
+- Changed: user input during context compaction is now rejected with a hint ("Compacting context — try again in a moment") instead of being silently folded into the compaction summary. Automatic messages (sub-agent results, shell exits) arriving mid-compact are held and delivered after the compaction marker.
+- Fixed: `/compact` no longer leaves bookkeeping behind that could trigger a ghost auto-turn with no new input.
+- Fixed: interrupting the agent right as it summarized context could leak the half-finished summary into a later, unrelated turn.
 
 - Fixed: pressing Enter in a picker's custom-input field (e.g. /review's "Custom review instructions", /summarize_hint's level inputs) did nothing and cleared the field — broken since the feature shipped in v0.3.7. The deferred re-accept ran against the previous render's state and re-entered input mode instead of submitting; Enter now submits directly.
 - Fixed: `/review` picker lost note text and custom-input text in every path — the user message bubble showed bare `/review` instead of the user's instructions. Root cause: commands that registered `options` had their picker intercepted before the handler ran; the accept path serialized the result to a string and dropped the note. Unified 7 commands (`/review`, `/summarize_hint`, `/permission`, `/rewind`, `/theme`, `/diff`, `/autoupdate`) to use handler-level `promptCommandPicker` exclusively, which returns structured `{ value, note }` through a resolver. `promptCommandPicker` now accepts an optional `{ title, allowNote }` config.

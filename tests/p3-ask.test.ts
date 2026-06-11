@@ -33,7 +33,6 @@ function makeSessionLike(projectRoot: string): any {
   s._currentMasterPlan = undefined;
   s._currentPhasePlan = undefined;
   s._turnInFlight = null;
-  s._turnRelease = null;
   s._inbox = [];
   s._activeAgents = new Map();
   s._recentSessionEvents = [];
@@ -87,10 +86,6 @@ describe("P3 ask behavior", () => {
         { id: "ask-tool-1", name: "ask", arguments: { questions: [] } },
         { toolCallId: "ask-tool-1", toolName: "ask", agentName: "Primary", contextId: "ask-ctx-1" },
       ));
-
-      expect(() =>
-        Session.prototype.resolveAsk.call(s, thrown!.askId, "anything"),
-      ).toThrow(/resolveAgentQuestionAsk/i);
 
       Session.prototype.resolveAgentQuestionAsk.call(s, thrown!.askId, {
         answers: [

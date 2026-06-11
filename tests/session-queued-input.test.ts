@@ -81,7 +81,7 @@ describe("queued user input", () => {
       let thirdDeliveryResult: unknown;
 
       (session.primaryAgent as any).asyncRunWithMessages = async (
-        getMessages: () => Array<Record<string, unknown>>,
+        opts: { getMessages: () => Array<Record<string, unknown>> },
       ) => {
         callCount += 1;
         if (callCount === 1) {
@@ -94,7 +94,7 @@ describe("queued user input", () => {
           return textResult("first response", callCount);
         }
 
-        const messages = getMessages();
+        const messages = opts.getMessages();
         secondActivationSawQueuedMessage = messages.some((message) =>
           message.role === "user" &&
           String(message.content).includes("second while first is still running")
@@ -175,10 +175,10 @@ describe("queued user input", () => {
       let sawIdleDeliveredMessage = false;
 
       (session.primaryAgent as any).asyncRunWithMessages = async (
-        getMessages: () => Array<Record<string, unknown>>,
+        opts: { getMessages: () => Array<Record<string, unknown>> },
       ) => {
         callCount += 1;
-        const messages = getMessages();
+        const messages = opts.getMessages();
         sawIdleDeliveredMessage = messages.some((message) =>
           message.role === "user" &&
           String(message.content).includes("idle delivery")

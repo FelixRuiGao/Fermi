@@ -14,45 +14,6 @@ import { buildActiveContextView, flattenActiveContextEntries } from "./active-co
 import { inferThinkingArtifact, normalizeThinkingArtifact } from "./thinking-artifact.js";
 
 // ------------------------------------------------------------------
-// Summary visibility (append-only backward scan)
-// ------------------------------------------------------------------
-
-/**
- * Build the set of context IDs that should be hidden because a later
- * summary entry covers them. Also returns the set of summary context IDs
- * that are themselves superseded by an even later summary.
- *
- * Algorithm: walk entries backward. Every summary's coveredContextIds are
- * added to the hidden set. A summary whose own contextId is already in
- * the hidden set is itself superseded (hidden).
- */
-function buildSummaryCoveredSet(entries: LogEntry[], windowStartIdx: number): Set<string> {
-  const covered = new Set<string>();
-  for (let i = entries.length - 1; i >= windowStartIdx; i--) {
-    const entry = entries[i];
-    if (entry.discarded || entry.type !== "summary") continue;
-    const meta = entry.meta as Record<string, unknown>;
-    const ids = meta.coveredContextIds as string[] | undefined;
-    if (ids) {
-      for (const id of ids) covered.add(id);
-    }
-  }
-  return covered;
-}
-
-/**
- * Check whether a specific entry should be hidden by summary coverage.
- * A summary entry is hidden if its own contextId is in the covered set.
- * A non-summary entry is hidden if its contextId is in the covered set.
- */
-function isCoveredBySummary(entry: LogEntry, coveredSet: Set<string>): boolean {
-  if (coveredSet.size === 0) return false;
-  const ctxId = (entry.meta as Record<string, unknown>)["contextId"];
-  if (ctxId === undefined || ctxId === null) return false;
-  return coveredSet.has(String(ctxId));
-}
-
-// ------------------------------------------------------------------
 // TuiDisplayKind → ConversationEntryKind mapping
 // ------------------------------------------------------------------
 
@@ -88,11 +49,10 @@ const PRIMARY_ROUND_ENTRY_TYPES = new Set<LogEntry["type"]>([
   "tool_result",
 ]);
 
-function isProjectableTuiEntry(entry: LogEntry, coveredSet?: Set<string>): boolean {
+function isProjectableTuiEntry(entry: LogEntry): boolean {
   if (entry.discarded) return false;
   if (entry.type === "input_received") return false;
   if (!entry.tuiVisible) return false;
-  if (coveredSet && isCoveredBySummary(entry, coveredSet)) return false;
   if (
     entry.type === "sub_agent_start" ||
     entry.type === "sub_agent_tool_call" ||
@@ -338,9 +298,9 @@ function toConversationEntries(
   return entries;
 }
 
-function isPrimaryRoundEntry(entry: LogEntry, coveredSet?: Set<string>): boolean {
+function isPrimaryRoundEntry(entry: LogEntry): boolean {
   return (
-    isProjectableTuiEntry(entry, coveredSet) &&
+    isProjectableTuiEntry(entry) &&
     entry.roundIndex !== undefined &&
     PRIMARY_ROUND_ENTRY_TYPES.has(entry.type)
   );
@@ -396,7 +356,7 @@ function buildToolElapsedMap(entries: LogEntry[]): Map<string, number> {
   return elapsed;
 }
 
-function projectTuiWindow(entries: LogEntry[], coveredSet?: Set<string>): ConversationEntry[] {
+function projectTuiWindow(entries: LogEntry[]): ConversationEntry[] {
   const result: ConversationEntry[] = [];
   const pendingSubAgentCalls: LogEntry[] = [];
   const toolElapsedMap = buildToolElapsedMap(entries);
@@ -411,7 +371,7 @@ function projectTuiWindow(entries: LogEntry[], coveredSet?: Set<string>): Conver
   while (i < entries.length) {
     const entry = entries[i];
 
-    if (!isProjectableTuiEntry(entry, coveredSet)) {
+    if (!isProjectableTuiEntry(entry)) {
       i++;
       continue;
     }
@@ -422,7 +382,7 @@ function projectTuiWindow(entries: LogEntry[], coveredSet?: Set<string>): Conver
       continue;
     }
 
-    if (isPrimaryRoundEntry(entry, coveredSet)) {
+    if (isPrimaryRoundEntry(entry)) {
       if (pendingSubAgentCalls.length > 0) {
         flushPendingSubAgentCalls();
       }
@@ -437,7 +397,7 @@ function projectTuiWindow(entries: LogEntry[], coveredSet?: Set<string>): Conver
       while (i < entries.length) {
         const candidate = entries[i];
 
-        if (!isProjectableTuiEntry(candidate, coveredSet)) {
+        if (!isProjectableTuiEntry(candidate)) {
           i++;
           continue;
         }
@@ -542,7 +502,6 @@ export function projectToTuiEntries(
   // covered by a later summary. Only the API projection hides them. This
   // gives the user the ability to scroll back and verify what the summary
   // captured (and lets pickers list groups that still exist on disk).
-  const coveredSet: Set<string> | undefined = undefined;
 
   // Find all compact_marker indices
   const compactMarkerIndices: number[] = [];
@@ -559,7 +518,7 @@ export function projectToTuiEntries(
   if (compactMarkerIndices.length >= threshold) {
     const foldUpToMarker = compactMarkerIndices[compactMarkerIndices.length - threshold];
     foldEndIdx = foldUpToMarker;
-    foldedCount = projectTuiWindow(entries.slice(0, foldEndIdx + 1), coveredSet).length;
+    foldedCount = projectTuiWindow(entries.slice(0, foldEndIdx + 1)).length;
     foldedCompactCount = compactMarkerIndices.length - threshold + 1;
   }
 
@@ -573,7 +532,7 @@ export function projectToTuiEntries(
     });
   }
 
-  result.push(...projectTuiWindow(entries.slice(foldEndIdx + 1), coveredSet));
+  result.push(...projectTuiWindow(entries.slice(foldEndIdx + 1)));
 
   return result;
 }

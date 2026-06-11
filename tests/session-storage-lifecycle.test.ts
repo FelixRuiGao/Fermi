@@ -117,6 +117,9 @@ function makeSession(
     config,
     agentTemplates: options?.agentTemplates,
     store,
+    // Isolate the prompt's memory layer: without this the Session falls back
+    // to process.cwd() and reads the repo's real AGENTS.md into the prompt.
+    projectRoot,
   });
 }
 
@@ -128,6 +131,7 @@ function stubRunActivation(session: Session, text = "ok"): void {
     totalUsage: {},
     toolHistory: [],
     compactNeeded: false,
+    endedWithoutToolCalls: true,
   });
 }
 
@@ -153,11 +157,13 @@ describe("session storage lifecycle", () => {
       const systemContent = getSystemPromptContent(session);
 
       expect(store.sessionDir).toBeUndefined();
-      expect(systemContent).toContain("# Session Configuration");
+      expect(systemContent).toContain(`ROOT=${projectRoot}`);
       expect(systemContent).toContain("/artifacts");
+      expect(systemContent).not.toContain("{PROJECT_ROOT}");
       expect(systemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(systemContent).toContain(store.projectDir);
-      expect(countOccurrences(systemContent, "# Session Configuration")).toBe(1);
+      // Prompt assembled exactly once — the agent preamble must not duplicate.
+      expect(countOccurrences(systemContent, `ROOT=${projectRoot}`)).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -179,10 +185,10 @@ describe("session storage lifecycle", () => {
       expect(result).toBe("first-response");
       expect(store.sessionDir).toBeTruthy();
       expect(artifactsDir).toBeTruthy();
-      expect(systemContent).toContain("# Session Configuration");
+      expect(systemContent).toContain(`ROOT=${projectRoot}`);
       expect(systemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(systemContent).toContain(artifactsDir as string);
-      expect(countOccurrences(systemContent, "# Session Configuration")).toBe(1);
+      expect(countOccurrences(systemContent, `ROOT=${projectRoot}`)).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -206,10 +212,10 @@ describe("session storage lifecycle", () => {
 
       const resetSystemContent = getSystemPromptContent(session);
       expect(store.sessionDir).toBeUndefined();
-      expect(resetSystemContent).toContain("# Session Configuration");
+      expect(resetSystemContent).toContain(`ROOT=${projectRoot}`);
       expect(resetSystemContent).toContain("/artifacts");
       expect(resetSystemContent).not.toContain("{SESSION_ARTIFACTS}");
-      expect(countOccurrences(resetSystemContent, "# Session Configuration")).toBe(1);
+      expect(countOccurrences(resetSystemContent, `ROOT=${projectRoot}`)).toBe(1);
 
       stubRunActivation(session, "phase-2");
       await session.turn("second");
@@ -220,10 +226,10 @@ describe("session storage lifecycle", () => {
       expect(secondSessionDir).toBeTruthy();
       expect(secondSessionDir).not.toBe(firstSessionDir);
       expect(secondArtifactsDir).toBeTruthy();
-      expect(hydratedSystemContent).toContain("# Session Configuration");
+      expect(hydratedSystemContent).toContain(`ROOT=${projectRoot}`);
       expect(hydratedSystemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(hydratedSystemContent).toContain(secondArtifactsDir as string);
-      expect(countOccurrences(hydratedSystemContent, "# Session Configuration")).toBe(1);
+      expect(countOccurrences(hydratedSystemContent, `ROOT=${projectRoot}`)).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -390,9 +396,10 @@ describe("session storage lifecycle", () => {
       session.lastInputTokens = 7171;
       session.lastTotalTokens = 7510;
 
-      (session.primaryAgent as any).asyncRunWithMessages = async (...args: unknown[]) => {
-        const onTokenUpdate = args[14] as ((inputTokens: number, usage?: { totalTokens?: number; cacheReadTokens?: number }) => void) | undefined;
-        onTokenUpdate?.(0, { totalTokens: 0, cacheReadTokens: 0 });
+      (session.primaryAgent as any).asyncRunWithMessages = async (
+        opts: { onTokenUpdate?: (inputTokens: number, usage?: { totalTokens?: number; cacheReadTokens?: number }) => void },
+      ) => {
+        opts.onTokenUpdate?.(0, { totalTokens: 0, cacheReadTokens: 0 });
         return {
           text: "",
           toolHistory: [],
@@ -700,7 +707,9 @@ describe("session storage lifecycle", () => {
       expect(childSystemContent).not.toContain("{PROJECT_ROOT}");
       expect(childSystemContent).not.toContain("{SESSION_ARTIFACTS}");
       expect(childSystemContent).toContain(`artifacts at ${handle.artifactsDir}`);
-      expect(countOccurrences(childSystemContent, "# Session Configuration")).toBe(1);
+      // Template prompt must appear exactly once — instantiation mutates the
+      // agent's prompt, so a double-append would duplicate it.
+      expect(countOccurrences(childSystemContent, "Explorer rooted at")).toBe(1);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });
@@ -873,7 +882,7 @@ describe("session storage lifecycle", () => {
     }
   });
 
-  it("requestTurnInterrupt cascades to running children and drops pending state", () => {
+  it("requestTurnInterrupt resolves a pending ask as deny-and-stop without cascading to children", () => {
     const baseDir = makeTempDir("fermi-lifecycle-base-");
     const projectRoot = makeTempDir("fermi-lifecycle-project-");
     try {
@@ -956,16 +965,33 @@ describe("session storage lifecycle", () => {
         recentOutput: [],
         explicitKill: false,
       });
-      (session as any)._activeAsk = { id: "ask-1", payload: {}, kind: "approval" };
-      (session as any)._pendingTurnState = { stage: "pre_user_input" };
+      (session as any)._activeAsk = {
+        id: "ask-1",
+        kind: "approval",
+        createdAt: new Date().toISOString(),
+        source: { agentId: "Primary" },
+        summary: "Allow edit_file?",
+        roundIndex: 0,
+        payload: {
+          toolCallId: "approval-call",
+          toolName: "edit_file",
+          toolSummary: "edit_file src/a.ts",
+          permissionClass: "write_potent",
+          offers: [],
+        },
+        options: ["Deny"],
+      };
+      (session as any)._pendingTurnState = { stage: "activation" };
 
       const decision = session.requestTurnInterrupt();
 
-      // requestTurnInterrupt aborts main turn only — no cascade to children or shells
+      // Stop during a pending ask = deny-and-stop (Q9): the ask gets a
+      // definite declined outcome instead of vanishing.
       expect(decision).toEqual({ accepted: true });
       expect((session as any)._activeAsk).toBeNull();
       expect((session as any)._pendingTurnState).toBeNull();
-      // Children and shells are NOT killed by requestTurnInterrupt (use interruptAllChildAgents / killAllShells separately)
+      expect(session.log.some((entry) => entry.type === "ask_resolution")).toBe(true);
+      // No cascade to children or shells (use interruptAllChildAgents / killAllShells separately)
       expect(workingAbort.signal.aborted).toBe(false);
       expect(finishedAbort.signal.aborted).toBe(false);
       expect(killShell).not.toHaveBeenCalled();

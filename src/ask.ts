@@ -14,6 +14,12 @@ export interface AskBase {
   source: AskSource;
   summary: string;
   roundIndex?: number;
+  /**
+   * Turn the gated tool_call belongs to, captured at suspension time.
+   * All resolution bookkeeping (ask_resolution, tool_result) must anchor to
+   * this turn — the live turn counter may advance while the ask is pending.
+   */
+  turnIndex?: number;
 }
 
 export type AgentQuestionOptionKind = "normal" | "custom_input" | "discuss_further";

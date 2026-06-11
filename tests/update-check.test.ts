@@ -235,7 +235,15 @@ describe("checkForUpdates", () => {
     rmSync(tempHome, { recursive: true, force: true });
   });
 
-  it("returns available state synchronously from cache", () => {
+  it("ignores the on-disk cache and always starts a fresh background check", () => {
+    // The cache short-circuit was removed on purpose: a stale cache must not
+    // produce a synchronous "available"/"idle" verdict. The check always
+    // starts in "checking" and resolves from the network.
+    let resolveFetch!: (value: unknown) => void;
+    globalThis.fetch = mock(async () => await new Promise((resolve) => {
+      resolveFetch = resolve;
+    })) as unknown as typeof fetch;
+
     mkdirSync(tempFermiHome, { recursive: true });
     writeFileSync(join(tempFermiHome, ".update-check.json"), JSON.stringify({
       lastCheck: Date.now(),
@@ -243,21 +251,9 @@ describe("checkForUpdates", () => {
     }));
 
     const getState = checkForUpdates("0.1.0", tempFermiHome);
-    const state = getState();
-
-    expect(state.phase).toBe("available");
-    expect(state.latestVersion).toBe("0.2.0");
-  });
-
-  it("returns idle state when no update is available from cache", () => {
-    mkdirSync(tempFermiHome, { recursive: true });
-    writeFileSync(join(tempFermiHome, ".update-check.json"), JSON.stringify({
-      lastCheck: Date.now(),
-      latestVersion: "0.1.0",
-    }));
-
-    const getState = checkForUpdates("0.1.0", tempFermiHome);
-    expect(getState().phase).toBe("idle");
+    expect(getState().phase).toBe("checking");
+    expect(globalThis.fetch).toHaveBeenCalled();
+    resolveFetch({ ok: false, status: 500 });
   });
 
   it("starts in checking phase before background fetch completes", async () => {

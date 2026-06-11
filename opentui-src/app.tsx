@@ -961,11 +961,9 @@ export function OpenTuiApp({
         handleProgressRef.current(event);
       },
     });
-    session._progress = reporter;
+    session.setProgressReporter?.(reporter);
     return () => {
-      if (session._progress === reporter) {
-        session._progress = undefined;
-      }
+      session.clearProgressReporter?.(reporter);
     };
   }, [session, verbose]);
 
@@ -1874,7 +1872,9 @@ export function OpenTuiApp({
         const decision = session.deliverMessage("user", input);
         queuedInputsRef.current = projectQueuedInputs([...(session.log ?? [])]);
         if (decision && decision.accepted === false) {
-          showHint("A message is already queued");
+          showHint(decision.reason === "compact_in_progress"
+            ? "Compacting context — try again in a moment"
+            : "A message is already queued");
           return;
         }
         appendPromptHistory(input);

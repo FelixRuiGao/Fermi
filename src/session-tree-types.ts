@@ -58,7 +58,9 @@ export interface ChildSessionMetaRecord {
 /** Message type determines rendering category — not the sender string. */
 export type MessageType = "user_input" | "peer_message" | "system_notice";
 
-export type DeliverMessageRejectionReason = "queued_user_input_pending";
+export type DeliverMessageRejectionReason =
+  | "queued_user_input_pending"
+  | "compact_in_progress";
 
 export type DeliverMessageResult =
   | { accepted: true }

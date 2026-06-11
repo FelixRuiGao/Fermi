@@ -1037,6 +1037,11 @@ export class Config {
     return this._modelTiers;
   }
 
+  /** Replace the runtime tier map (persisted separately via settings). */
+  setModelTiers(tiers: { high?: ModelTierEntry; medium?: ModelTierEntry; low?: ModelTierEntry }): void {
+    this._modelTiers = tiers;
+  }
+
   // -- Agent model pins --
 
   get agentModels(): Record<string, AgentModelEntry> {

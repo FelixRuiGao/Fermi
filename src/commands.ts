@@ -1513,7 +1513,7 @@ async function cmdAutoUpdate(ctx: CommandContext, args: string): Promise<void> {
 
 async function cmdRename(ctx: CommandContext, args: string): Promise<void> {
   const session = ctx.session;
-  if (!session || (session._turnCount ?? 0) === 0) {
+  if (!session || (session.turnCount ?? 0) === 0) {
     ctx.showMessage("Start a conversation first before renaming.");
     return;
   }
@@ -1746,9 +1746,7 @@ async function cmdTier(ctx: CommandContext, args: string): Promise<void> {
   if (trimmed === "clear") {
     persistSettingsPatch({ model_tiers: {} }, ctx.fermiHomeDir);
     // Update runtime config
-    if (session.config?._modelTiers !== undefined) {
-      (session.config as any)._modelTiers = {};
-    }
+    session.config?.setModelTiers?.({});
     ctx.showMessage("All model tiers cleared. Sub-agents will inherit the main model.");
     return;
   }
@@ -1785,9 +1783,7 @@ async function cmdTier(ctx: CommandContext, args: string): Promise<void> {
     const updatedTiers = { ...tiers };
     delete updatedTiers[level];
     persistSettingsPatch({ model_tiers: updatedTiers }, ctx.fermiHomeDir);
-    if (session.config?._modelTiers !== undefined) {
-      (session.config as any)._modelTiers = updatedTiers;
-    }
+    session.config?.setModelTiers?.(updatedTiers);
     ctx.showMessage(`Tier '${level}' cleared. Sub-agents at this level will inherit the main model.`);
     return;
   }
@@ -1848,9 +1844,7 @@ async function cmdTier(ctx: CommandContext, args: string): Promise<void> {
   persistSettingsPatch({ model_tiers: updatedTiers }, ctx.fermiHomeDir);
 
   // Update runtime config
-  if (session.config?._modelTiers !== undefined) {
-    (session.config as any)._modelTiers = updatedTiers;
-  }
+  session.config?.setModelTiers?.(updatedTiers);
 
   const displayLabel = describeTierModel(session, tierEntry);
   ctx.showMessage(`Tier '${level}' set to: ${displayLabel} [${thinkingLevel}]`);
