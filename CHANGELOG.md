@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.9
+
 - Fixed: sending a message while an approval prompt (or agent question) was pending could permanently break the session — the approved tool silently never ran, and every later turn failed with an API projection error until the session was resumed from disk. The pending ask now keeps the session in a true waiting state: messages queue and are delivered when work resumes, and the approved tool always executes. GUI/VSCode (server mode) were the most exposed since they have no UI-level guard.
 - Fixed: pressing stop/interrupt while an approval prompt was pending through the server API (GUI/VSCode) erased the question without an outcome and corrupted the conversation record. All stop entry points now resolve a pending ask as "deny and stop" — same clean wrap-up the TUI's Esc already did.
 - Fixed: sending a message to an idle or archived persistent sub-agent crashed its turn immediately (the agent reported `failed` without doing anything). All parent→child deliveries now go through the standard delivery path.
@@ -30,6 +32,7 @@ Release notes. A missing or empty section fails CI.
 - Changed: summaries are now ordinary context — any summary (including /summarize-created ones) can be re-summarized and merged like other context groups. A summary belongs to the turn of the nearest preceding user message, so the /summarize picker is a pure turn list (no separate "(Summary)" entries), and adjacent summaries whose covered turns are gone can be merged in one operation.
 - Changed: when /summarize covers user messages, their original words are preserved verbatim inside `<user-message>` blocks in the summary (attached file contents are still summarized as data); re-summarization carries these blocks through unchanged. The "exceptionally long user message may be tightened" exception is removed.
 - Changed: system notices and peer messages are no longer protected like user messages — the agent may summarize them; only the user's own messages anchor turns and stay untouchable.
+- Refactored: session runtime split into 7 sub-modules (`src/session/`) — rewind engine, session log store, context manager, compact prompts, sub-agent factory, child session manager, and session persistence. `session.ts` reduced from ~8100 to ~5865 lines. Session restore no longer constructs a shadow Session; the restore pipeline is now pure-parse (`parseRestoredState`) + single-pass apply, sharing log surgery functions with the live interrupt path. No user-facing behavior change.
 
 ## v0.3.7
 
