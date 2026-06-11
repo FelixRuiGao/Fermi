@@ -10,8 +10,12 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <style>
+    html.lang-redirecting { background: #0a0c11; }
+    html.lang-redirecting body { display: none; }
+  </style>
   <script is:inline>
-    (function(){var s=localStorage.getItem('fermi-docs-lang');if(!s&&navigator.languages&&navigator.languages.some(function(l){return/^zh\b/i.test(l)})){window.location.replace('/zh/')}})();
+    (function(){var s=localStorage.getItem('fermi-docs-lang');if(!s&&navigator.languages&&navigator.languages.some(function(l){return/^zh\b/i.test(l)})){document.documentElement.classList.add('lang-redirecting');window.location.replace('/zh/')}})();
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fermi — the coding agent that manages its own contexts</title>
