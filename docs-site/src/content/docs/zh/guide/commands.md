@@ -86,6 +86,8 @@ compact 后，代理会从新的上下文窗口开始，其中只包含延续摘
 - **A commit** — 按 SHA 评审指定 commit
 - **Custom instructions** — 提供自定义评审重点
 
+也可以直接传入指令：`/review 检查 SQL 注入风险`。选择器中按 Tab 可为任意选项附加额外说明。
+
 ## 模型命令
 
 ### `/model`

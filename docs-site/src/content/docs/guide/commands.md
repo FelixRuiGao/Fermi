@@ -86,6 +86,8 @@ Run a code review. Opens a picker to choose what to review:
 - **A commit** — review a specific commit by SHA
 - **Custom instructions** — provide your own review focus
 
+You can also pass instructions inline: `/review check for SQL injection risks`. The picker supports adding extra instructions (Tab) to any option.
+
 ## Model Commands
 
 ### `/model`
