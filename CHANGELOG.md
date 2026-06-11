@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.8
+
 - Fixed: pressing Enter in a picker's custom-input field (e.g. /review's "Custom review instructions", /summarize_hint's level inputs) did nothing and cleared the field — broken since the feature shipped in v0.3.7. The deferred re-accept ran against the previous render's state and re-entered input mode instead of submitting; Enter now submits directly.
 - Fixed: `/review` picker lost note text and custom-input text in every path — the user message bubble showed bare `/review` instead of the user's instructions. Root cause: commands that registered `options` had their picker intercepted before the handler ran; the accept path serialized the result to a string and dropped the note. Unified 7 commands (`/review`, `/summarize_hint`, `/permission`, `/rewind`, `/theme`, `/diff`, `/autoupdate`) to use handler-level `promptCommandPicker` exclusively, which returns structured `{ value, note }` through a resolver. `promptCommandPicker` now accepts an optional `{ title, allowNote }` config.
 - Fixed: background shells (dev servers, watchers) are no longer leaked as orphan processes when the TUI exits — quitting, fatal errors, and SIGHUP/SIGTERM now kill all tracked shells before the process dies. Previously the cleanup rode on an un-awaited `session.close()` that never reached its kill step.
