@@ -57,6 +57,12 @@ import type { FileMutation } from "./tools/basic.js";
 import type { RewindPlan, RewindApplyResult } from "./ui/contracts.js";
 import { RewindEngine } from "./session/rewind-engine.js";
 import { SessionLog, type TurnListing } from "./session/session-log.js";
+import { ContextManager } from "./session/context-manager.js";
+import {
+  COMPACT_PROMPT_OUTPUT,
+  COMPACT_PROMPT_TOOLCALL,
+  appendManualInstruction,
+} from "./session/compact-prompts.js";
 import { buildActiveContextView } from "./active-context.js";
 import { execSummarizeContextOnLog } from "./summarize-context.js";
 import { resolveSkillContent, loadSkillsMulti, type SkillMeta } from "./skills/loader.js";
@@ -173,8 +179,6 @@ import {
 import { describeModel } from "./model-presentation.js";
 import {
   type ContextThresholds,
-  DEFAULT_THRESHOLDS,
-  computeHysteresisThresholds,
   validateSummarizeHintLevels,
 } from "./settings.js";
 import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
@@ -211,98 +215,6 @@ const MAX_ACTIVATIONS_PER_TURN = 30;
 const SUB_AGENT_OUTPUT_LIMIT = 12_000;
 const SUB_AGENT_TIMEOUT = 600_000; // milliseconds
 const MAX_COMPACT_PHASE_ROUNDS = 10;       // max activations during compact phase
-
-// -- Compact Prompt: Output scenario --
-const COMPACT_PROMPT_OUTPUT = `Condense this conversation into a continuation prompt — imagine you're writing a briefing for a fresh instance of yourself who must seamlessly pick up where we left off, with zero access to the original conversation.
-
-**Before writing the continuation prompt**, make sure any stable, long-term knowledge from this session has been written to AGENTS.md if it belongs there.
-
-**What the new instance will already have:** your system prompt and AGENTS.md persistent memory are automatically re-injected after compact. Do not duplicate their contents in the continuation prompt — focus on what they don't cover: current progress, session-specific context, and in-flight work state.
-
-Your summary should capture everything that matters and nothing that doesn't. Use whatever structure best fits the actual content — there is no fixed template. But as you write, pressure-test yourself against these questions:
-
-- **What are we trying to do?** The user's intent, goals, and any constraints or preferences they've expressed — stated or implied.
-- **What do we know now that we didn't at the start?** Key discoveries, failed approaches, edge cases encountered, decisions made and *why*.
-- **Where exactly are we?** What's done, what's in progress, what's next. Be specific enough that work won't be repeated or skipped.
-- **What artifacts exist?** Files read, created, or modified — with enough context about each to be actionable (not just a path list).
-- **What tone/style/working relationship has been established?** If the user has shown preferences for how they like to collaborate, note them.
-- **What explicit rules has the user stated?** Direct instructions about how to work, what not to do, approval requirements, or behavioral constraints the user has explicitly communicated (e.g., "don't modify code until I approve", "always run tests before committing"). Preserve these verbatim — they are binding rules, not suggestions.
-
-**Err on the side of preserving more, not less.** The continuation prompt is the sole bridge between this conversation and the next — anything omitted is permanently lost to the new instance. Include all information that could plausibly be useful for subsequent work: partial findings, open questions, code snippets you'll need to reference, relevant file paths with context. A longer, thorough continuation prompt that preserves useful context is far better than a terse one that forces the new instance to re-discover things.
-
-Write in natural prose. Use structure where it aids clarity, not for its own sake.`;
-
-// -- Compact Prompt: Tool Call scenario --
-const COMPACT_PROMPT_TOOLCALL = `[SYSTEM: COMPACT REQUIRED] The conversation has exceeded the context limit. Do NOT continue the task. Instead, produce a **continuation prompt** — a briefing that will allow a fresh instance of you (with no access to this conversation) to seamlessly resume the work.
-
-You just made a tool call and received its result above. That result is real and should be reflected in your summary, but do not act on it — your only job right now is to write the continuation prompt.
-
-**Before writing the continuation prompt**, make sure any stable, long-term knowledge from this session has been written to AGENTS.md if it belongs there.
-
-**What the new instance will already have:** your system prompt and AGENTS.md persistent memory are automatically re-injected after compact. Do not duplicate their contents in the continuation prompt — focus on what they don't cover: current progress, session-specific context, and in-flight work state.
-
-Write in natural prose. Use structure where it aids clarity, not for its own sake. As you write, pressure-test yourself against these questions:
-
-- **What are we trying to do?** The user's intent, goals, constraints, and preferences — stated or implied.
-- **What do we know now that we didn't at the start?** Key discoveries, failed approaches, edge cases encountered, decisions made and why.
-- **Where exactly did we stop?** Be precise: what was the last tool call, what did it return, and what was supposed to happen next? The new instance must be able to pick up mid-step without repeating or skipping anything.
-- **What's done, what's in progress, what remains?** Give a clear picture of overall progress, not just the interrupted step.
-- **What artifacts exist?** Files read, created, or modified — with enough context about each to be actionable.
-- **What working style has the user shown?** Communication preferences, collaboration patterns, or explicit instructions about how they like to work.
-- **What explicit rules has the user stated?** Direct instructions about how to work, what not to do, approval requirements, or behavioral constraints (e.g., "don't modify code until I approve", "always run tests before committing"). Preserve these verbatim — they are binding rules, not suggestions.
-
-**Err on the side of preserving more, not less.** The continuation prompt is the sole bridge between this conversation and the next — anything omitted is permanently lost to the new instance. Include all information that could plausibly be useful for subsequent work: partial findings, open questions, code snippets you'll need to reference, relevant file paths with context. A longer, thorough continuation prompt that preserves useful context is far better than a terse one that forces the new instance to re-discover things.
-
-End the summary with a clear, imperative statement of what the next instance should do first upon resuming.`;
-
-// -- Compact Prompt: Sub-agent (output scenario) --
-const SUB_AGENT_COMPACT_PROMPT_OUTPUT = `Your context is full. Write a continuation summary so a fresh instance of you can resume this task seamlessly.
-
-Capture:
-- **Task**: What you were asked to do and any constraints.
-- **Progress**: What's done, what's in progress, what remains.
-- **Key findings**: Discoveries, file paths, code references, decisions — anything the next instance needs to avoid re-doing work.
-- **Next step**: What to do first upon resuming.
-
-Be thorough — include all information that could be useful. The next instance has no access to this conversation.`;
-
-// -- Compact Prompt: Sub-agent (tool call scenario) --
-const SUB_AGENT_COMPACT_PROMPT_TOOLCALL = `[SYSTEM: COMPACT REQUIRED] Your context is full. Do NOT continue the task. Write a continuation summary instead.
-
-You just made a tool call and received its result above. Reflect that result in your summary, but do not act on it further.
-
-Capture:
-- **Task**: What you were asked to do and any constraints.
-- **Progress**: What's done, what's in progress, what remains.
-- **Last action**: What tool call you just made, what it returned, and what you planned to do next.
-- **Key findings**: Discoveries, file paths, code references, decisions — anything the next instance needs to avoid re-doing work.
-- **Next step**: What to do first upon resuming.
-
-Be thorough — include all information that could be useful. The next instance has no access to this conversation.`;
-
-function appendManualInstruction(
-  basePrompt: string,
-  instruction: string | undefined,
-  kind: "summarize" | "compact",
-): string {
-  const trimmed = instruction?.trim();
-  if (!trimmed) return basePrompt;
-  return `${basePrompt}\n\nAdditional user instruction for this manual ${kind} request:\n${trimmed}`;
-}
-
-// -- Hint Prompt generators (two-tier) --
-function HINT_LEVEL1_PROMPT(pct: string, level2Pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct}. This is the first-level reminder — a second will arrive at ${level2Pct}. No immediate action is required:
-- If the task is mostly done, you may simply ignore this notice.
-- If a large part of the task remains and the user has NOT already stated a summarization policy (in AGENTS.md or earlier in this conversation), consider asking the user (the \`ask\` tool fits well): (1) whether you may summarize older context with \`summarize_context\` as the session grows, and (2) whether you may choose the timing yourself. The user may not be familiar with this mechanism — briefly explain that summarizing turns already-consumed tool outputs and finished exploration into shorter summaries while keeping their own messages intact, and mention they can also do it manually anytime with /summarize.
-Never summarize on your own without granted or standing permission. After handling this notice, continue your work.]`;
-}
-
-function HINT_LEVEL2_PROMPT(pct: string): string {
-  return `[SYSTEM: Context usage has reached ${pct} — second-level reminder. When the window fills up, auto-compact will rewrite the whole conversation into a single summary, which is far more lossy than targeted summarization.
-- If the remaining work is small, just finish it — no need to ask anything.
-- If substantial work remains: with permission already granted (in this conversation or AGENTS.md), now is a good time to act — inspect with \`show_context\`, then \`summarize_context\` consumed tool results, finished exploration, and completed subtasks. Without permission, you are advised to ask the user for a summarization policy now — but if they previously declined, respect that and do not ask again.]`;
-}
 
 function formatTokenCount(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
@@ -538,19 +450,26 @@ export class Session {
   // Compact phase
   private _compactInProgress = false;
 
-  // Context thresholds (from settings.json, or defaults)
-  private _thresholds: ContextThresholds = { ...DEFAULT_THRESHOLDS };
-  private _hintResetNone = computeHysteresisThresholds(DEFAULT_THRESHOLDS).hintResetNone / 100;
-  private _hintResetLevel1 = computeHysteresisThresholds(DEFAULT_THRESHOLDS).hintResetLevel1 / 100;
+  // Context-pressure state (thresholds, hint state machine, budget percent)
+  // lives in ContextManager (src/session/context-manager.ts); the accessors
+  // below keep Session-internal call sites stable.
+  private _contextManager!: ContextManager;
 
-  // Two-tier summarize hints master switch (settings.json `summarize_hint` / the /summarize_hint command)
-  private _summarizeHintEnabled = true;
+  private get _thresholds(): ContextThresholds {
+    return this._contextManager.thresholds;
+  }
 
-  // Main-session context budget percentage (1–100).
-  private _contextBudgetPercent = 100;
+  private get _contextBudgetPercent(): number {
+    return this._contextManager.budgetPercent;
+  }
 
-  // Hint compression (two-tier state machine)
-  private _hintState: "none" | "level1_sent" | "level2_sent" = "none";
+  private get _hintState(): "none" | "level1_sent" | "level2_sent" {
+    return this._contextManager.hintState;
+  }
+
+  private set _hintState(value: "none" | "level1_sent" | "level2_sent") {
+    this._contextManager.hintState = value;
+  }
 
   // /summarize tool whitelist mode
   private _summarizeToolWhitelist: Set<string> | null = null;
@@ -971,9 +890,21 @@ export class Session {
     this._toolExecutorOverrides = opts.toolExecutorOverrides ?? {};
     this._deferQueuedMessageInjectionOnTurnExit = opts.deferQueuedMessageInjectionOnTurnExit ?? false;
 
+    this._contextManager = new ContextManager({
+      getModelConfig: () => this.primaryAgent.modelConfig,
+      getBudgetCalcMode: () =>
+        (this.primaryAgent as unknown as { _provider?: { budgetCalcMode?: string } })._provider?.budgetCalcMode,
+      isCompactInProgress: () => this._compactInProgress,
+      canAutoCompact: () => this._capabilities.includeSpawnTool,
+      getLastInputTokens: () => this._lastInputTokens,
+      deliverSystemNotice: (content) => {
+        this._deliverMessage({ type: "system_notice", sender: "system", content, timestamp: Date.now() });
+      },
+    });
+
     // Apply context budget percentage.
     if (opts.contextBudgetPercent !== undefined) {
-      this._contextBudgetPercent = Math.max(1, Math.min(100, opts.contextBudgetPercent));
+      this._contextManager.setBudgetPercent(opts.contextBudgetPercent);
     }
 
     // Attach store if provided (must be set before _initConversation)
@@ -1076,21 +1007,12 @@ export class Session {
    * Effective context length for a given ModelConfig, scaled by context budget percent.
    */
   _effectiveContextLength(mc: ModelConfig): number {
-    return Math.round(mc.contextLength * this._contextBudgetPercent / 100);
+    return this._contextManager.effectiveContextLength(mc);
   }
 
-  /**
-   * Context budget for pressure decisions (hints, compact triggers,
-   * show_context), per the provider's accounting mode: fullContext budgets
-   * the whole window and checks input tokens only; otherwise output headroom
-   * is reserved out of the window.
-   */
+  /** Context budget for pressure decisions (see ContextManager.budgetInfo). */
   private _contextBudgetInfo(): { budget: number; fullContext: boolean } {
-    const mc = this.primaryAgent.modelConfig;
-    const provider = (this.primaryAgent as unknown as { _provider?: { budgetCalcMode?: string } })._provider;
-    const fullContext = provider?.budgetCalcMode === "full_context";
-    const effective = this._effectiveContextLength(mc);
-    return { budget: fullContext ? effective : effective - mc.maxTokens, fullContext };
+    return this._contextManager.budgetInfo();
   }
 
   // ==================================================================
@@ -3188,7 +3110,7 @@ export class Session {
       thinkingLevel,
     );
     if (settings.context_budget_percent !== undefined) {
-      this._contextBudgetPercent = Math.max(1, Math.min(100, settings.context_budget_percent));
+      this._contextManager.setBudgetPercent(settings.context_budget_percent);
     }
 
     // Two-tier summarize hints: on/off + trigger levels. Invalid levels are
@@ -3218,11 +3140,7 @@ export class Session {
 
   /** Current two-tier summarize hint configuration. */
   getSummarizeHintConfig(): { enabled: boolean; level1: number; level2: number } {
-    return {
-      enabled: this._summarizeHintEnabled,
-      level1: this._thresholds.context_hint_level1,
-      level2: this._thresholds.context_hint_level2,
-    };
+    return this._contextManager.getSummarizeHintConfig();
   }
 
   /**
@@ -3230,12 +3148,7 @@ export class Session {
    * Levels must be pre-validated by the caller (validateSummarizeHintLevels).
    */
   setSummarizeHintConfig(config: { enabled?: boolean; level1?: number; level2?: number }): void {
-    if (config.enabled !== undefined) this._summarizeHintEnabled = config.enabled;
-    if (config.level1 !== undefined) this._thresholds.context_hint_level1 = config.level1;
-    if (config.level2 !== undefined) this._thresholds.context_hint_level2 = config.level2;
-    const hysteresis = computeHysteresisThresholds(this._thresholds);
-    this._hintResetNone = hysteresis.hintResetNone / 100;
-    this._hintResetLevel1 = hysteresis.hintResetLevel1 / 100;
+    this._contextManager.setSummarizeHintConfig(config);
   }
 
   getGlobalPreferences(): GlobalTuiPreferences {
@@ -3295,7 +3208,7 @@ export class Session {
 
   /** Effective context budget: contextLength × context budget percent. */
   get contextBudget(): number {
-    return Math.round((this.primaryAgent?.modelConfig?.contextLength ?? 0) * this._contextBudgetPercent / 100);
+    return Math.round((this.primaryAgent?.modelConfig?.contextLength ?? 0) * this._contextManager.budgetPercent / 100);
   }
 
   appendStatusMessage(text: string, statusType = "status", ephemeral = false): void {
@@ -6000,32 +5913,7 @@ export class Session {
   private _buildCompactCheck(): ((
     inputTokens: number, outputTokens: number, hasToolCalls: boolean,
   ) => { compactNeeded: boolean; scenario?: "mid_turn" } | null) | undefined {
-    if (this._compactInProgress) return undefined;
-
-    // Child sessions do not auto-compact; they receive a 90% warning instead
-    // (see _checkAndInjectHint) and are expected to finish or stop.
-    if (!this._capabilities.includeSpawnTool) return undefined;
-
-    const { budget, fullContext } = this._contextBudgetInfo();
-
-    if (budget <= 0) return undefined;
-
-    const midTurnRatio = this._thresholds.compact_mid_turn / 100;
-
-    return (inputTokens: number, outputTokens: number, hasToolCalls: boolean) => {
-      // Only trigger mid-turn compact on tool-call path. Text-only responses
-      // mean the turn is ending; compact at the start of the NEXT turn instead.
-      if (!hasToolCalls) return { compactNeeded: false };
-
-      const tokensToCheck = fullContext
-        ? inputTokens
-        : inputTokens + outputTokens;
-
-      if (tokensToCheck > midTurnRatio * budget) {
-        return { compactNeeded: true, scenario: "mid_turn" };
-      }
-      return { compactNeeded: false };
-    };
+    return this._contextManager.buildCompactCheck();
   }
 
   /**
@@ -6191,46 +6079,11 @@ export class Session {
   }
 
   /**
-   * Check and inject summarize-hint prompts if thresholds are met.
-   * Two-tier: level 1 and level 2, configurable via settings.json
-   * (`summarize_hint`) and the /summarize_hint command.
+   * Check and inject summarize-hint prompts if thresholds are met
+   * (see ContextManager.checkAndInjectHint).
    */
   private _checkAndInjectHint(_result: ToolLoopResult): void {
-    if (this._compactInProgress) return;
-
-    const { budget } = this._contextBudgetInfo();
-    if (budget <= 0) return;
-
-    const ratio = this._lastInputTokens / budget;
-    const pct = `${Math.round(ratio * 100)}%`;
-
-    // Child sessions: single warning at 90%, no summarize_context guidance
-    if (!this._capabilities.includeSpawnTool) {
-      if (ratio >= 0.90 && this._hintState === "none") {
-        this._deliverMessage({
-          type: "system_notice",
-          sender: "system",
-          content: `[SYSTEM: Context usage has reached ${pct}. You are approaching the context limit and do NOT have context management tools. Finish your current work as quickly as possible — avoid reading large files, reduce tool calls, and focus only on producing your final output. If work progress is not promising, stop now and output what you have so far.]`,
-          timestamp: Date.now(),
-        });
-        this._hintState = "level2_sent";
-      }
-      return;
-    }
-
-    if (!this._summarizeHintEnabled) return;
-
-    const level2Ratio = this._thresholds.context_hint_level2 / 100;
-    const level1Ratio = this._thresholds.context_hint_level1 / 100;
-
-    if (ratio >= level2Ratio && this._hintState !== "level2_sent") {
-      this._deliverMessage({ type: "system_notice", sender: "system", content: HINT_LEVEL2_PROMPT(pct), timestamp: Date.now() });
-      this._hintState = "level2_sent";
-    } else if (ratio >= level1Ratio && this._hintState === "none") {
-      const level2Pct = `${Math.round(this._thresholds.context_hint_level2)}%`;
-      this._deliverMessage({ type: "system_notice", sender: "system", content: HINT_LEVEL1_PROMPT(pct, level2Pct), timestamp: Date.now() });
-      this._hintState = "level1_sent";
-    }
+    this._contextManager.checkAndInjectHint();
   }
 
   /**
@@ -6239,17 +6092,7 @@ export class Session {
    * Reset thresholds are auto-derived from trigger thresholds.
    */
   private _updateHintStateAfterApiCall(): void {
-    const { budget } = this._contextBudgetInfo();
-    if (budget <= 0) return;
-
-    const ratio = this._lastInputTokens / budget;
-
-    if (ratio < this._hintResetNone) {
-      this._hintState = "none";
-    } else if (ratio < this._hintResetLevel1) {
-      this._hintState = "level1_sent";
-    }
-    // ratio >= HINT_RESET_LEVEL1: keep current state (don't downgrade)
+    this._contextManager.updateHintStateAfterApiCall();
   }
 
   // ==================================================================

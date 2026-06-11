@@ -29,7 +29,6 @@ function makeSessionLike(projectRoot: string): any {
   s._createdAt = new Date().toISOString();
   s._compactCount = 0;
   s._usedContextIds = new Set<string>();
-  s._hintState = "none";
   s._thinkingLevel = "default";
   s._currentMasterPlan = undefined;
   s._currentPhasePlan = undefined;
