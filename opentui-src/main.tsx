@@ -62,9 +62,11 @@ function resolveRendererThreadSetting(): boolean {
   if (override === "0" || override === "false") return false;
 
   // Native render threading has been unstable on macOS in Fermi's
-  // high-frequency streaming UI. Prefer the single-threaded renderer there
-  // unless the user explicitly opts back in.
-  return process.platform !== "darwin";
+  // high-frequency streaming UI, and the upstream native lib is known to
+  // crash with threading on Linux (the fork's renderer defaults it off
+  // there). Windows keeps the threaded renderer — the behavior every
+  // shipped Windows build has had.
+  return process.platform === "win32";
 }
 
 function parseArgs(argv: string[]): ParsedArgs {

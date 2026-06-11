@@ -1060,9 +1060,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     // Threading defaults (on everywhere except linux, where it currently
-    // crashes — likely a missing build dep).
-    if (config.useThread === undefined) config.useThread = true
-    if (process.platform === "linux") config.useThread = false
+    // crashes — likely a missing build dep). An explicit config value wins
+    // on every platform — otherwise the FERMI_OPENTUI_USE_THREAD escape
+    // hatch is a silent no-op on linux while the diag log claims it took.
+    if (config.useThread === undefined) config.useThread = process.platform !== "linux"
     lib.setUseThread(rendererPtr, config.useThread)
 
     const kittyConfig = config.useKittyKeyboard ?? {}
