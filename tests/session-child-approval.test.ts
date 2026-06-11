@@ -1,421 +1,334 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+/**
+ * Child approval routing — REAL parent + child Sessions driven through the
+ * scripted-provider harness (Q11 rewrite; previously an Object.create mock
+ * suite that depended on the snapshot layer's as-any leniency removed in Q12).
+ *
+ * The child suspends on a staged approval gate exactly like production:
+ * tool call → preflight ask → child turn returns → handle goes "blocked".
+ * Root-level routing (getPendingAsk bubble, resolveApprovalAsk, deny,
+ * interrupt) then exercises the real ChildSessionManager paths.
+ */
+
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
-import type { PendingAskUi } from "../src/ask.js";
-import { Session } from "../src/session.js";
-import { createToolCall } from "../src/log-entry.js";
-import { SessionLog } from "../src/session/session-log.js";
-import { ToolResult } from "../src/providers/base.js";
+import type { ApprovalRequest } from "../src/ask.js";
+import {
+  ScriptedProvider,
+  makeScriptedAgentObject,
+  makeScriptedSession,
+  stageApprovalGate,
+  testToolDef,
+  waitFor,
+  type SessionHarness,
+} from "./helpers/session-harness.js";
 
-function makeTempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
-}
-
-function makeSessionLike(): any {
-  const s = Object.create(Session.prototype) as any;
-  s.primaryAgent = {
-    name: "Primary",
-    modelConfig: {
-      name: "runtime-openai-codex-gpt-5.4",
-      provider: "openai-codex",
-      model: "gpt-5.4",
-      supportsMultimodal: false,
-      contextLength: 1000,
-    },
-  };
-  s._childSessions = new Map();
-  s._archivedChildren = new Map();
-  s._inbox = [];
-  s._logStore = new SessionLog();
-  s._turnCount = 1;
-  s._activeAsk = null;
-  s._askHistory = [];
-  s._pendingTurnState = null;
-  s._currentTurnSignal = null;
-  s._usedContextIds = new Set();
-  s._activeLogEntryId = null;
-  s._projectRoot = process.cwd();
-  s._progress = undefined;
-  s._permissionAdvisor = {
-    _allowOnceGrants: new Set(),
-    grantAllowOnce: mock(),
-    acceptOffer: mock(),
-  };
-  s.hookRuntime = {
-    hooks: [],
-    evaluate: mock(),
-    fireAndForget: mock(),
-  };
-  s._emitAskResolvedProgress = mock();
-  s._emitAskRequestedProgress = mock();
-  s._appendEntry = function appendEntry(entry: any): void {
-    this._log.push(entry);
-  };
-  s._nextLogId = function nextLogId(type: any): string {
-    return this._idAllocator.next(type);
-  };
-  s._allocateContextId = mock(() => "ctx-allocated");
-  s._findToolCallContextId = mock((_toolCallId: string, _roundIndex?: number) => "ctx-tool");
-  s._updateToolCallExecState = mock();
-  s._notifyLogListeners = mock();
-  s._saveChildSession = mock();
-  s.onSaveRequest = mock();
-  return s;
-}
-
-function makePendingApproval(id = "approval-child"): PendingAskUi {
-  return {
-    id,
-    kind: "approval",
-    createdAt: new Date(0).toISOString(),
-    summary: "Allow tool?",
-    source: { agentId: "worker-1", agentName: "worker-1" },
-    payload: {
-      toolCallId: "tool-1",
-      toolName: "write_file",
-      toolSummary: "worker writes",
-      permissionClass: "write",
-      offers: [{ type: "tool_once", label: "Allow once" }],
-    },
-    options: ["Allow once", "Deny"],
-  };
-}
-
-function makeChildSession(overrides: Record<string, unknown> = {}): any {
-  const pendingAsk = overrides.pendingAsk === undefined
-    ? makePendingApproval()
-    : overrides.pendingAsk as PendingAskUi | null;
-  const hasPendingTurnToResume = Boolean(overrides.hasPendingTurnToResume);
-  const rest = { ...overrides };
-  delete rest.pendingAsk;
-  delete rest.hasPendingTurnToResume;
-  return {
-    primaryAgent: {
-      modelConfig: {
-        name: "runtime-openai-codex-gpt-5.4",
-        provider: "openai-codex",
-        model: "gpt-5.4",
-        contextLength: 1000,
+/** Stage a one-shot approval gate on a child session (same shape as stageApprovalGate). */
+function stageApprovalOnChild(childSession: any, agentId: string, toolName: string): { ask: ApprovalRequest | null } {
+  const holder: { ask: ApprovalRequest | null } = { ask: null };
+  let fired = false;
+  childSession._beforeToolExecute = async (ctx: { toolName: string }) => {
+    if (ctx.toolName !== toolName || fired) return undefined;
+    fired = true;
+    const ask: ApprovalRequest = {
+      id: "approval-child",
+      kind: "approval",
+      createdAt: new Date().toISOString(),
+      source: { agentId, agentName: agentId },
+      summary: `Allow ${toolName}?`,
+      roundIndex: undefined,
+      payload: {
+        toolCallId: "",
+        toolName,
+        toolSummary: `${agentId} is calling ${toolName}`,
+        permissionClass: "write",
+        offers: [{ type: "tool_once", label: "Allow once" }],
       },
-    },
-    lastTurnEndStatus: overrides.lastTurnEndStatus ?? null,
-    lastInputTokens: 10,
-    lastTotalTokens: 20,
-    lastCacheReadTokens: 0,
-    contextBudget: 900,
-    activeLogEntryId: null,
-    currentTurnRunning: false,
-    sessionPhase: "idle",
-    lifetimeToolCallCount: 1,
-    lastToolCallSummary: "write_file",
-    recentSessionEvents: [],
-    pendingInboxCount: 0,
-    getLogRevision: () => 7,
-    getPendingAsk: mock(() => pendingAsk),
-    hasPendingTurnToResume: mock(() => hasPendingTurnToResume),
-    resolveApprovalAsk: mock(),
-    resumePendingTurn: mock(async () => "resumed"),
-    requestTurnInterrupt: mock(() => ({ accepted: true })),
-    _normalizeInterruptedTurnFromLog: mock(),
-    _deliverMessage: mock(),
-    ...rest,
+      options: ["Allow once", "Deny"],
+    };
+    holder.ask = ask;
+    return { kind: "ask", ask };
   };
+  return holder;
 }
 
-function makeHandle(childSession: any): any {
-  return {
-    id: "worker-1",
-    numericId: 1,
-    template: "explorer",
-    mode: "oneshot",
-    lifecycle: "running",
-    status: "working",
-    phase: "thinking",
-    session: childSession,
-    sessionDir: "",
-    artifactsDir: "",
-    resultText: "partial result",
-    elapsed: 0,
-    startTime: performance.now(),
-    turnPromise: Promise.resolve(""),
-    abortController: new AbortController(),
-    recentEvents: [],
-    lifetimeToolCallCount: 1,
-    lastToolCallSummary: "write_file",
-    lastTotalTokens: 20,
-    lastOutcome: "none",
-    lastActivityAt: Date.now(),
-    order: 1,
-    suspended: false,
-    settlePromise: null,
-    settleResolve: mock(),
-  };
+interface ChildSetup {
+  h: SessionHarness;
+  childProvider: ScriptedProvider;
+  handle: any;
+}
+
+function makeParentWithChild(childRounds: Array<{ text?: string; toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }>): ChildSetup {
+  const h = makeScriptedSession({
+    rounds: [{ text: "noted" }, { text: "noted again" }],
+  });
+  const childProvider = new ScriptedProvider();
+  childProvider.rounds = childRounds;
+  const childAgent = makeScriptedAgentObject(childProvider, {
+    name: "worker-1",
+    tools: [testToolDef("write_file"), testToolDef("slow_tool")],
+  });
+  const handle = h.internals._instantiateChildSession("worker-1", "explorer", "persistent", childAgent);
+  h.internals._childSessions.set("worker-1", handle);
+  return { h, childProvider, handle };
+}
+
+/** Child suspends on an approval mid-turn and its handle goes "blocked". */
+async function makeBlockedChild(): Promise<ChildSetup & { holder: { ask: ApprovalRequest | null } }> {
+  const setup = makeParentWithChild([
+    { toolCalls: [{ id: "call-w1", name: "write_file", arguments: { path: "out.txt", content: "data" } }] },
+    { text: "done after approval" },
+  ]);
+  const holder = stageApprovalOnChild(setup.handle.session, "worker-1", "write_file");
+  const sent = await setup.h.internals._execSend({ to: "worker-1", content: "please write the file" });
+  if (!String(sent.content).includes("sent")) throw new Error(`send failed: ${sent.content}`);
+  await waitFor(() => setup.handle.lifecycle === "blocked");
+  return { ...setup, holder };
 }
 
 describe("child approval routing", () => {
-  it("bubbles child pending approval through root getPendingAsk", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession();
-    root._childSessions.set("worker-1", makeHandle(child));
-
-    expect(root.getPendingAsk()).toMatchObject({
-      id: "approval-child",
-      kind: "approval",
-      source: { agentId: "worker-1" },
-    });
-  });
-
-  it("routes approval resolution to the child and resumes the child turn", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession({ hasPendingTurnToResume: true });
-    const handle = makeHandle(child);
-    handle.turnPromise = null;
-    root._childSessions.set("worker-1", handle);
-
-    root.resolveApprovalAsk("approval-child", 0);
-
-    expect(child.resolveApprovalAsk).toHaveBeenCalledWith("approval-child", 0);
-    expect(child.resumePendingTurn).toHaveBeenCalledOnce();
-    expect(handle.lifecycle).toBe("running");
-    expect(handle.status).toBe("working");
-    expect(root._notifyLogListeners).toHaveBeenCalled();
-  });
-
-  it("does not produce an agent_result when a child turn stops for approval", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession();
-    const handle = makeHandle(child);
-    root._childSessions.set("worker-1", handle);
-
-    root._finishChildTurn(handle);
-
-    expect(handle.lifecycle).toBe("blocked");
-    expect(handle.status).toBe("idle");
-    expect(handle.phase).toBe("waiting");
-    expect(handle.lastOutcome).toBe("none");
-    expect(root._log.some((entry: any) => entry.type === "agent_result")).toBe(false);
-    expect(root._saveChildSession).toHaveBeenCalledWith(handle);
-  });
-
-  it("does not notify the parent inbox when a child blocks on approval", () => {
-    // Per-approval system_notice notifications were intentionally removed
-    // (commit 7efb5d1f): a blocked child surfaces via check_status
-    // (lifecycle: blocked), not via noisy inbox messages to the parent.
-    const root = makeSessionLike();
-    root._agentState = "working";
-    const child = makeChildSession();
-    const handle = makeHandle(child);
-    root._childSessions.set("worker-1", handle);
-
-    root._finishChildTurn(handle);
-
-    expect(root._inbox).toHaveLength(0);
-    expect(handle.lifecycle).toBe("blocked");
-    expect(root._hasActiveAgents()).toBe(false);
-  });
-
-  it("can interrupt a blocked child without treating it as a working child", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession();
-    const handle = makeHandle(child);
-    handle.lifecycle = "blocked";
-    handle.status = "idle";
-    handle.phase = "waiting";
-    handle.turnPromise = null;
-    handle.abortController = null;
-    root._childSessions.set("worker-1", handle);
-
-    const decision = root.interruptChildSession("worker-1");
-
-    expect(decision).toEqual({ accepted: true });
-    expect(child._normalizeInterruptedTurnFromLog).toHaveBeenCalledWith(
-      "Sub-agent was interrupted while waiting for user approval.",
-    );
-    expect(child.requestTurnInterrupt).toHaveBeenCalledOnce();
-    expect(handle.lifecycle).toBe("archived");
-    expect(handle.lastOutcome).toBe("interrupted");
-    expect(root._hasActiveAgents()).toBe(false);
-  });
-
-  it("denies and finalizes a child-owned pending ask as interrupted", () => {
-    const root = makeSessionLike();
-    let pendingAsk: PendingAskUi | null = makePendingApproval();
-    const child = makeChildSession({ pendingAsk: null, lastTurnEndStatus: null });
-    child.getPendingAsk = mock(() => pendingAsk);
-    child.denyAndInterruptPendingAsk = mock(() => {
-      pendingAsk = null;
-      child.lastTurnEndStatus = "interrupted";
-      return { accepted: true };
-    });
-    const handle = makeHandle(child);
-    handle.lifecycle = "blocked";
-    handle.status = "idle";
-    handle.phase = "waiting";
-    handle.turnPromise = null;
-    handle.abortController = null;
-    root._childSessions.set("worker-1", handle);
-
-    const decision = root.denyAndInterruptPendingAsk();
-
-    expect(decision).toEqual({ accepted: true, turnFinished: false });
-    expect(child.denyAndInterruptPendingAsk).toHaveBeenCalledOnce();
-    expect(handle.lifecycle).toBe("archived");
-    expect(handle.lastOutcome).toBe("interrupted");
-    expect(root._log.some((entry: any) => entry.type === "agent_result")).toBe(true);
-    expect(root._notifyLogListeners).toHaveBeenCalled();
-  });
-
-  it("rejects sends to blocked children until approval is resolved", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession();
-    const handle = makeHandle(child);
-    handle.mode = "persistent";
-    handle.lifecycle = "blocked";
-    handle.status = "idle";
-    handle.phase = "waiting";
-    handle.turnPromise = null;
-    root._childSessions.set("worker-1", handle);
-
-    const result = root._sendMessageToChild("worker-1", {
-      type: "user_input",
-      sender: "main",
-      content: "new info",
-      timestamp: Date.now(),
-    });
-
-    expect(result.content).toContain("waiting for user approval");
-    expect(result.content).toMatch(/^ERROR:/);
-    expect(child._deliverMessage).not.toHaveBeenCalled();
-  });
-
-  it("propagates permission mode changes to existing child sessions", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession({ permissionMode: "reversible" });
-    const handle = makeHandle(child);
-    root._childSessions.set("worker-1", handle);
-
-    root.permissionMode = "read_only";
-
-    expect(root._permissionAdvisor.sessionMode).toBe("read_only");
-    expect(child.permissionMode).toBe("read_only");
-  });
-
-  it("creates child sessions with the parent permission mode", () => {
-    const artifactsDir = makeTempDir("fermi-child-permission-");
+  it("bubbles child pending approval through root getPendingAsk", async () => {
+    const { h, handle, holder } = await makeBlockedChild();
     try {
-      const root = makeSessionLike();
-      root._sessionArtifactsOverride = artifactsDir;
-      root._subAgentCounter = 0;
-      root._promptsDirs = undefined;
-      root.config = { mcpServerConfigs: [] };
-      root._permissionAdvisor.sessionMode = "read_only";
-      const agent = {
-        name: "worker",
-        description: "",
-        systemPrompt: "worker prompt",
-        tools: [],
-        modelConfig: {
-          name: "test-model",
-          provider: "openai",
-          model: "gpt-5.4",
-          apiKey: "sk-test",
-          supportsMultimodal: false,
-          contextLength: 8192,
-        },
-      };
-
-      const handle = root._instantiateChildSession("worker-1", "explorer", "persistent", agent);
-
-      expect(handle.session.permissionMode).toBe("read_only");
+      expect(holder.ask).not.toBeNull();
+      expect(h.session.getPendingAsk()).toMatchObject({
+        id: "approval-child",
+        kind: "approval",
+        source: { agentId: "worker-1" },
+      });
+      expect(handle.phase).toBe("waiting");
     } finally {
-      rmSync(artifactsDir, { recursive: true, force: true });
+      h.dispose();
     }
   });
 
-  it("includes pending ask state and display label in child snapshots", () => {
-    const root = makeSessionLike();
-    const child = makeChildSession();
-    const handle = makeHandle(child);
+  it("routes approval resolution to the child and resumes the child turn", async () => {
+    const { h, handle, holder, childProvider } = await makeBlockedChild();
+    try {
+      h.session.resolveApprovalAsk(holder.ask!.id, 0); // Allow once → child auto-resumes
 
-    const snapshot = root._buildChildSessionSnapshot(handle);
-
-    expect(snapshot.pendingAskId).toBe("approval-child");
-    expect(snapshot.pendingAskKind).toBe("approval");
-    expect(snapshot.phase).toBe("waiting");
-    expect(snapshot.modelDisplayLabel).not.toMatch(/^runtime-/);
+      await waitFor(() => handle.lastOutcome === "completed");
+      expect(handle.lifecycle).toBe("idle"); // persistent child back to idle
+      // The approved tool really executed: its result is in the child log.
+      expect(handle.session.log.some((e: any) =>
+        e.type === "tool_result" && (e.meta as Record<string, unknown>).toolCallId === "call-w1",
+      )).toBe(true);
+      // Completion surfaced to the parent as an agent_result entry.
+      await waitFor(() => h.session.log.some((e) => e.type === "agent_result"));
+    } finally {
+      h.dispose();
+    }
   });
 
-  it("delivers completed child output through inbox while keeping agent_result display-only", () => {
-    const root = makeSessionLike();
-    root._agentState = "waiting";
-    const child = makeChildSession({ pendingAsk: null, lastTurnEndStatus: "completed" });
-    const handle = makeHandle(child);
-    handle.resultText = "child says done";
-    root._childSessions.set("worker-1", handle);
-
-    root._finishChildTurn(handle);
-
-    const agentResult = root._log.find((entry: any) => entry.type === "agent_result");
-    expect(agentResult).toBeTruthy();
-    expect(agentResult.apiRole).toBeNull();
-    expect(root._inbox).toHaveLength(1);
-    expect(root._inbox[0]).toMatchObject({
-      type: "peer_message",
-      sender: "worker-1",
-      content: expect.stringContaining("child says done"),
-    });
+  it("does not produce an agent_result when a child turn stops for approval", async () => {
+    const { h, handle } = await makeBlockedChild();
+    try {
+      expect(handle.lifecycle).toBe("blocked");
+      expect(handle.status).toBe("idle");
+      expect(handle.phase).toBe("waiting");
+      expect(handle.lastOutcome).toBe("none");
+      expect(h.session.log.some((e) => e.type === "agent_result")).toBe(false);
+      // The blocked child was persisted (real save, not a mock call count).
+      expect(existsSync(join(handle.sessionDir, "log.json"))).toBe(true);
+    } finally {
+      h.dispose();
+    }
   });
 
-  it("delivers mass-interrupted child completions to the parent inbox", () => {
-    // _deliverMessage was unified to "inbox push only" (commit b7516889):
-    // the cause !== user_mass_interrupt guard was removed. The child's
-    // termination is now delivered as a peer_message and drained as a
-    // hidden <system-message> entry — context for the parent, not TUI noise.
-    const root = makeSessionLike();
-    root._agentState = "working";
-    const child = makeChildSession({ pendingAsk: null, lastTurnEndStatus: "interrupted" });
-    const handle = makeHandle(child);
-    handle.resultText = "interrupted";
-    handle.terminationCause = "user_mass_interrupt";
-    root._childSessions.set("worker-1", handle);
-
-    root._finishChildTurn(handle);
-
-    const agentResult = root._log.find((entry: any) => entry.type === "agent_result");
-    expect(agentResult).toBeTruthy();
-    expect(root._inbox).toHaveLength(1);
-    expect(root._inbox[0]).toMatchObject({
-      type: "peer_message",
-      sender: "worker-1",
-    });
+  it("does not notify the parent inbox when a child blocks on approval", async () => {
+    // Per-approval system_notice notifications were intentionally removed
+    // (commit 7efb5d1f): a blocked child surfaces via check_status
+    // (lifecycle: blocked), not via noisy inbox messages to the parent.
+    const { h, handle } = await makeBlockedChild();
+    try {
+      expect(h.internals._inbox).toHaveLength(0);
+      expect(handle.lifecycle).toBe("blocked");
+      expect(h.internals._hasActiveAgents()).toBe(false);
+    } finally {
+      h.dispose();
+    }
   });
 
-  it("passes the active abort signal into approval-resumed tool execution", async () => {
-    const root = makeSessionLike();
-    const abortController = new AbortController();
-    root._currentTurnSignal = abortController.signal;
-    root._log.push(createToolCall(
-      "tc-001",
-      1,
-      0,
-      "write_file",
-      { id: "tool-1", name: "write_file", arguments: { path: "a.txt" } },
-      { toolCallId: "tool-1", toolName: "write_file", agentName: "Primary", contextId: "ctx-tool" },
-    ));
+  it("can interrupt a blocked child without treating it as a working child", async () => {
+    const { h, handle } = await makeBlockedChild();
+    try {
+      handle.mode = "oneshot"; // lock the oneshot → archived branch
 
-    const executor = mock(async (_args: Record<string, unknown>, ctx?: { signal?: AbortSignal }) => {
-      expect(ctx?.signal).toBe(abortController.signal);
-      return new ToolResult({ content: "ok" });
+      const decision = h.session.interruptChildSession("worker-1");
+
+      expect(decision).toEqual({ accepted: true });
+      expect(handle.lifecycle).toBe("archived");
+      expect(handle.lastOutcome).toBe("interrupted");
+      expect(h.internals._hasActiveAgents()).toBe(false);
+      // The child's log was really normalized before persisting.
+      expect(handle.session.log.some((e: any) =>
+        String(e.content ?? "").includes("interrupted while waiting for user approval"),
+      )).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("denies and finalizes a child-owned pending ask as interrupted", async () => {
+    const { h, handle } = await makeBlockedChild();
+    try {
+      handle.mode = "oneshot";
+
+      const decision = h.session.denyAndInterruptPendingAsk();
+
+      expect(decision).toEqual({ accepted: true, turnFinished: false });
+      expect(handle.lifecycle).toBe("archived");
+      expect(handle.lastOutcome).toBe("interrupted");
+      // Child got a definite deny outcome, not a vanished ask.
+      expect(handle.session.getPendingAsk()).toBeNull();
+      expect(handle.session.log.some((e: any) => e.type === "ask_resolution" && !e.discarded)).toBe(true);
+      expect(h.session.log.some((e) => e.type === "agent_result")).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("rejects sends to blocked children until approval is resolved", async () => {
+    const { h, childProvider } = await makeBlockedChild();
+    try {
+      const result = await h.internals._execSend({ to: "worker-1", content: "new info" });
+
+      expect(String(result.content)).toMatch(/^ERROR:/);
+      expect(String(result.content)).toContain("waiting for user approval");
+      expect(childProvider.sawUserText("new info")).toBe(false);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("propagates permission mode changes to existing child sessions", () => {
+    const { h, handle } = makeParentWithChild([{ text: "idle child" }]);
+    try {
+      h.session.permissionMode = "read_only";
+
+      expect(h.session.permissionMode).toBe("read_only");
+      expect(handle.session.permissionMode).toBe("read_only");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("creates child sessions with the parent permission mode", () => {
+    const h = makeScriptedSession({ rounds: [{ text: "noted" }] });
+    try {
+      h.session.permissionMode = "read_only";
+      const childProvider = new ScriptedProvider();
+      const childAgent = makeScriptedAgentObject(childProvider, { name: "worker-2" });
+
+      const handle = h.internals._instantiateChildSession("worker-2", "explorer", "persistent", childAgent);
+
+      expect(handle.session.permissionMode).toBe("read_only");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("includes pending ask state and display label in child snapshots", async () => {
+    const { h, holder } = await makeBlockedChild();
+    try {
+      const snapshot = h.session.getChildSessionSnapshots().find((s) => s.id === "worker-1");
+
+      expect(snapshot).toBeTruthy();
+      expect(snapshot?.pendingAskId).toBe(holder.ask!.id);
+      expect(snapshot?.pendingAskKind).toBe("approval");
+      expect(snapshot?.phase).toBe("waiting");
+      expect(snapshot?.modelDisplayLabel).not.toMatch(/^runtime-/);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("delivers completed child output through inbox while keeping agent_result display-only", async () => {
+    const { h, handle } = makeParentWithChild([{ text: "child says done" }]);
+    try {
+      const sent = await h.internals._execSend({ to: "worker-1", content: "report status" });
+      expect(String(sent.content)).toContain("sent");
+
+      await waitFor(() => handle.lastOutcome === "completed");
+      const agentResult = h.session.log.find((e) => e.type === "agent_result");
+      expect(agentResult).toBeTruthy();
+      expect(agentResult?.apiRole).toBeNull();
+      // Natural completion wakes the idle parent; the result text reaches the
+      // parent model through the inbox drain, not through the display entry.
+      await waitFor(() => h.provider.sawUserText("child says done"));
+      await h.session.waitForTurnComplete();
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("delivers mass-interrupted child completions as ride-along (parent does not wake)", async () => {
+    const { h, handle } = makeParentWithChild([
+      { toolCalls: [{ id: "slow-1", name: "slow_tool", arguments: {} }] },
+      { text: "never reached" },
+    ]);
+    try {
+      (handle.session as any)._toolExecutors["slow_tool"] = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return "slow done";
+      };
+      const sent = await h.internals._execSend({ to: "worker-1", content: "start slow work" });
+      expect(String(sent.content)).toContain("sent");
+      expect(handle.lifecycle).toBe("running");
+
+      h.session.interruptAllChildAgents();
+
+      await waitFor(() => handle.lastOutcome === "interrupted");
+      const agentResult = h.session.log.find((e) => e.type === "agent_result");
+      expect(agentResult).toBeTruthy();
+      expect(String(agentResult?.content ?? "")).toContain("interrupted by the user");
+      // Q8: user-initiated kills are ride-along — queued in the inbox, and the
+      // idle parent must NOT wake to react on its own.
+      expect(h.internals._inbox).toHaveLength(1);
+      expect(h.internals._inbox[0]).toMatchObject({ type: "peer_message", sender: "worker-1" });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(h.provider.callCount).toBe(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("passes the live turn signal into approval-resumed tool execution", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let sessionSignalAtExec: AbortSignal | null = null;
+    let hRef: SessionHarness | null = null;
+    const h = makeScriptedSession({
+      rounds: [
+        { toolCalls: [{ id: "call-1", name: "gated_tool", arguments: {} }] },
+        { text: "after approval" },
+      ],
+      tools: [testToolDef("gated_tool")],
+      toolExecutorOverrides: {
+        gated_tool: (_args: Record<string, unknown>, ctx?: { signal?: AbortSignal }) => {
+          capturedSignal = ctx?.signal;
+          sessionSignalAtExec = hRef!.internals._currentTurnSignal;
+          return "ok";
+        },
+      },
     });
-    root._toolExecutors = { write_file: executor };
-    root._beforeToolExecute = mock(async () => undefined);
+    hRef = h;
+    try {
+      const gate = stageApprovalGate(h, "gated_tool");
 
-    const result = await root._drainPendingToolCalls(abortController.signal);
+      await h.session.turn("kick off");
+      expect(h.session.getPendingAsk()?.kind).toBe("approval");
 
-    expect(result).toEqual({ kind: "drained" });
-    expect(executor).toHaveBeenCalledOnce();
+      h.session.resolveApprovalAsk(gate.ask!.id, 0);
+      await h.session.resumePendingTurn();
+
+      // The executor saw a live signal, and it was THE session's current turn
+      // signal at execution time (abort reaches approval-resumed tools).
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(capturedSignal).toBe(sessionSignalAtExec as unknown as AbortSignal);
+    } finally {
+      h.dispose();
+    }
   });
 });

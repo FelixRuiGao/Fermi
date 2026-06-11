@@ -45,7 +45,6 @@ import {
   SHOW_CONTEXT_TOOL,
   SUMMARIZE_CONTEXT_TOOL,
   ASK_TOOL,
-  SEND_TOOL,
 } from "./tools/comm.js";
 import {
   BASH_BACKGROUND_TOOL,
@@ -56,6 +55,11 @@ import {
 import type { FileMutation } from "./tools/basic.js";
 import type { RewindPlan, RewindApplyResult } from "./ui/contracts.js";
 import { RewindEngine } from "./session/rewind-engine.js";
+import {
+  ChildSessionManager,
+  type ChildSessionHandle,
+  type PreparedChildRestore,
+} from "./session/child-session-manager.js";
 import { SessionLog, type TurnListing } from "./session/session-log.js";
 import { ContextManager } from "./session/context-manager.js";
 import { SubAgentFactory } from "./session/sub-agent-factory.js";
@@ -125,7 +129,6 @@ import {
   createInputReceived,
   type TurnKind,
   createUserMessage as createUserMessageEntry,
-  createAgentResult,
   createAssistantText,
   createReasoning,
   createToolCall,
@@ -145,11 +148,8 @@ import {
   archiveWindow,
   createGlobalTuiPreferences,
   createLogSessionMeta,
-  loadLog,
   saveLog,
-  validateAndRepairLog,
   type GlobalTuiPreferences,
-  type LoadLogResult,
   type LogSessionMeta,
   type FermiSettings,
   type ModelSelectionState,
@@ -159,17 +159,16 @@ import {
   ROOT_SESSION_CAPABILITIES,
   type SessionCapabilities,
 } from "./session-capabilities.js";
-import type {
-  ArchivedChildRecord,
-  ChildSessionLifecycle,
-  ChildSessionMetaRecord,
-  ChildSessionMode,
-  ChildSessionOutcome,
-  ChildSessionPhase,
-  ChildSessionSnapshot,
-  DeliverMessageResult,
-  MessageEnvelope,
-  MessageType,
+import {
+  migrateMessageEnvelope,
+  type ArchivedChildRecord,
+  type ChildSessionLifecycle,
+  type ChildSessionMetaRecord,
+  type ChildSessionMode,
+  type ChildSessionPhase,
+  type ChildSessionSnapshot,
+  type DeliverMessageResult,
+  type MessageEnvelope,
 } from "./session-tree-types.js";
 import {
   resolveAgentModelEntry,
@@ -184,45 +183,11 @@ import {
 } from "./settings.js";
 import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
 // ------------------------------------------------------------------
-// Message migration helper (old AgentMessage → MessageEnvelope)
-// ------------------------------------------------------------------
-
-function migrateMessageEnvelope(raw: Record<string, unknown>): MessageEnvelope {
-  // New format already — pass through
-  if (raw.type && typeof raw.type === "string" &&
-      ["user_input", "peer_message", "system_notice"].includes(raw.type as string)) {
-    return raw as unknown as MessageEnvelope;
-  }
-  // Old format: { from, to, content, timestamp }
-  const from = (raw.from as string) ?? "system";
-  let type: MessageType = "system_notice";
-  if (from === "user") type = "user_input";
-  else if (from === "main") type = "user_input";
-  else if (from === "system") type = "system_notice";
-  else type = "peer_message"; // agent name
-  return {
-    type,
-    sender: from,
-    content: (raw.content as string) ?? "",
-    timestamp: (raw.timestamp as number) ?? 0,
-  };
-}
-
-// ------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------
 
 const MAX_ACTIVATIONS_PER_TURN = 30;
-const SUB_AGENT_OUTPUT_LIMIT = 12_000;
-const SUB_AGENT_TIMEOUT = 600_000; // milliseconds
 const MAX_COMPACT_PHASE_ROUNDS = 10;       // max activations during compact phase
-
-function formatTokenCount(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(Math.round(value));
-}
 
 const SYSTEM_PREFIXES = [
   "[AUTO-COMPACT]",
@@ -274,51 +239,8 @@ export interface InlineImageInput {
 // ------------------------------------------------------------------
 
 
-// ------------------------------------------------------------------
-// ChildSessionHandle — tracked nested child session state
-// ------------------------------------------------------------------
-
-interface ChildSessionHandle {
-  id: string;
-  numericId: number;
-  template: string;
-  mode: ChildSessionMode;
-  lifecycle: ChildSessionLifecycle;
-  status: "working" | "idle" | "error" | "interrupted" | "terminated" | "completed";
-  phase: ChildSessionPhase;
-  session: Session;
-  sessionDir: string;
-  artifactsDir: string;
-  resultText: string;
-  elapsed: number;
-  startTime: number;
-  turnPromise: Promise<string> | null;
-  abortController: AbortController | null;
-  recentEvents: string[];
-  lifetimeToolCallCount: number;
-  lastToolCallSummary: string;
-  lastTotalTokens: number;
-  lastOutcome: ChildSessionOutcome;
-  lastActivityAt: number;
-  order: number;
-  /** Set by suspendAllChildSessions / archiveAllChildSessions to prevent zombie _finishChildTurn callbacks. */
-  suspended: boolean;
-  /** Resolve when _finishChildTurn completes. Created in _startChildTurn, resolved in _finishChildTurn. */
-  settlePromise: Promise<void> | null;
-  settleResolve: (() => void) | null;
-  terminationCause?: "natural" | "parent_kill" | "user_targeted_kill" | "user_mass_interrupt";
-}
-
-
+// ChildSessionHandle / PreparedChildRestore — moved to ./session/child-session-manager.ts
 // BackgroundShellEntry — moved to ./background-shell-manager.ts
-
-interface PreparedChildRestore {
-  record: ChildSessionMetaRecord;
-  agent: Agent;
-  sessionDir: string;
-  artifactsDir: string;
-  loaded: LoadLogResult;
-}
 
 interface PreparedSessionRestore {
   rootState: Session;
@@ -502,15 +424,13 @@ export class Session {
   // wired to their own stubbed fields on first use.
   private _subAgentFactory?: SubAgentFactory;
 
-  // Session tree / child sessions
-  private _childSessions = new Map<string, ChildSessionHandle>();
-  private _archivedChildren = new Map<string, ArchivedChildRecord>();
-  private _subAgentCounter = 0;
+  // Session tree / child sessions — state lives in ChildSessionManager.
+  // Same-name private accessors below keep internal call sites and tests stable.
+  private _childSessionManager?: ChildSessionManager;
   private _shellManager!: BackgroundShellManager;
 
   // Session capabilities / routing
   private _capabilities: SessionCapabilities = ROOT_SESSION_CAPABILITIES;
-  private _statusSource?: () => ChildSessionSnapshot[];
   private _turnOutputTarget?: (text: string) => void;
   private _deferQueuedMessageInjectionOnTurnExit = false;
   private _selfPhase: ChildSessionPhase = "idle";
@@ -674,174 +594,38 @@ export class Session {
     return this._lastTurnEndStatus;
   }
 
+  /** Child-session tree state + lifecycle (lazy: prototype-based test doubles
+   * get a manager wired to their own stubbed fields on first use). */
+  private get _childSessionManagerInstance(): ChildSessionManager {
+    return this._childSessionManager ??= this._buildChildSessionManager();
+  }
+
+  private get _childSessions(): Map<string, ChildSessionHandle> {
+    return this._childSessionManagerInstance.handles;
+  }
+
+  private get _archivedChildren(): Map<string, ArchivedChildRecord> {
+    return this._childSessionManagerInstance.archived;
+  }
+
+  private get _subAgentCounter(): number {
+    return this._childSessionManagerInstance.counter;
+  }
+
+  private set _subAgentCounter(value: number) {
+    this._childSessionManagerInstance.counter = value;
+  }
+
   getChildSessionSnapshots(): ChildSessionSnapshot[] {
-    return [...this._childSessions.values()]
-      .map((handle) => this._buildChildSessionSnapshot(handle))
-      .sort((a, b) => {
-        const rank = (snapshot: ChildSessionSnapshot): number => {
-          if (snapshot.lifecycle === "running") return 0;
-          if (snapshot.lifecycle === "blocked") return 1;
-          if (snapshot.lifecycle === "idle") return 2;
-          if (snapshot.lifecycle === "archived") return 3;
-          return 3;
-        };
-        const ra = rank(a);
-        const rb = rank(b);
-        if (ra !== rb) return ra - rb;
-        if (a.lastActivityAt !== b.lastActivityAt) return b.lastActivityAt - a.lastActivityAt;
-        return a.numericId - b.numericId;
-      });
+    return this._childSessionManagerInstance.getSnapshots();
   }
 
   getChildSessionLog(childId: string): readonly LogEntry[] | null {
-    const handle = this._childSessions.get(childId);
-    return handle ? handle.session.log : null;
-  }
-
-  private _isLiveChild(handle: ChildSessionHandle): boolean {
-    return handle.lifecycle === "running" || handle.lifecycle === "blocked";
-  }
-
-  private _getStatusSourceSnapshots(): ChildSessionSnapshot[] {
-    if (this._statusSource) {
-      return this._statusSource();
-    }
-    return this.getChildSessionSnapshots();
-  }
-
-  private _buildChildSessionSnapshot(handle: ChildSessionHandle): ChildSessionSnapshot {
-    const session = handle.session;
-    const currentTurnRunning = typeof (session as any).currentTurnRunning === "boolean"
-      ? (session as any).currentTurnRunning as boolean
-      : handle.status === "working";
-    const sessionPhase = typeof (session as any).sessionPhase === "string"
-      ? (session as any).sessionPhase as ChildSessionPhase
-      : handle.phase;
-    const sessionLastTurnEndStatus = (session as any).lastTurnEndStatus as "completed" | "interrupted" | "error" | null | undefined;
-    const lifetimeToolCallCount = typeof (session as any).lifetimeToolCallCount === "number"
-      ? (session as any).lifetimeToolCallCount as number
-      : handle.lifetimeToolCallCount;
-    const lastTotalTokens = typeof (session as any).lastTotalTokens === "number"
-      ? (session as any).lastTotalTokens as number
-      : handle.lastTotalTokens;
-    const lastToolCallSummary = typeof (session as any).lastToolCallSummary === "string"
-      ? (session as any).lastToolCallSummary as string
-      : handle.lastToolCallSummary;
-    const recentEventsSource = Array.isArray((session as any).recentSessionEvents)
-      ? (session as any).recentSessionEvents as string[]
-      : handle.recentEvents;
-    const pendingInboxCount = typeof (session as any).pendingInboxCount === "number"
-      ? (session as any).pendingInboxCount as number
-      : 0;
-    const logRevision = typeof (session as any).getLogRevision === "function"
-      ? (session as any).getLogRevision() as number
-      : 0;
-    const pendingAsk = typeof (session as any).getPendingAsk === "function"
-      ? (session as any).getPendingAsk() as PendingAskUi | null
-      : null;
-    const hasPendingResume = typeof (session as any).hasPendingTurnToResume === "function"
-      ? Boolean((session as any).hasPendingTurnToResume())
-      : false;
-    const phase = pendingAsk || hasPendingResume
-      ? "waiting"
-      : currentTurnRunning
-        ? sessionPhase
-        : "idle";
-    const modelConfig = session.primaryAgent?.modelConfig;
-    const modelDescriptor = modelConfig
-      ? describeModel({
-          configName: modelConfig.name,
-          providerId: modelConfig.provider,
-          selectionKey: modelConfig.model,
-          modelId: modelConfig.model,
-        })
-      : null;
-    const outcome =
-      handle.lastOutcome !== "none"
-        ? handle.lastOutcome
-        : sessionLastTurnEndStatus === "completed"
-          ? "completed"
-          : sessionLastTurnEndStatus === "interrupted"
-            ? "interrupted"
-            : sessionLastTurnEndStatus === "error"
-              ? "error"
-              : "none";
-    return {
-      id: handle.id,
-      numericId: handle.numericId,
-      logRevision,
-      template: handle.template,
-      mode: handle.mode,
-      lifecycle: handle.lifecycle,
-      phase,
-      outcome,
-      running: currentTurnRunning,
-      lifetimeToolCallCount,
-      lastTotalTokens,
-      lastToolCallSummary,
-      recentEvents: [...recentEventsSource],
-      pendingInboxCount,
-      lastActivityAt: handle.lastActivityAt,
-      // Child page chrome fields
-      inputTokens: session.lastInputTokens,
-      contextBudget: session.contextBudget,
-      modelConfigName: modelConfig?.name ?? "",
-      modelProvider: modelConfig?.provider ?? "",
-      modelDisplayLabel: modelDescriptor?.scopedLabel ?? modelConfig?.model ?? "",
-      pendingAskId: pendingAsk?.id ?? null,
-      pendingAskKind: pendingAsk?.kind ?? null,
-      activeLogEntryId: session.activeLogEntryId,
-      turnElapsed: handle.startTime > 0 && currentTurnRunning
-        ? (performance.now() - handle.startTime) / 1000
-        : handle.elapsed,
-      cacheReadTokens: session.lastCacheReadTokens,
-    };
-  }
-
-  private _buildSubSessionBrief(): string {
-    const snapshots = this._getStatusSourceSnapshots();
-    if (snapshots.length === 0) return "No sub-sessions.";
-    const lines = snapshots
-      .filter((snapshot) =>
-        snapshot.lifecycle === "running"
-        || snapshot.lifecycle === "blocked"
-        || snapshot.lifecycle === "idle"
-        || snapshot.outcome !== "none"
-      )
-      .map((snapshot) => {
-        const tools = `${snapshot.lifetimeToolCallCount} tool${snapshot.lifetimeToolCallCount === 1 ? "" : "s"}`;
-        const tokens = snapshot.lastTotalTokens > 0 ? formatTokenCount(snapshot.lastTotalTokens) : "0";
-        const latest = snapshot.lastToolCallSummary
-          || snapshot.recentEvents[snapshot.recentEvents.length - 1]
-          || (snapshot.outcome !== "none" ? snapshot.outcome : "no recent activity");
-        return `- ${snapshot.id}: ${tools}, ${tokens} tokens. Latest: \`${latest}\``;
-      });
-    return lines.length > 0 ? lines.join("\n") : "No sub-sessions.";
+    return this._childSessionManagerInstance.getChildLog(childId);
   }
 
   private _buildDetailedChildStatusReport(): string {
-    const snapshots = this.getChildSessionSnapshots();
-    if (snapshots.length === 0) return "No sub-sessions tracked.";
-    const sections = snapshots.map((snapshot) => {
-      const recent = snapshot.recentEvents.length > 0
-        ? snapshot.recentEvents.map((event, index) => `  ${index + 1}. ${event}`).join("\n")
-        : "  (none)";
-      const latest = snapshot.lastToolCallSummary || snapshot.recentEvents[snapshot.recentEvents.length - 1] || "(none)";
-      return [
-        `- ${snapshot.id}`,
-        `  mode: ${snapshot.mode}`,
-        `  lifecycle: ${snapshot.lifecycle}`,
-        `  phase: ${snapshot.phase}`,
-        `  outcome: ${snapshot.outcome}`,
-        `  tokens: ${formatTokenCount(snapshot.lastTotalTokens)}`,
-        `  tool calls: ${snapshot.lifetimeToolCallCount}`,
-        `  pending inbox: ${snapshot.pendingInboxCount}`,
-        `  latest: ${latest}`,
-        `  recent:`,
-        recent,
-      ].join("\n");
-    });
-    return sections.join("\n\n");
+    return this._childSessionManagerInstance.buildDetailedStatusReport();
   }
 
   constructor(opts: {
@@ -858,7 +642,6 @@ export class Session {
     projectRoot?: string;
     sessionArtifactsDir?: string;
     capabilities?: SessionCapabilities;
-    statusSource?: () => ChildSessionSnapshot[];
     onTurnOutput?: (text: string) => void;
     toolExecutorOverrides?: Record<string, ToolExecutor>;
     deferQueuedMessageInjectionOnTurnExit?: boolean;
@@ -886,7 +669,6 @@ export class Session {
     this._mcpManager = opts.mcpManager;
     this._promptsDirs = opts.promptsDirs;
     this._capabilities = opts.capabilities ?? ROOT_SESSION_CAPABILITIES;
-    this._statusSource = opts.statusSource;
     this._turnOutputTarget = opts.onTurnOutput;
     this._toolExecutorOverrides = opts.toolExecutorOverrides ?? {};
     this._deferQueuedMessageInjectionOnTurnExit = opts.deferQueuedMessageInjectionOnTurnExit ?? false;
@@ -2137,14 +1919,14 @@ export class Session {
     const clonedAllocator = new LogIdAllocator();
     clonedAllocator.restoreFrom(clonedEntries);
 
-    shadow._restoreFromLogUnsafe(meta, clonedEntries, clonedAllocator, { restoreChildren: false });
+    shadow._restoreFromLogUnsafe(meta, clonedEntries, clonedAllocator);
 
     const warnings: string[] = [];
     const allChildMeta = meta.childSessions ?? [];
     // Restore ALL children as full Session instances (including archived) so
     // TUI can display them and read their logs. _archivedChildren is only
     // populated on close/reset, not on restore.
-    const children = this._prepareChildRestores(allChildMeta, warnings);
+    const children = this._childSessionManagerInstance.prepareChildRestores(allChildMeta, warnings);
 
     // Root inbox from meta
     const rootInbox = (meta.inbox ?? []).map((raw) => migrateMessageEnvelope(raw as unknown as Record<string, unknown>));
@@ -2200,10 +1982,9 @@ export class Session {
       ? structuredClone(shadow._pendingTurnState) as PendingTurnState
       : null;
 
-    this._childSessions = new Map();
-    this._archivedChildren = new Map();
+    this._childSessionManagerInstance.clearTables();
     this._subAgentCounter = 0;
-    warnings.push(...this._commitPreparedChildren(prepared.children));
+    warnings.push(...this._childSessionManagerInstance.commitPreparedChildren(prepared.children));
 
     // Restore root inbox from meta
     if (prepared.rootInbox && prepared.rootInbox.length > 0) {
@@ -2261,7 +2042,6 @@ export class Session {
       projectRoot: this._projectRoot,
       sessionArtifactsDir: this._sessionArtifactsOverride || undefined,
       capabilities: this._capabilities,
-      statusSource: this._statusSource,
       onTurnOutput: this._turnOutputTarget,
       toolExecutorOverrides: this._toolExecutorOverrides,
       deferQueuedMessageInjectionOnTurnExit: this._deferQueuedMessageInjectionOnTurnExit,
@@ -2275,7 +2055,6 @@ export class Session {
     meta: LogSessionMeta,
     entries: LogEntry[],
     idAllocator: LogIdAllocator,
-    opts?: { restoreChildren?: boolean; warnings?: string[] },
   ): void {
     const restoredSelection = resolvePersistedModelSelection(this, {
       modelConfigName: meta.modelConfigName || undefined,
@@ -2343,9 +2122,6 @@ export class Session {
     // pairs and doesn't add spurious "interrupted" markers.
     this._resolveOpenAsksAsDenyOnRestore();
     this._normalizeInterruptedTurnFromLog("Last turn was interrupted unexpectedly and recovered after restart.");
-    if (opts?.restoreChildren !== false) {
-      this._restoreChildSessionsFromLog(meta.childSessions ?? [], opts?.warnings);
-    }
 
     // Rebuild ask history from ask_resolution entries
     this._askHistory = [];
@@ -2365,100 +2141,6 @@ export class Session {
 
     this._bumpLogRevision();
     this._notifyLogListeners();
-  }
-
-  private _prepareChildRestores(
-    childSessions: ChildSessionMetaRecord[],
-    warnings: string[],
-  ): PreparedChildRestore[] {
-    if (childSessions.length === 0) return [];
-    if (!this._sessionArtifactsOverride && !this._getArtifactsDirIfAvailable()) {
-      throw new Error(
-        "Cannot restore child sessions before the session store is bound to the target session directory.",
-      );
-    }
-
-    const prepared: PreparedChildRestore[] = [];
-    const ordered = [...childSessions].sort((a, b) => (a.order ?? a.numericId) - (b.order ?? b.numericId));
-    for (const record of ordered) {
-      let agent: Agent;
-      try {
-        if (this.agentTemplates[record.template]) {
-          ({ agent } = this._createSubAgentFromPredefined(record.template, record.id));
-        } else {
-          ({ agent } = this._createSubAgentFromPath(this._resolveTemplatePath(record.template), record.id));
-        }
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        warnings.push(`Failed to prepare child session '${record.id}': ${reason}`);
-        continue;
-      }
-
-      const sessionDir = this._childSessionDir(record.id);
-      const artifactsDir = join(sessionDir, "artifacts");
-
-      try {
-        const loaded = loadLog(sessionDir);
-        const repaired = validateAndRepairLog(loaded.entries);
-        if (repaired.repaired) {
-          for (const warning of repaired.warnings) {
-            warnings.push(`[repair:${record.id}] ${warning}`);
-          }
-        }
-        prepared.push({
-          record,
-          agent,
-          sessionDir,
-          artifactsDir,
-          loaded: {
-            ...loaded,
-            entries: repaired.entries,
-          },
-        });
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        warnings.push(`Failed to load child session '${record.id}': ${reason}`);
-      }
-    }
-    return prepared;
-  }
-
-  private _commitPreparedChildren(children: PreparedChildRestore[]): string[] {
-    if (children.length === 0) return [];
-
-    const warnings: string[] = [];
-    for (const prepared of children) {
-      const { record, agent, loaded } = prepared;
-      try {
-        const handle = this._instantiateChildSession(
-          record.id,
-          record.template,
-          record.mode,
-          agent,
-          { numericId: record.numericId, order: record.order },
-        );
-        handle.session.restoreFromLog(loaded.meta, loaded.entries, loaded.idAllocator);
-        handle.lifecycle = record.lifecycle;
-        handle.lastOutcome = record.outcome ?? "none";
-        handle.lastActivityAt = Date.now();
-        handle.resultText = this._extractLatestAssistantText(handle.session.log);
-        handle.status =
-          record.lifecycle === "archived"
-            ? "terminated"
-            : "idle";
-
-        if (record.inbox && record.inbox.length > 0) {
-          (handle.session as Session)._inbox = record.inbox.map((m) => migrateMessageEnvelope(m as unknown as Record<string, unknown>));
-        }
-
-        this._childSessions.set(record.id, handle);
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        warnings.push(`Failed to restore child session '${record.id}': ${reason}`);
-      }
-    }
-
-    return warnings;
   }
 
   private _rebuildRuntimeSignalsFromLog(): void {
@@ -2562,78 +2244,6 @@ export class Session {
     this._recordSessionEvent("recovered interrupted turn");
   }
 
-  private _restoreChildSessionsFromLog(childSessions: ChildSessionMetaRecord[], warnings?: string[]): void {
-    if (childSessions.length === 0) return;
-
-    // Restore ALL children as full Session instances (including archived)
-    // so TUI can display them and read their logs.
-    const ordered = [...childSessions].sort((a, b) => (a.order ?? a.numericId) - (b.order ?? b.numericId));
-    for (const record of ordered) {
-      let agent: Agent;
-      try {
-        if (this.agentTemplates[record.template]) {
-          ({ agent } = this._createSubAgentFromPredefined(record.template, record.id));
-        } else {
-          ({ agent } = this._createSubAgentFromPath(this._resolveTemplatePath(record.template), record.id));
-        }
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        warnings?.push(`Failed to prepare child session '${record.id}': ${reason}`);
-        console.warn(`Failed to restore child session '${record.id}':`, e);
-        continue;
-      }
-
-      let handle: ChildSessionHandle;
-      try {
-        handle = this._instantiateChildSession(
-          record.id,
-          record.template,
-          record.mode,
-          agent,
-          { numericId: record.numericId, order: record.order },
-        );
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        warnings?.push(`Failed to instantiate child session '${record.id}': ${reason}`);
-        console.warn(`Failed to instantiate child session '${record.id}':`, e);
-        continue;
-      }
-
-      try {
-        const loaded = loadLog(handle.sessionDir);
-        handle.session.restoreFromLog(loaded.meta, loaded.entries, loaded.idAllocator);
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        warnings?.push(`Failed to load child session log for '${record.id}': ${reason}`);
-        console.warn(`Failed to load child session log for '${record.id}':`, e);
-      }
-
-      handle.lifecycle = record.lifecycle;
-      handle.lastOutcome = record.outcome ?? "none";
-      handle.lastActivityAt = Date.now();
-      handle.resultText = this._extractLatestAssistantText(handle.session.log);
-      handle.status = "idle";
-
-      // Restore inbox if persisted (migrate old format)
-      if (record.inbox && record.inbox.length > 0) {
-        (handle.session as Session)._inbox = record.inbox.map((m) => migrateMessageEnvelope(m as unknown as Record<string, unknown>));
-      }
-
-      this._childSessions.set(record.id, handle);
-    }
-  }
-
-  private _extractLatestAssistantText(entries: readonly LogEntry[]): string {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i];
-      if (entry.discarded) continue;
-      if (entry.type === "assistant_text" || entry.type === "no_reply") {
-        return String(entry.content ?? entry.display ?? "");
-      }
-    }
-    return "";
-  }
-
   /**
    * Get log data for persistence (v2).
    * Returns meta + entries suitable for saveLog().
@@ -2734,8 +2344,7 @@ export class Session {
     // 7. /new must start from a truly fresh session tree. _resetTransientState()
     // archives existing children so they can be saved before teardown, but those
     // archived handles must not leak into the next root session's persisted meta.
-    this._childSessions = new Map();
-    this._archivedChildren = new Map();
+    this._childSessionManagerInstance.clearTables();
 
     // 8. Re-init conversation LAST (fresh session state, storage may still be lazy)
     // _initConversation also resets _log and _idAllocator
@@ -5609,11 +5218,15 @@ export class Session {
   }
 
   private _findChildWithPendingAsk(askId: string): ChildSessionHandle | null {
-    for (const handle of this._childSessions.values()) {
-      const ask = handle.session.getPendingAsk();
-      if (ask?.id === askId) return handle;
-    }
-    return null;
+    return this._childSessionManagerInstance.findChildWithPendingAsk(askId);
+  }
+
+  private _resumeChildPendingTurn(handle: ChildSessionHandle): void {
+    this._childSessionManagerInstance.resumeChildPendingTurn(handle);
+  }
+
+  private _finishChildTurn(handle: ChildSessionHandle, error?: unknown): void {
+    this._childSessionManagerInstance.finishChildTurn(handle, error);
   }
 
   /**
@@ -6101,10 +5714,6 @@ export class Session {
   // Sub-agent spawn / cancel / lifecycle
   // ==================================================================
 
-  private _childSessionDir(childId: string): string {
-    return join(this._resolveSessionArtifacts(), "agents", childId, "session");
-  }
-
   private _saveChildSession(handle: ChildSessionHandle): void {
     try {
       const logData = handle.session.getLogForPersistence();
@@ -6121,375 +5730,11 @@ export class Session {
     agent: Agent,
     opts?: { numericId?: number; order?: number },
   ): ChildSessionHandle {
-    const numericId = opts?.numericId ?? (this._subAgentCounter + 1);
-    this._subAgentCounter = Math.max(this._subAgentCounter, numericId);
-    const sessionDir = this._childSessionDir(taskId);
-    const artifactsDir = join(sessionDir, "artifacts");
-    mkdirSync(artifactsDir, { recursive: true });
-
-    const fullSystemPrompt = this._buildSubAgentSystemPrompt(
-      agent.systemPrompt,
-      mode === "persistent",
-    );
-    agent.systemPrompt = fullSystemPrompt;
-
-    const handle: ChildSessionHandle = {
-      id: taskId,
-      numericId,
-      template: templateLabel,
-      mode,
-      lifecycle: "idle",
-      status: "idle",
-      phase: "idle",
-      session: null as unknown as Session,
-      sessionDir,
-      artifactsDir,
-      resultText: "",
-      elapsed: 0,
-      startTime: 0,
-      turnPromise: null,
-      abortController: null,
-      recentEvents: [],
-      lifetimeToolCallCount: 0,
-      lastToolCallSummary: "",
-      lastTotalTokens: 0,
-      lastOutcome: "none",
-      lastActivityAt: Date.now(),
-      order: opts?.order ?? numericId,
-      suspended: false,
-      settlePromise: null,
-      settleResolve: null,
-    };
-
-    const childSession = new Session({
-      primaryAgent: agent,
-      config: this.config,
-      promptsDirs: this._promptsDirs,
-      projectRoot: this._projectRoot,
-      sessionArtifactsDir: artifactsDir,
-      capabilities: CHILD_SESSION_CAPABILITIES,
-      statusSource: () => this.getChildSessionSnapshots(),
-      onTurnOutput: (text: string) => this._handleChildTurnOutput(taskId, text),
-      toolExecutorOverrides: {},
-      deferQueuedMessageInjectionOnTurnExit: true,
-      promptCacheKey: taskId,
-      permissionMode: this.permissionMode,
-      progress: this._progress,
-      permissionRuleStore: this._permissionRuleStore,
-      mcpManager: this.config.subAgentInheritMcp ? this._mcpManager : undefined,
-      hooks: this.config.subAgentInheritHooks ? this.hookRuntime.hooks : undefined,
-    });
-    childSession.onSaveRequest = () => this._saveChildSession(handle);
-    handle.session = childSession;
-    return handle;
-  }
-
-  private _createChildSession(
-    taskId: string,
-    templateLabel: string,
-    mode: ChildSessionMode,
-    agent: Agent,
-  ): ChildSessionHandle {
-    const handle = this._instantiateChildSession(taskId, templateLabel, mode, agent);
-    this._saveChildSession(handle);
-    // Fire SubagentStart hook
-    this.hookRuntime.fireAndForget("SubagentStart", {
-      event: "SubagentStart",
-      timestamp: Date.now(),
-      agentId: taskId,
-    });
-    return handle;
-  }
-
-  private _handleChildTurnOutput(childId: string, text: string): void {
-    const handle = this._childSessions.get(childId);
-    if (!handle) return;
-    handle.resultText = text;
-    handle.lastActivityAt = Date.now();
-  }
-
-  private _startChildTurn(handle: ChildSessionHandle, input: string, options?: { skipUserInput?: boolean }): void {
-    handle.startTime = performance.now();
-    handle.status = "working";
-    handle.lifecycle = "running";
-    handle.phase = "thinking";
-    handle.lastActivityAt = Date.now();
-    handle.suspended = false;
-    handle.terminationCause = undefined;
-    const abortController = new AbortController();
-    handle.abortController = abortController;
-    // Create settle promise so close() can wait for this turn to finish
-    handle.settlePromise = new Promise<void>((resolve) => {
-      handle.settleResolve = resolve;
-    });
-    handle.turnPromise = handle.session.turn(input, { signal: abortController.signal, skipUserInput: options?.skipUserInput });
-    void handle.turnPromise.then(
-      () => this._finishChildTurn(handle, undefined),
-      (error: unknown) => this._finishChildTurn(handle, error),
-    );
-  }
-
-  private _resumeChildPendingTurn(handle: ChildSessionHandle): void {
-    if (handle.turnPromise) return;
-    if (!handle.session.hasPendingTurnToResume()) return;
-
-    handle.startTime = performance.now();
-    handle.status = "working";
-    handle.lifecycle = "running";
-    handle.phase = "waiting";
-    handle.lastActivityAt = Date.now();
-    handle.suspended = false;
-    handle.terminationCause = undefined;
-    const abortController = new AbortController();
-    handle.abortController = abortController;
-    handle.settlePromise = new Promise<void>((resolve) => {
-      handle.settleResolve = resolve;
-    });
-    handle.turnPromise = handle.session.resumePendingTurn({ signal: abortController.signal });
-    void handle.turnPromise.then(
-      () => this._finishChildTurn(handle, undefined),
-      (error: unknown) => this._finishChildTurn(handle, error),
-    );
-  }
-
-  private _finishChildTurn(handle: ChildSessionHandle, error?: unknown): void {
-    // Zombie callback guard: if close/suspend already handled this handle, bail out.
-    if (handle.suspended) {
-      const resolve = handle.settleResolve;
-      handle.settleResolve = null;
-      resolve?.();
-      return;
-    }
-
-    handle.elapsed = handle.startTime > 0 ? (performance.now() - handle.startTime) / 1000 : 0;
-
-    const pendingAsk = !error ? handle.session.getPendingAsk() : null;
-    const hasPendingResume = !error ? handle.session.hasPendingTurnToResume() : false;
-    if (!error && (pendingAsk || hasPendingResume)) {
-      handle.abortController = null;
-      handle.turnPromise = null;
-      handle.lifecycle = "blocked";
-      handle.status = "idle";
-      handle.phase = "waiting";
-      handle.lastOutcome = "none";
-      handle.lastActivityAt = Date.now();
-      this._saveChildSession(handle);
-      this._notifyLogListeners();
-      this.onSaveRequest?.();
-      const resolve = handle.settleResolve;
-      handle.settleResolve = null;
-      resolve?.();
-      return;
-    }
-
-    handle.abortController = null;
-    handle.turnPromise = null;
-    handle.lastActivityAt = Date.now();
-
-    // Fire SubagentStop hook
-    this.hookRuntime.fireAndForget("SubagentStop", {
-      event: "SubagentStop",
-      timestamp: Date.now(),
-      agentId: handle.id,
-    });
-
-    // Determine outcome from error / endStatus
-    const endStatus = error ? "error" : handle.session.lastTurnEndStatus;
-    if (error || endStatus === "error") {
-      handle.lastOutcome = "error";
-      handle.status = "error";
-    } else if (endStatus === "interrupted") {
-      handle.lastOutcome = "interrupted";
-      handle.status = handle.mode === "oneshot" ? "interrupted" : "idle";
-    } else {
-      handle.lastOutcome = "completed";
-      handle.status = handle.mode === "oneshot" ? "completed" : "idle";
-    }
-
-    const outcome: "completed" | "failed" | "interrupted" =
-      handle.lastOutcome === "error"
-        ? "failed"
-        : handle.lastOutcome === "interrupted"
-          ? "interrupted"
-          : "completed";
-    const cause = handle.terminationCause ?? "natural";
-    const agentResult = this._buildAgentResultApiContent(handle, outcome, cause);
-    this._appendEntry(createAgentResult(
-      this._nextLogId("agent_result"),
-      this._turnCount,
-      handle.id,
-      handle.numericId,
-      handle.template,
-      outcome,
-      cause,
-      Math.round((handle.elapsed ?? 0) * 1000),
-      agentResult.content,
-      this._allocateContextId(),
-      agentResult.fullOutputPath,
-    ), false);
-    // User-initiated kills deliver as ride-along: the user is present and
-    // steering, so the parent must not wake and start reacting on its own.
-    // Natural completions/failures keep waking the idle parent (safety net
-    // for missing await_event).
-    const userInitiatedKill = cause === "user_targeted_kill" || cause === "user_mass_interrupt";
-    this._deliverMessage({
-      type: "peer_message",
-      sender: handle.id,
-      content: agentResult.content,
-      timestamp: Date.now(),
-      wake: !userInitiatedKill,
-    });
-    handle.terminationCause = undefined;
-
-    // Lifecycle transition: oneshot → archived, persistent → idle
-    // NOTE: archived children stay in _childSessions during runtime (Session instance alive,
-    // log readable for TUI). Only move to _archivedChildren on close/reset.
-    if (handle.mode === "oneshot") {
-      handle.lifecycle = "archived";
-      this._saveChildSession(handle);
-    } else {
-      handle.lifecycle = "idle";
-      this._saveChildSession(handle);
-      // Persistent: only auto-resume queued work after a natural completion.
-      // User/parent-triggered kills must leave the agent idle.
-      if (cause === "natural") {
-        if (handle.session._hasInboxMessages()) {
-          // Resolve settle before starting next turn (current turn is done)
-          const resolve = handle.settleResolve;
-          handle.settleResolve = null;
-          resolve?.();
-          this._startChildTurn(handle, "", { skipUserInput: true });
-          return;
-        }
-      }
-    }
-
-    // Resolve settle promise
-    const resolve = handle.settleResolve;
-    handle.settleResolve = null;
-    resolve?.();
-  }
-
-  private _buildAgentResultApiContent(
-    handle: ChildSessionHandle,
-    outcome: "completed" | "failed" | "interrupted",
-    cause: "natural" | "parent_kill" | "user_targeted_kill" | "user_mass_interrupt",
-  ): { content: string; fullOutputPath?: string } {
-    const causeNote = (cause === "user_mass_interrupt" || cause === "user_targeted_kill")
-      ? " by the user"
-      : "";
-    const header = `[Agent "${handle.id}" ${outcome}${causeNote}]`;
-    const text = (handle.resultText ?? "").trim();
-
-    if (!text) {
-      return { content: `${header}\n(no output)` };
-    }
-
-    if (text.length > SUB_AGENT_OUTPUT_LIMIT) {
-      const outputDir = join(this._getArtifactsDir(), "agent-outputs");
-      mkdirSync(outputDir, { recursive: true });
-      const relativePath = `artifacts/agent-outputs/${handle.id}.md`;
-      const outputPath = join(outputDir, `${handle.id}.md`);
-      writeFileSync(outputPath, text);
-      const truncated = text.slice(0, SUB_AGENT_OUTPUT_LIMIT);
-      const truncatedAtLine = truncated.split("\n").length;
-      return {
-        content:
-          `${header}\n` +
-          `(Output truncated at ${SUB_AGENT_OUTPUT_LIMIT.toLocaleString()} chars ` +
-          `(line ${truncatedAtLine}). Full output: ${relativePath}. ` +
-          `Continue reading from line ${truncatedAtLine} with \`read_file(start_line=${truncatedAtLine})\`; ` +
-          `do not reread the portion already received.)\n\n` +
-          truncated,
-        fullOutputPath: relativePath,
-      };
-    }
-
-    return { content: `${header}\n${text}` };
-  }
-
-  /** Move a handle from _childSessions to _archivedChildren, releasing the Session instance. */
-  private _archiveHandle(handle: ChildSessionHandle): void {
-    this._archivedChildren.set(handle.id, {
-      id: handle.id,
-      numericId: handle.numericId,
-      template: handle.template,
-      mode: handle.mode,
-      outcome: handle.lastOutcome,
-      order: handle.order,
-      sessionDir: handle.sessionDir,
-      artifactsDir: handle.artifactsDir,
-    });
-    this._childSessions.delete(handle.id);
-  }
-
-  private _sendMessageToChild(childId: string, msg: MessageEnvelope): ToolResult {
-    const handle = this._childSessions.get(childId);
-    if (!handle) {
-      return new ToolResult({ content: `Agent '${childId}' not found.` });
-    }
-    if (handle.mode !== "persistent") {
-      return new ToolResult({ content: `Agent '${childId}' is one-shot and cannot receive messages.` });
-    }
-    if (handle.lifecycle === "archived") {
-      // Persistent archived child still in _childSessions — revive in-place.
-      if (handle.mode === "persistent") {
-        handle.lastActivityAt = Date.now();
-        // Standard delivery (never a raw inbox push): it populates the
-        // bookkeeping fields the child's drain invariant requires. wake:false
-        // because we start the turn explicitly right after.
-        (handle.session as Session)._deliverMessage({ ...msg, wake: false });
-        this._startChildTurn(handle, "", { skipUserInput: true });
-        return new ToolResult({ content: `Agent '${childId}' revived and message sent.` });
-      }
-      return new ToolResult({ content: `Agent '${childId}' is a one-shot agent and cannot receive messages.` });
-    }
-
-    handle.lastActivityAt = Date.now();
-    if (handle.lifecycle === "blocked") {
-      return new ToolResult({
-        content:
-          `ERROR: Agent '${childId}' is waiting for user approval and cannot receive new messages. ` +
-          "Resolve the pending approval first.",
-      });
-    }
-    if (handle.lifecycle === "running") {
-      handle.session._deliverMessage(msg);
-      return new ToolResult({ content: `Message sent to '${childId}'.` });
-    }
-
-    // idle — queue message and start turn. Standard delivery populates the
-    // bookkeeping fields the drain invariant requires; wake:false because we
-    // start the turn explicitly right after.
-    (handle.session as Session)._deliverMessage({ ...msg, wake: false });
-    this._startChildTurn(handle, "", { skipUserInput: true });
-    return new ToolResult({ content: `Message sent to '${childId}'.` });
-  }
-
-  private _interruptBlockedChild(handle: ChildSessionHandle, message: string): void {
-    (handle.session as any)._normalizeInterruptedTurnFromLog?.(message);
-    handle.session.requestTurnInterrupt();
-    handle.lifecycle = handle.mode === "oneshot" ? "archived" : "idle";
-    handle.status = handle.mode === "oneshot" ? "interrupted" : "idle";
-    handle.phase = "idle";
-    handle.lastOutcome = "interrupted";
-    handle.lastActivityAt = Date.now();
-    this._saveChildSession(handle);
+    return this._childSessionManagerInstance.instantiateChild(taskId, templateLabel, mode, agent, opts);
   }
 
   interruptChildSession(childId: string): { accepted: boolean; reason?: string } {
-    const handle = this._childSessions.get(childId);
-    if (!handle) return { accepted: false, reason: "not_found" };
-    if (!this._isLiveChild(handle)) return { accepted: false, reason: "not_live" };
-    handle.terminationCause = "user_targeted_kill";
-    if (handle.abortController) {
-      handle.abortController.abort();
-    } else {
-      this._interruptBlockedChild(handle, "Sub-agent was interrupted while waiting for user approval.");
-      this._notifyLogListeners();
-      this.onSaveRequest?.();
-    }
-    return { accepted: true };
+    return this._childSessionManagerInstance.interruptChild(childId);
   }
 
   private async _execSpawn(args: Record<string, unknown>): Promise<ToolResult> {
@@ -6525,110 +5770,7 @@ export class Session {
   private _execSpawnFromSpecs(
     tasksSpec: Array<Record<string, unknown>>,
   ): ToolResult {
-    const spawned: string[] = [];
-    const spawnedInfo: Array<{ numericId: number; taskId: string; template: string; task: string }> = [];
-    const errors: string[] = [];
-
-    for (const spec of tasksSpec) {
-      const taskId = ((spec["id"] as string) ?? "").trim();
-      const templateName = ((spec["template"] as string) ?? "").trim();
-      const templatePath = ((spec["template_path"] as string) ?? "").trim();
-      const taskDesc = ((spec["task"] as string) ?? "").trim();
-      const modeRaw = ((spec["mode"] as string) ?? "").trim();
-      const modelLevel = typeof spec["model_level"] === "string" ? spec["model_level"].trim() : undefined;
-
-      if (!taskId || !taskDesc) {
-        errors.push("Skipped entry: missing 'id' or 'task'.");
-        continue;
-      }
-      if (!templateName && !templatePath) {
-        errors.push(`'${taskId}': must specify either 'template' or 'template_path'.`);
-        continue;
-      }
-      if (templateName && templatePath) {
-        errors.push(`'${taskId}': cannot specify both 'template' and 'template_path'.`);
-        continue;
-      }
-      if (this._childSessions.has(taskId)) {
-        errors.push(`'${taskId}': already running.`);
-        continue;
-      }
-
-      if (modeRaw !== "oneshot" && modeRaw !== "persistent") {
-        errors.push(`'${taskId}': mode must be 'oneshot' or 'persistent'.`);
-        continue;
-      }
-      const mode: ChildSessionMode = modeRaw;
-
-      let agent: Agent;
-      let tierThinkingLevel: string | undefined;
-      let templateLabel: string;
-      try {
-        if (templateName) {
-          ({ agent, thinkingLevel: tierThinkingLevel } = this._createSubAgentFromPredefined(templateName, taskId, modelLevel));
-          templateLabel = templateName;
-        } else {
-          const resolvedPath = this._resolveTemplatePath(templatePath);
-          ({ agent, thinkingLevel: tierThinkingLevel } = this._createSubAgentFromPath(resolvedPath, taskId, modelLevel));
-          templateLabel = templatePath;
-        }
-      } catch (e) {
-        errors.push(`'${taskId}': ${e}`);
-        continue;
-      }
-
-      if (mode === "persistent" && !this.primaryAgent.tools.some((t) => t.name === "send")) {
-        this.primaryAgent.tools.push(SEND_TOOL);
-      }
-
-      const handle = this._createChildSession(taskId, templateLabel, mode, agent);
-      // Tier/pin wins; otherwise inherit parent's preferred level. Setter resolves
-      // against the child's model and persists _preferredThinkingLevel into log meta.
-      handle.session.thinkingLevel = tierThinkingLevel ?? this._preferredThinkingLevel;
-      this._childSessions.set(taskId, handle);
-      spawned.push(taskId);
-      spawnedInfo.push({ numericId: handle.numericId, taskId, template: templateLabel, task: taskDesc });
-
-      if (this._progress) {
-        this._progress.onAgentStart(
-          this._turnCount,
-          taskId,
-          { sub_agent_id: handle.numericId, template: templateLabel },
-        );
-      }
-
-      this._startChildTurn(handle, taskDesc);
-    }
-
-    const parts: string[] = [];
-    if (spawned.length) {
-      parts.push(
-        `Spawned ${spawned.length} sub-session(s): ${spawned.join(", ")}. ` +
-        "Results will be delivered as each child session completes a turn.",
-      );
-    }
-    if (errors.length) {
-      parts.push("Errors: " + errors.join(" | "));
-    }
-
-    // Build TUI preview: list each sub-agent with truncated task
-    let previewText: string | undefined;
-    if (spawnedInfo.length) {
-      const maxTaskLen = 60;
-      const lines = spawnedInfo.map((info) => {
-        const taskOneLine = info.task.replace(/\s+/g, " ");
-        const taskTrunc = taskOneLine.length > maxTaskLen
-          ? taskOneLine.slice(0, maxTaskLen - 1) + "…"
-          : taskOneLine;
-        return `  #${info.numericId} ${info.taskId} [${info.template}] — ${taskTrunc}`;
-      });
-      previewText = `Spawned ${spawnedInfo.length} sub-agent(s):\n${lines.join("\n")}`;
-    }
-
-    return new ToolResult({
-      content: parts.join("\n") || "No agents spawned.",
-      metadata: previewText ? { tui_preview: { text: previewText, dim: true } } : undefined,
-    });
+    return this._childSessionManagerInstance.spawnFromSpecs(tasksSpec);
   }
 
   private _execKillAgent(args: Record<string, unknown>): ToolResult {
@@ -6640,49 +5782,7 @@ export class Session {
       return new ToolResult({ content: "No agent IDs specified." });
     }
 
-    const killed: string[] = [];
-    const notFound: string[] = [];
-    const alreadyArchived: string[] = [];
-
-    for (const name of ids) {
-      const handle = this._childSessions.get(name);
-      if (!handle) {
-        if (this._archivedChildren.has(name)) {
-          alreadyArchived.push(name);
-        } else {
-          notFound.push(name);
-        }
-        continue;
-      }
-
-      handle.abortController?.abort();
-      handle.lifecycle = "archived";
-      handle.status = "terminated";
-      handle.lastOutcome = "interrupted";
-      handle.lastActivityAt = Date.now();
-      handle.session._recordSessionEvent("terminated by parent");
-      this._saveChildSession(handle);
-      killed.push(name);
-
-      if (this._progress) {
-        this._progress.emit({
-          step: this._turnCount,
-          agent: name,
-          action: "agent_killed",
-          message: `  [#${handle.numericId} ${name}] archived`,
-          level: "normal" as ProgressLevel,
-          timestamp: Date.now() / 1000,
-          usage: {},
-          extra: { sub_agent_id: handle.numericId },
-        });
-      }
-    }
-
-    const parts: string[] = [];
-    if (killed.length) parts.push(`Killed: ${killed.join(", ")}.`);
-    if (alreadyArchived.length) parts.push(`Already archived: ${alreadyArchived.join(", ")}.`);
-    if (notFound.length) parts.push(`Not found: ${notFound.join(", ")}.`);
-    return new ToolResult({ content: parts.join(" ") });
+    return this._childSessionManagerInstance.killAgents(ids);
   }
 
   // ==================================================================
@@ -6696,68 +5796,7 @@ export class Session {
       return new ToolResult({ content: "Error: 'to' and 'content' are required." });
     }
 
-    // Direct send — may revive archived persistent agent
-    if (!this._childSessions.has(to)) {
-      const archived = this._archivedChildren.get(to);
-      if (archived) {
-        if (archived.mode !== "persistent") {
-          return new ToolResult({ content: `Agent '${to}' is a one-shot agent and cannot be revived.` });
-        }
-        try {
-          await this._reviveArchivedChild(archived, content);
-          return new ToolResult({ content: `Agent '${to}' revived from archive and message sent.` });
-        } catch (e) {
-          const reason = e instanceof Error ? e.message : String(e);
-          return new ToolResult({ content: `Failed to revive agent '${to}': ${reason}` });
-        }
-      }
-    }
-
-    return this._sendMessageToChild(to, { type: "user_input", sender: "main", content, timestamp: Date.now() });
-  }
-
-  /** Revive an archived persistent child: rebuild Session, restore log, start turn. */
-  private async _reviveArchivedChild(record: ArchivedChildRecord, messageContent: string): Promise<void> {
-    let agent: Agent;
-    if (this.agentTemplates[record.template]) {
-      ({ agent } = this._createSubAgentFromPredefined(record.template, record.id));
-    } else {
-      ({ agent } = this._createSubAgentFromPath(this._resolveTemplatePath(record.template), record.id));
-    }
-
-    const handle = this._instantiateChildSession(
-      record.id,
-      record.template,
-      record.mode,
-      agent,
-      { numericId: record.numericId, order: record.order },
-    );
-
-    // Restore log from disk
-    const loaded = loadLog(record.sessionDir);
-    const repaired = validateAndRepairLog(loaded.entries);
-    handle.session.restoreFromLog(loaded.meta, repaired.entries, loaded.idAllocator);
-    handle.lifecycle = "idle";
-    handle.lastOutcome = record.outcome;
-    handle.lastActivityAt = Date.now();
-    handle.resultText = this._extractLatestAssistantText(handle.session.log);
-
-    // Move from archived to active
-    this._childSessions.set(record.id, handle);
-    this._archivedChildren.delete(record.id);
-
-    // Deliver message and start turn (standard delivery — see _sendMessageToChild)
-    handle.session._deliverMessage({
-      type: "user_input",
-      sender: "main",
-      content: messageContent,
-      timestamp: Date.now(),
-      wake: false,
-    });
-    this._startChildTurn(handle, "", { skipUserInput: true });
-
-    // Trigger root save since child references changed
-    this.onSaveRequest?.();
+    return this._childSessionManagerInstance.sendOrRevive(to, content);
   }
 
   private async _execCheckStatus(_args: Record<string, unknown>): Promise<ToolResult> {
@@ -6845,142 +5884,85 @@ export class Session {
   }
 
   private _hasActiveAgents(): boolean {
-    return this._getWorkingChildHandles().length > 0;
-  }
-
-  private _getWorkingChildHandles(): ChildSessionHandle[] {
-    return [...this._childSessions.values()].filter((handle) => {
-      return handle.lifecycle === "running" && handle.turnPromise !== null;
-    });
-  }
-
-  private _getWorkingChildRacers(): Array<Promise<{ name: string }>> {
-    return this._getWorkingChildHandles()
-      .map((handle) =>
-        handle.turnPromise!.then(
-          () => ({ name: handle.id }),
-          () => ({ name: handle.id }),
-        ),
-      );
+    return this._childSessionManagerInstance.hasActiveAgents();
   }
 
   private _cascadeKillRunningChildren(
     cause: "user_mass_interrupt" | "parent_kill",
   ): number {
-    let interrupted = 0;
-    for (const handle of this._childSessions.values()) {
-      if (!this._isLiveChild(handle)) continue;
-      handle.terminationCause = cause;
-      if (handle.abortController) {
-        handle.abortController.abort();
-      } else {
-        this._interruptBlockedChild(handle, "Sub-agent was interrupted while waiting for user approval.");
-      }
-      handle.session._recordSessionEvent(cause === "user_mass_interrupt" ? "interrupted by user" : "interrupted by parent");
-      interrupted += 1;
-    }
-    return interrupted;
+    return this._childSessionManagerInstance.cascadeKillRunning(cause);
   }
 
-  /**
-   * Suspend all child sessions for close(). Preserves lifecycle semantics:
-   * - running persistent → normalize + idle
-   * - running oneshot → normalize + archived
-   * - idle persistent → stays idle
-   * Saves log + inbox for all non-archived children.
-   */
   private _suspendAllChildSessions(): void {
-    const toArchive: string[] = [];
-    for (const [name, handle] of this._childSessions) {
-      handle.suspended = true;
-      if (this._isLiveChild(handle)) {
-        handle.abortController?.abort();
-        // Normalize the child's log before persisting
-        (handle.session as any)._normalizeInterruptedTurnFromLog(
-          "Parent session was interrupted by the user.",
-        );
-        handle.lastOutcome = "interrupted";
-        if (handle.mode === "oneshot") {
-          handle.lifecycle = "archived";
-          handle.status = "interrupted";
-          toArchive.push(name);
-        } else {
-          handle.lifecycle = "idle";
-          handle.status = "idle";
-        }
-        handle.lastActivityAt = Date.now();
-        if (this._progress) {
-          this._progress.emit({
-            step: this._turnCount,
-            agent: name,
-            action: "agent_suspended",
-            message: `  [#${handle.numericId} ${name}] suspended (${handle.lifecycle})`,
-            level: "normal" as ProgressLevel,
-            timestamp: Date.now() / 1000,
-            usage: {},
-            extra: { sub_agent_id: handle.numericId },
-          });
-        }
-      }
-      this._saveChildSession(handle);
-    }
-    // Move oneshot-archived handles out of _childSessions after iteration
-    for (const id of toArchive) {
-      const handle = this._childSessions.get(id);
-      if (handle) this._archiveHandle(handle);
-    }
+    this._childSessionManagerInstance.suspendAll();
   }
 
-  /**
-   * Archive all child sessions unconditionally. Used by _resetTransientState() for /new.
-   * All children → archived regardless of mode or current lifecycle.
-   */
   private _archiveAllChildSessions(): void {
-    for (const [name, handle] of this._childSessions) {
-      handle.suspended = true;
-      if (this._isLiveChild(handle)) {
-        handle.abortController?.abort();
-        (handle.session as any)._normalizeInterruptedTurnFromLog(
-          "Session was reset by user.",
-        );
-        handle.lastOutcome = handle.lastOutcome === "none" ? "interrupted" : handle.lastOutcome;
-      }
-      handle.lifecycle = "archived";
-      handle.status = "terminated";
-      handle.lastActivityAt = Date.now();
-      this._saveChildSession(handle);
-    }
-    // Move all to archived map
-    for (const [_name, handle] of this._childSessions) {
-      this._archivedChildren.set(handle.id, {
-        id: handle.id,
-        numericId: handle.numericId,
-        template: handle.template,
-        mode: handle.mode,
-        outcome: handle.lastOutcome,
-        order: handle.order,
-        sessionDir: handle.sessionDir,
-        artifactsDir: handle.artifactsDir,
-      });
-    }
-    this._childSessions.clear();
+    this._childSessionManagerInstance.archiveAll();
   }
 
-  /** Wait for all running child turns to settle, with timeout. */
   private async _waitForAllChildTurnsSettled(): Promise<void> {
-    const SETTLE_TIMEOUT_MS = 3000;
-    const settlePromises = [...this._childSessions.values()]
-      .filter((h) => h.settlePromise)
-      .map((h) => h.settlePromise!);
-    if (settlePromises.length === 0) return;
-    await Promise.race([
-      Promise.all(settlePromises),
-      new Promise<void>((resolve) => setTimeout(resolve, SETTLE_TIMEOUT_MS)),
-    ]);
+    await this._childSessionManagerInstance.waitForAllTurnsSettled();
   }
 
   private _forceKillAllShells(): void {
     this._shellManager.forceKillAll();
+  }
+
+  private _buildChildSessionManager(): ChildSessionManager {
+    return new ChildSessionManager({
+      appendEntry: (entry, notify) => this._appendEntry(entry, notify),
+      nextLogId: (type) => this._nextLogId(type),
+      allocateContextId: () => this._allocateContextId(),
+      getTurnCount: () => this._turnCount,
+      notifyLogListeners: () => this._notifyLogListeners(),
+      requestSave: () => this.onSaveRequest?.(),
+      deliverMessageToParent: (msg) => { this._deliverMessage(msg); },
+      // Child-private access wrappers: same-class private access is legal
+      // here in Session, and routing through the instance keeps test stubs
+      // (e.g. a mocked _saveChildSession) effective.
+      deliverToChild: (child, msg) => { child._deliverMessage(msg); },
+      childHasInbox: (child) => child._hasInboxMessages(),
+      setChildInbox: (child, msgs) => { child._inbox = msgs; },
+      recordChildEvent: (child, event) => child._recordSessionEvent(event),
+      normalizeChildInterruptedTurn: (child, message) => child._normalizeInterruptedTurnFromLog?.(message),
+      saveChildSession: (handle) => this._saveChildSession(handle),
+      getProgress: () => this._progress,
+      fireHook: (event, payload) => this.hookRuntime.fireAndForget(event, payload),
+      resolveSessionArtifacts: () => this._resolveSessionArtifacts(),
+      getArtifactsDir: () => this._getArtifactsDir(),
+      getPreferredThinkingLevel: () => this._preferredThinkingLevel,
+      getPrimaryAgent: () => this.primaryAgent,
+      getAgentTemplates: () => this.agentTemplates,
+      createFromPredefined: (templateName, taskId, modelLevel) =>
+        this._createSubAgentFromPredefined(templateName, taskId, modelLevel),
+      createFromPath: (templateDir, taskId, modelLevel) =>
+        this._createSubAgentFromPath(templateDir, taskId, modelLevel),
+      resolveTemplatePath: (relPath) => this._resolveTemplatePath(relPath),
+      buildSubAgentSystemPrompt: (basePrompt, persistent) =>
+        this._buildSubAgentSystemPrompt(basePrompt, persistent),
+      createChildSession: (o) => {
+        const childSession = new Session({
+          primaryAgent: o.primaryAgent,
+          config: this.config,
+          promptsDirs: this._promptsDirs,
+          projectRoot: this._projectRoot,
+          sessionArtifactsDir: o.artifactsDir,
+          capabilities: CHILD_SESSION_CAPABILITIES,
+          onTurnOutput: o.onTurnOutput,
+          toolExecutorOverrides: {},
+          deferQueuedMessageInjectionOnTurnExit: true,
+          promptCacheKey: o.promptCacheKey,
+          permissionMode: this.permissionMode,
+          progress: this._progress,
+          permissionRuleStore: this._permissionRuleStore,
+          mcpManager: this.config.subAgentInheritMcp ? this._mcpManager : undefined,
+          hooks: this.config.subAgentInheritHooks ? this.hookRuntime.hooks : undefined,
+        });
+        childSession.onSaveRequest = o.onSaveRequest;
+        return childSession;
+      },
+    });
   }
 
   private _buildSubAgentFactory(): SubAgentFactory {

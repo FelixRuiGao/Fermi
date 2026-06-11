@@ -95,6 +95,28 @@ export interface MessageEnvelope {
  */
 export type AgentMessage = MessageEnvelope;
 
+/** Migrate a persisted message (old AgentMessage or new envelope) to MessageEnvelope. */
+export function migrateMessageEnvelope(raw: Record<string, unknown>): MessageEnvelope {
+  // New format already — pass through
+  if (raw.type && typeof raw.type === "string" &&
+      ["user_input", "peer_message", "system_notice"].includes(raw.type as string)) {
+    return raw as unknown as MessageEnvelope;
+  }
+  // Old format: { from, to, content, timestamp }
+  const from = (raw.from as string) ?? "system";
+  let type: MessageType = "system_notice";
+  if (from === "user") type = "user_input";
+  else if (from === "main") type = "user_input";
+  else if (from === "system") type = "system_notice";
+  else type = "peer_message"; // agent name
+  return {
+    type,
+    sender: from,
+    content: (raw.content as string) ?? "",
+    timestamp: (raw.timestamp as number) ?? 0,
+  };
+}
+
 /** Record kept for archived children (Session instance released). */
 export interface ArchivedChildRecord {
   id: string;

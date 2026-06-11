@@ -1210,7 +1210,9 @@ describe("session storage lifecycle", () => {
       await session.turn("bootstrap");
 
       const longText = Array.from({ length: 2500 }, (_, i) => `line-${i + 1}`).join("\n");
-      const rendered = (session as any)._buildAgentResultApiContent(
+      // Truncation formatting lives in ChildSessionManager (P2.4b); reach it
+      // through the real session's manager so artifacts-dir wiring stays real.
+      const rendered = (session as any)._childSessionManagerInstance._buildAgentResultApiContent(
         {
           id: "investigator",
           resultText: longText,
