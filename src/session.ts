@@ -60,6 +60,15 @@ import {
   type ChildSessionHandle,
   type PreparedChildRestore,
 } from "./session/child-session-manager.js";
+import {
+  beginWorkIfNeededIn,
+  completeMissingToolResultsInLog,
+  finishWorkInLog,
+  normalizeInterruptedTurnInLog,
+  parseRestoredState,
+  type LogSurgery,
+  type RestoredSessionState,
+} from "./session/session-persistence.js";
 import { SessionLog, type TurnListing } from "./session/session-log.js";
 import { ContextManager } from "./session/context-manager.js";
 import { SubAgentFactory } from "./session/sub-agent-factory.js";
@@ -124,8 +133,6 @@ import {
   LogIdAllocator,
   type LogEntry,
   createSystemPrompt,
-  createWorkStart,
-  createWorkEnd,
   createInputReceived,
   type TurnKind,
   createUserMessage as createUserMessageEntry,
@@ -204,26 +211,6 @@ type DrainPendingToolCallsResult =
   | { kind: "suspended"; ask: AskRequest; toolCallId: string }
   | { kind: "interrupted" };
 
-const SAFE_INTERRUPT_TOOLS = new Set([
-  "ask",
-  "check_status",
-  "summarize_context",
-  "glob",
-  "grep",
-  "kill_agent",
-  "list_dir",
-  "read_file",
-  "send",
-  "show_context",
-  "skill",
-  "spawn",
-  "time",
-  "await_event",
-  "web_fetch",
-  "web_search",
-  "bash_output",
-]);
-
 // ------------------------------------------------------------------
 // InlineImageInput — clipboard / drag-drop image passed to turn()
 // ------------------------------------------------------------------
@@ -243,7 +230,7 @@ export interface InlineImageInput {
 // BackgroundShellEntry — moved to ./background-shell-manager.ts
 
 interface PreparedSessionRestore {
-  rootState: Session;
+  rootState: RestoredSessionState;
   children: PreparedChildRestore[];
   archivedRecords?: ArchivedChildRecord[];
   rootInbox?: MessageEnvelope[];
@@ -829,45 +816,39 @@ export class Session {
     return this._logStore.nextId(type);
   }
 
-  private _nextWorkId(): string {
-    this._workCount += 1;
-    return `work-${String(this._workCount).padStart(3, "0")}`;
+  /** Live-session view for the shared log-surgery functions (session-persistence.ts). */
+  private _logSurgeryView(): LogSurgery {
+    const session = this;
+    return {
+      get entries() { return session._log; },
+      appendEntry: (entry) => this._appendEntry(entry, false),
+      nextLogId: (type) => this._nextLogId(type),
+      allocateContextId: () => this._allocateContextId(),
+      recordEvent: (text) => this._recordSessionEvent(text),
+      get turnCount() { return session._turnCount; },
+      set turnCount(value) { session._turnCount = value; },
+      get workCount() { return session._workCount; },
+      set workCount(value) { session._workCount = value; },
+      get currentWorkId() { return session._currentWorkId; },
+      set currentWorkId(value) { session._currentWorkId = value; },
+      get currentWorkStartedAt() { return session._currentWorkStartedAt; },
+      set currentWorkStartedAt(value) { session._currentWorkStartedAt = value; },
+      get lastTurnEndStatus() { return session._lastTurnEndStatus; },
+      set lastTurnEndStatus(value) { session._lastTurnEndStatus = value; },
+      get activeLogEntryId() { return session._activeLogEntryId; },
+      set activeLogEntryId(value) { session._activeLogEntryId = value; },
+    };
   }
 
   private _beginWorkIfNeeded(): string {
-    if (this._currentWorkId) return this._currentWorkId;
-    const workId = this._nextWorkId();
-    this._currentWorkId = workId;
-    this._currentWorkStartedAt = performance.now();
-    this._appendEntry(
-      createWorkStart(this._nextLogId("work_start"), this._turnCount, workId),
-      false,
-    );
-    return workId;
+    return beginWorkIfNeededIn(this._logSurgeryView());
   }
 
   private _finishCurrentWork(
     status: "completed" | "interrupted" | "error",
     interruptHints?: string[],
   ): void {
-    const workId = this._currentWorkId ?? this._beginWorkIfNeeded();
-    const elapsedMs = this._currentWorkStartedAt > 0
-      ? Math.round(performance.now() - this._currentWorkStartedAt)
-      : undefined;
-    this._appendEntry(
-      createWorkEnd(
-        this._nextLogId("work_end"),
-        this._turnCount,
-        workId,
-        status,
-        elapsedMs,
-        interruptHints,
-      ),
-      false,
-    );
-    this._lastTurnEndStatus = status;
-    this._currentWorkId = null;
-    this._currentWorkStartedAt = 0;
+    finishWorkInLog(this._logSurgeryView(), status, interruptHints);
     this.onSaveRequest?.();
     this._maybeRunIdleGc();
   }
@@ -1914,12 +1895,30 @@ export class Session {
       );
     }
 
-    const shadow = this._createRestoreShadowSession();
+    // Parse on cloned data — everything that can fail (model resolution, log
+    // surgery) happens here, so a failed restore never pollutes the live
+    // session (see session-persistence.ts).
     const clonedEntries = structuredClone(entries) as LogEntry[];
     const clonedAllocator = new LogIdAllocator();
     clonedAllocator.restoreFrom(clonedEntries);
-
-    shadow._restoreFromLogUnsafe(meta, clonedEntries, clonedAllocator);
+    const rootState = parseRestoredState(
+      {
+        resolveModelSelection: (m) => resolvePersistedModelSelection(this, {
+          modelConfigName: m.modelConfigName || undefined,
+          modelProvider: m.modelProvider,
+          modelSelectionKey: m.modelSelectionKey,
+          modelId: m.modelId,
+        }),
+        getModelConfig: (configName) => this.config.getModel(configName),
+        resolveThinkingLevel: (modelName, preferred) => this._resolveThinkingLevelForModel(modelName, preferred),
+        describeInitialModelFallback: () => this._describeInitialModel(),
+        fallbackCreatedAt: this._createdAt,
+        agentName: this.primaryAgent.name,
+      },
+      meta,
+      clonedEntries,
+      clonedAllocator,
+    );
 
     const warnings: string[] = [];
     const allChildMeta = meta.childSessions ?? [];
@@ -1931,11 +1930,10 @@ export class Session {
     // Root inbox from meta
     const rootInbox = (meta.inbox ?? []).map((raw) => migrateMessageEnvelope(raw as unknown as Record<string, unknown>));
 
-    return { rootState: shadow, children, rootInbox, warnings };
+    return { rootState, children, rootInbox, warnings };
   }
 
   commitPreparedRestore(prepared: PreparedSessionRestore): string[] {
-    const shadow = prepared.rootState;
     const warnings = [...prepared.warnings];
 
     this._resetTransientState();
@@ -1943,44 +1941,7 @@ export class Session {
     this._currentTurnSignal = null;
     this._currentTurnAbortController = null;
     this._turnInFlight = null;
-    // _waitHandle removed — await_event uses polling now
-    this.primaryAgent.replaceModelConfig({ ...shadow.primaryAgent.modelConfig });
-    this._persistedModelSelection = { ...shadow._persistedModelSelection };
-
-    this._log = shadow._log;
-    // Do NOT copy shadow._logRevision — it is a transient change-detection
-    // counter that must stay monotonically increasing on *this* session so
-    // that UI subscribers (shouldSyncTranscript) always detect the swap.
-    // Copying the shadow's small value can collide with the current value,
-    // causing the transcript panel to skip the update.
-    this._idAllocator = shadow._idAllocator;
-    this._turnCount = shadow._turnCount;
-    this._workCount = shadow._workCount;
-    this._currentWorkId = shadow._currentWorkId;
-    this._currentWorkStartedAt = shadow._currentWorkStartedAt;
-    this._compactCount = shadow._compactCount;
-    this._preferredThinkingLevel = shadow._preferredThinkingLevel;
-    this._thinkingLevel = shadow._thinkingLevel;
-    this._createdAt = shadow._createdAt;
-    this._initialModel = shadow._initialModel;
-    this._title = shadow._title;
-    this._cachedSummary = shadow._cachedSummary;
-    this._usedContextIds = new Set(shadow._usedContextIds);
-    this._lastInputTokens = shadow._lastInputTokens;
-    this._lastTotalTokens = shadow._lastTotalTokens;
-    this._lastCacheReadTokens = shadow._lastCacheReadTokens;
-    this._lifetimeToolCallCount = shadow._lifetimeToolCallCount;
-    this._lastToolCallSummary = shadow._lastToolCallSummary;
-    this._recentSessionEvents = [...shadow._recentSessionEvents];
-    this._lastTurnEndStatus = shadow._lastTurnEndStatus;
-    this._selfPhase = shadow._selfPhase;
-    this._activeAsk = shadow._activeAsk ? structuredClone(shadow._activeAsk) as AskRequest : null;
-    this._askHistory = structuredClone(shadow._askHistory) as AskAuditRecord[];
-    this._agentState = shadow._agentState;
-    this._inbox = structuredClone(shadow._inbox) as MessageEnvelope[];
-    this._pendingTurnState = shadow._pendingTurnState
-      ? structuredClone(shadow._pendingTurnState) as PendingTurnState
-      : null;
+    this._applyRestoredState(prepared.rootState);
 
     this._childSessionManagerInstance.clearTables();
     this._subAgentCounter = 0;
@@ -2008,240 +1969,48 @@ export class Session {
     this.commitPreparedRestore(prepared);
   }
 
-  private _createRestoreShadowSession(): Session {
-    const shadowStore =
-      this._sessionArtifactsOverride || this._getArtifactsDirIfAvailable()
-        ? this._store
-        : undefined;
-    const provider = (this.primaryAgent as unknown as { _provider?: unknown })._provider;
-    const clonedPrimaryAgent = typeof (this.primaryAgent as { clone?: () => Agent }).clone === "function"
-      ? (this.primaryAgent as { clone: () => Agent }).clone()
-      : {
-          name: this.primaryAgent.name,
-          description: this.primaryAgent.description,
-          systemPrompt: this.primaryAgent.systemPrompt,
-          tools: [...this.primaryAgent.tools],
-          maxToolRounds: this.primaryAgent.maxToolRounds,
-          modelConfig: { ...this.primaryAgent.modelConfig },
-          _provider: provider,
-          replaceModelConfig(next: ModelConfig) {
-            (this as { modelConfig: ModelConfig }).modelConfig = next;
-          },
-        } as unknown as Agent;
-    const shadow = new Session({
-      primaryAgent: clonedPrimaryAgent,
-      config: this.config,
-      agentTemplates: this.agentTemplates,
-      skills: this._skills,
-      skillRoots: this._skillRoots,
-      progress: this._progress,
-      mcpManager: this._mcpManager,
-      promptsDirs: this._promptsDirs,
-      store: shadowStore,
-      contextBudgetPercent: this._contextBudgetPercent,
-      projectRoot: this._projectRoot,
-      sessionArtifactsDir: this._sessionArtifactsOverride || undefined,
-      capabilities: this._capabilities,
-      onTurnOutput: this._turnOutputTarget,
-      toolExecutorOverrides: this._toolExecutorOverrides,
-      deferQueuedMessageInjectionOnTurnExit: this._deferQueuedMessageInjectionOnTurnExit,
-      permissionRuleStore: this._permissionRuleStore,
-    });
-    shadow.applyGlobalPreferences(this.getGlobalPreferences());
-    return shadow;
-  }
+  /** Single assignment pass for a parsed restore (no failure paths in here). */
+  private _applyRestoredState(state: RestoredSessionState): void {
+    this.primaryAgent.replaceModelConfig({ ...state.modelConfig });
+    this._persistedModelSelection = { ...state.persistedModelSelection };
 
-  private _restoreFromLogUnsafe(
-    meta: LogSessionMeta,
-    entries: LogEntry[],
-    idAllocator: LogIdAllocator,
-  ): void {
-    const restoredSelection = resolvePersistedModelSelection(this, {
-      modelConfigName: meta.modelConfigName || undefined,
-      modelProvider: meta.modelProvider,
-      modelSelectionKey: meta.modelSelectionKey,
-      modelId: meta.modelId,
-    });
-    const restoredModelConfig = this.config.getModel(restoredSelection.selectedConfigName);
-    const restoredThinkingPreference = meta.thinkingLevel ?? "";
-
-    this._resetTransientState();
-    this.primaryAgent.replaceModelConfig(restoredModelConfig);
-    this._persistedModelSelection = this._buildPersistedModelSelection({
-      modelConfigName: restoredSelection.selectedConfigName,
-      modelProvider: restoredSelection.modelProvider,
-      modelSelectionKey: restoredSelection.modelSelectionKey,
-      modelId: restoredSelection.modelId,
-    });
-
-    // Core log state
-    this._log = entries;
-    this._logStore.resetRevision();
-    this._idAllocator = idAllocator;
-
-    // Counters from meta
-    this._turnCount = meta.turnCount;
-    this._compactCount = meta.compactCount;
-    this._preferredThinkingLevel = restoredThinkingPreference;
-    this._thinkingLevel = this._resolveThinkingLevelForModel(
-      restoredModelConfig.model,
-      restoredThinkingPreference,
-    );
-    this._createdAt = meta.createdAt || this._createdAt;
-    this._initialModel = (meta as any).initialModel || this._describeInitialModel();
-    this._title = meta.title;
-    this._cachedSummary = meta.summary || undefined;
-
-    // Rebuild usedContextIds from entries
-    this._usedContextIds = new Set<string>();
-    this._workCount = 0;
+    this._log = state.entries;
+    // Do NOT reset the log revision — it is a transient change-detection
+    // counter that must stay monotonically increasing on *this* session so
+    // that UI subscribers (shouldSyncTranscript) always detect the swap.
+    this._idAllocator = state.idAllocator;
+    this._turnCount = state.turnCount;
+    this._workCount = state.workCount;
     this._currentWorkId = null;
     this._currentWorkStartedAt = 0;
-    for (const e of entries) {
-      const ctxId = (e.meta as Record<string, unknown>)["contextId"];
-      if (ctxId) this._usedContextIds.add(String(ctxId));
-      if (e.type === "work_start" && !e.discarded) this._workCount += 1;
-    }
-
-    // Restore last token counts from log. A zero token_update means the provider
-    // ended without usable usage data, so keep looking for the last real count.
-    for (let i = entries.length - 1; i >= 0; i--) {
-      if (entries[i].type === "token_update") {
-        const inputTokens = (entries[i].meta as Record<string, unknown>)["inputTokens"] as number;
-        if (!Number.isFinite(inputTokens) || inputTokens <= 0) continue;
-        this._lastInputTokens = inputTokens;
-        this._lastTotalTokens = ((entries[i].meta as Record<string, unknown>)["totalTokens"] as number) ?? inputTokens;
-        this._lastCacheReadTokens = ((entries[i].meta as Record<string, unknown>)["cacheReadTokens"] as number) ?? 0;
-        break;
-      }
-    }
-
-    this._rebuildRuntimeSignalsFromLog();
-    // ESC-deny model: resolve open asks as Deny/Decline FIRST so the
-    // subsequent normalization sees them as completed tool_call → tool_result
-    // pairs and doesn't add spurious "interrupted" markers.
-    this._resolveOpenAsksAsDenyOnRestore();
-    this._normalizeInterruptedTurnFromLog("Last turn was interrupted unexpectedly and recovered after restart.");
-
-    // Rebuild ask history from ask_resolution entries
-    this._askHistory = [];
-    for (const e of entries) {
-      if (e.type === "ask_resolution" && !e.discarded) {
-        const m = e.meta as Record<string, unknown>;
-        this._askHistory.push({
-          askId: String(m["askId"] ?? ""),
-          kind: (m["askKind"] as any) ?? "agent_question",
-          summary: "",
-          decidedAt: new Date(e.timestamp).toISOString(),
-          decision: "answered",
-          source: { agentId: this.primaryAgent.name },
-        });
-      }
-    }
-
-    this._bumpLogRevision();
-    this._notifyLogListeners();
-  }
-
-  private _rebuildRuntimeSignalsFromLog(): void {
-    this._lifetimeToolCallCount = 0;
-    this._lastToolCallSummary = "";
-    this._recentSessionEvents = [];
-    this._lastTurnEndStatus = null;
-    this._selfPhase = "idle";
-
-    for (const entry of this._log) {
-      if (entry.discarded) continue;
-      if (entry.type === "tool_call" && entry.apiRole === "assistant") {
-        this._lifetimeToolCallCount += 1;
-        this._lastToolCallSummary = entry.display || this._lastToolCallSummary;
-        if (entry.display) this._recordSessionEvent(entry.display);
-      }
-      if (entry.type === "tool_result") {
-        const content = entry.content;
-        if (content && typeof content === "object") {
-          const toolSummary = String((content as Record<string, unknown>)["toolSummary"] ?? "").trim();
-          if (toolSummary) {
-            this._lastToolCallSummary = toolSummary;
-            this._recordSessionEvent(toolSummary);
-          }
-        }
-      }
-      if (entry.type === "turn_end" || entry.type === "work_end") {
-        const status = (entry.meta as Record<string, unknown>)["status"];
-        if (status === "completed" || status === "interrupted" || status === "error") {
-          this._lastTurnEndStatus = status;
-        }
-      }
-    }
+    this._compactCount = state.compactCount;
+    this._preferredThinkingLevel = state.preferredThinkingLevel;
+    this._thinkingLevel = state.thinkingLevel;
+    this._createdAt = state.createdAt;
+    this._initialModel = state.initialModel;
+    this._title = state.title;
+    this._cachedSummary = state.cachedSummary;
+    this._usedContextIds = new Set(state.usedContextIds);
+    this._lastInputTokens = state.lastInputTokens;
+    this._lastTotalTokens = state.lastTotalTokens;
+    this._lastCacheReadTokens = state.lastCacheReadTokens;
+    this._lifetimeToolCallCount = state.signals.lifetimeToolCallCount;
+    this._lastToolCallSummary = state.signals.lastToolCallSummary;
+    this._recentSessionEvents = [...state.signals.recentSessionEvents];
+    this._lastTurnEndStatus = state.signals.lastTurnEndStatus;
+    this._selfPhase = state.signals.selfPhase;
+    this._activeLogEntryId = null;
+    // A parsed restore carries no live ask/turn state: open asks were
+    // deny-resolved during parsing and the interrupted turn was normalized.
+    this._activeAsk = null;
+    this._askHistory = state.askHistory;
+    this._agentState = "idle";
+    this._inbox = [];
+    this._pendingTurnState = null;
   }
 
   private _normalizeInterruptedTurnFromLog(message: string): void {
-    let turnStartIndex = -1;
-    let interruptedTurnIndex = -1;
-
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      const entry = this._log[i];
-      if (entry.discarded) continue;
-      if (entry.type === "turn_end" || entry.type === "work_end") {
-        break;
-      }
-      if (entry.type === "turn_start" || entry.type === "input_received") {
-        turnStartIndex = i;
-        interruptedTurnIndex = entry.turnIndex;
-        break;
-      }
-    }
-
-    if (turnStartIndex < 0 || interruptedTurnIndex < 0) return;
-    this._activeLogEntryId = null;
-
-    let latestRound: number | undefined;
-    let latestRoundHasToolCall = false;
-
-    for (let i = turnStartIndex; i < this._log.length; i++) {
-      const entry = this._log[i];
-      if (entry.discarded || entry.turnIndex !== interruptedTurnIndex) continue;
-      if (entry.roundIndex !== undefined && (latestRound === undefined || entry.roundIndex > latestRound)) {
-        latestRound = entry.roundIndex;
-      }
-    }
-
-    if (latestRound !== undefined) {
-      for (let i = turnStartIndex; i < this._log.length; i++) {
-        const entry = this._log[i];
-        if (entry.discarded || entry.turnIndex !== interruptedTurnIndex || entry.roundIndex !== latestRound) continue;
-        if (entry.type === "tool_call" && entry.apiRole === "assistant") latestRoundHasToolCall = true;
-      }
-      if (!latestRoundHasToolCall) {
-        for (let i = turnStartIndex; i < this._log.length; i++) {
-          const entry = this._log[i];
-          if (entry.discarded || entry.turnIndex !== interruptedTurnIndex || entry.roundIndex !== latestRound) continue;
-          if (entry.type === "reasoning") entry.discarded = true;
-        }
-      }
-    }
-
-    const originalTurnCount = this._turnCount;
-    this._turnCount = interruptedTurnIndex;
-    this._completeMissingToolResultsFromLog(turnStartIndex);
-
-    // Inject <system-message> about the recovery (same format as live interrupt).
-    const interruptionContent = `<system-message>\n${message}\n</system-message>`;
-    const interruptionCtxId = this._allocateContextId();
-    const interruptionEntry = createUserMessageEntry(
-      this._nextLogId("user_message"),
-      interruptedTurnIndex,
-      "",
-      interruptionContent,
-      interruptionCtxId,
-    );
-    interruptionEntry.tuiVisible = false;
-    interruptionEntry.displayKind = null;
-    this._appendEntry(interruptionEntry, false);
-    this._finishCurrentWork("interrupted");
-    this._turnCount = originalTurnCount;
-    this._recordSessionEvent("recovered interrupted turn");
+    normalizeInterruptedTurnInLog(this._logSurgeryView(), message);
   }
 
   /**
@@ -3132,92 +2901,6 @@ export class Session {
    * Restore ask state from log entries.
    * Scans for unclosed ask_request (no matching ask_resolution).
    */
-  /**
-   * ESC-deny model: on restore, any open ask_request without a matching
-   * ask_resolution is treated as "user never decided" → synthesize a
-   * Deny/Decline resolution + a matching tool_result so the model sees
-   * a definite outcome. Must run BEFORE _normalizeInterruptedTurnFromLog.
-   */
-  private _resolveOpenAsksAsDenyOnRestore(): void {
-    const log = this._log;
-    const resolvedAskIds = new Set<string>();
-    for (const e of log) {
-      if (e.discarded) continue;
-      if (e.type === "ask_resolution") {
-        resolvedAskIds.add(String((e.meta as Record<string, unknown>)["askId"] ?? ""));
-      }
-    }
-
-    const openAsks: LogEntry[] = [];
-    for (const e of log) {
-      if (e.discarded) continue;
-      if (e.type !== "ask_request") continue;
-      const askId = String((e.meta as Record<string, unknown>)["askId"] ?? "");
-      if (!resolvedAskIds.has(askId)) openAsks.push(e);
-    }
-    if (openAsks.length === 0) return;
-
-    for (const askEntry of openAsks) {
-      const askId = String((askEntry.meta as Record<string, unknown>)["askId"] ?? "");
-      const askKind = String((askEntry.meta as Record<string, unknown>)["askKind"] ?? "agent_question");
-      const roundIndex = typeof (askEntry.meta as Record<string, unknown>)["roundIndex"] === "number"
-        ? ((askEntry.meta as Record<string, unknown>)["roundIndex"] as number)
-        : (askEntry.roundIndex ?? this._computeNextRoundIndex());
-      const payload = askEntry.content as Record<string, unknown> | null;
-      const toolCallId = String((askEntry.meta as Record<string, unknown>)["toolCallId"] ?? "");
-
-      if (askKind === "approval") {
-        const toolName = String(payload?.["toolName"] ?? "");
-        this._appendEntry(createAskResolution(
-          this._nextLogId("ask_resolution"),
-          askEntry.turnIndex,
-          { choice: "Deny", toolName, restored: true },
-          askId,
-          "approval",
-        ), false);
-        if (toolCallId) {
-          const ctxId = this._findToolCallContextId(toolCallId, roundIndex)
-            ?? this._allocateContextId();
-          this._appendEntry(createToolResultEntry(
-            this._nextLogId("tool_result"),
-            askEntry.turnIndex,
-            roundIndex,
-            {
-              toolCallId,
-              toolName: toolName || "bash",
-              content: "ERROR: Tool execution was cancelled before user decision (session restored).",
-              toolSummary: `${toolName || "tool"} cancelled`,
-            },
-            { isError: true, contextId: ctxId },
-          ), false);
-        }
-      } else {
-        this._appendEntry(createAskResolution(
-          this._nextLogId("ask_resolution"),
-          askEntry.turnIndex,
-          { declined: true, restored: true },
-          askId,
-          "agent_question",
-        ), false);
-        const askToolCallId = toolCallId || (payload?.["toolCallId"] as string | undefined) || "ask";
-        const ctxId = this._findToolCallContextId(askToolCallId, roundIndex)
-          ?? this._allocateContextId();
-        this._appendEntry(createToolResultEntry(
-          this._nextLogId("tool_result"),
-          askEntry.turnIndex,
-          roundIndex,
-          {
-            toolCallId: askToolCallId,
-            toolName: "ask",
-            content: "ERROR: User declined to answer the question (session restored).",
-            toolSummary: "ask declined",
-          },
-          { isError: true, contextId: ctxId },
-        ), false);
-      }
-    }
-  }
-
   getPendingAsk(): PendingAskUi | null {
     const ownAsk = toPendingAskUi(this._activeAsk);
     if (ownAsk) return ownAsk;
@@ -4379,78 +4062,8 @@ export class Session {
     return hints;
   }
 
-  private _toolMayHavePartialEffects(toolName: string): boolean {
-    return !SAFE_INTERRUPT_TOOLS.has(toolName);
-  }
-
-  /**
-   * Scan log entries from `fromIdx` onwards: for each tool_call entry
-   * (apiRole="assistant") that has no matching tool_result, create a
-   * contextual interrupted tool_result with a system-message body.
-   */
   private _completeMissingToolResultsFromLog(fromIdx: number): void {
-    const pendingToolCalls: Array<{
-      id: string;
-      name: string;
-      roundIndex?: number;
-      contextId?: string;
-      execState?: string;
-    }> = [];
-    const resolvedToolCallIds = new Set<string>();
-
-    for (let i = fromIdx; i < this._log.length; i++) {
-      const e = this._log[i];
-      if (e.type === "tool_call") {
-        if (e.apiRole !== "assistant") continue;
-        const meta = e.meta as Record<string, unknown>;
-        pendingToolCalls.push({
-          id: (meta["toolCallId"] as string) ?? "",
-          name: (meta["toolName"] as string) ?? "",
-          roundIndex: e.roundIndex,
-          contextId: typeof meta["contextId"] === "string" ? meta["contextId"] as string : undefined,
-          execState: typeof meta["toolExecState"] === "string" ? meta["toolExecState"] as string : undefined,
-        });
-      } else if (e.type === "tool_result") {
-        resolvedToolCallIds.add((e.meta as Record<string, unknown>)["toolCallId"] as string);
-      }
-    }
-
-    for (const tc of pendingToolCalls) {
-      if (resolvedToolCallIds.has(tc.id)) continue;
-      if (!tc.id) continue;
-      let detail: string;
-      const executionInterrupted = tc.execState === "running";
-      const partialEffectsPossible = executionInterrupted && this._toolMayHavePartialEffects(tc.name);
-      if (tc.execState === "running") {
-        detail = partialEffectsPossible
-          ? "Tool execution was interrupted and may have had partial effects."
-          : "Tool execution was interrupted.";
-      } else {
-        detail = `Tool \`${tc.name}\` was not executed.`;
-      }
-      const content = `<system-message>\nLast turn was interrupted by the user.\n${detail}\n</system-message>`;
-      this._appendEntry(createToolResultEntry(
-        this._nextLogId("tool_result"),
-        this._turnCount,
-        tc.roundIndex ?? this._computeNextRoundIndex(),
-        {
-          toolCallId: tc.id,
-          toolName: tc.name,
-          content,
-          toolSummary: detail,
-        },
-        {
-          isError: false,
-          contextId: tc.contextId,
-          interrupt: {
-            kind: executionInterrupted ? "execution_interrupted" : "not_started",
-            partialEffectsPossible,
-          },
-          previewText: detail,
-          previewDim: true,
-        },
-      ), false);
-    }
+    completeMissingToolResultsInLog(this._logSurgeryView(), fromIdx);
   }
 
   private _getLastSendableRole(): string | null {

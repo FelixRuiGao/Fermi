@@ -8,6 +8,22 @@
 
 import { LogIdAllocator, type LogEntry, type TurnKind } from "../log-entry.js";
 
+/** Stamp providerRoundId for provider-round entry types (idempotent). */
+export function stampProviderRoundId(entry: LogEntry): void {
+  if (
+    entry.roundIndex !== undefined &&
+    (
+      entry.type === "assistant_text" ||
+      entry.type === "reasoning" ||
+      entry.type === "tool_call" ||
+      entry.type === "tool_result" ||
+      entry.type === "no_reply"
+    )
+  ) {
+    entry.meta["providerRoundId"] ??= `input-${entry.turnIndex}:round-${entry.roundIndex}`;
+  }
+}
+
 export interface TurnListing {
   turnIndex: number;
   entryIndex: number;
@@ -83,18 +99,7 @@ export class SessionLog {
 
   /** Append an entry, stamping providerRoundId for provider-round types. */
   append(entry: LogEntry): void {
-    if (
-      entry.roundIndex !== undefined &&
-      (
-        entry.type === "assistant_text" ||
-        entry.type === "reasoning" ||
-        entry.type === "tool_call" ||
-        entry.type === "tool_result" ||
-        entry.type === "no_reply"
-      )
-    ) {
-      entry.meta["providerRoundId"] ??= `input-${entry.turnIndex}:round-${entry.roundIndex}`;
-    }
+    stampProviderRoundId(entry);
     this._entries.push(entry);
     this.touch();
   }
