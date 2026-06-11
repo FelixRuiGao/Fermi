@@ -147,7 +147,10 @@ export interface CommandContext {
    * Show the hierarchical command picker (with drill-down children support).
    * Returns the selected leaf value (and optional note), or undefined if cancelled.
    */
-  promptCommandPicker?: (options: CommandOption[]) => Promise<CommandPickerResult | undefined>;
+  promptCommandPicker?: (
+    options: CommandOption[],
+    config?: { title?: string; allowNote?: boolean },
+  ) => Promise<CommandPickerResult | undefined>;
 
   /**
    * Show the inline OAuth login overlay for the given provider and return
@@ -178,6 +181,10 @@ export interface CommandOption {
   checked?: boolean;
   /** When true, Enter opens an inline text input instead of submitting immediately. */
   customInput?: boolean;
+  /** Label shown above the inline text input (default: "Your instructions:"). */
+  inputLabel?: string;
+  /** Placeholder inside the inline text input (default: "Type your instructions"). */
+  inputPlaceholder?: string;
 }
 
 /** Context available when building dynamic picker options for a slash command. */
@@ -208,8 +215,6 @@ export interface SlashCommand {
   aliases?: string[];
   /** Optional display title for the picker; the command name is still submitted. */
   pickerTitle?: string;
-  /** When true, the picker shows a Tab-activated note input for attaching instructions. */
-  allowPickerNote?: boolean;
 }
 
 export class CommandExitSignal extends Error {
@@ -416,63 +421,89 @@ function summarizeHintOptions(ctx: CommandOptionsContext): CommandOption[] {
     { label: current.enabled ? "On (current)" : "On", value: "on" },
     { label: current.enabled ? "Off" : "Off (current)", value: "off" },
     {
-      label: `Set levels (now ${current.level1}% / ${current.level2}%)`,
-      value: "levels",
+      label: `Level 1 (${current.level1}%)`,
+      value: "level1",
       customInput: true,
+      inputLabel: "Level 1 trigger %:",
+      inputPlaceholder: `integer 1-${current.level2 - 1} (below level 2: ${current.level2})`,
+    },
+    {
+      label: `Level 2 (${current.level2}%)`,
+      value: "level2",
+      customInput: true,
+      inputLabel: "Level 2 trigger %:",
+      inputPlaceholder: `integer ${current.level1 + 1}-84 (above level 1: ${current.level1})`,
     },
   ];
 }
 
 async function cmdSummarizeHint(ctx: CommandContext, args: string): Promise<void> {
   const session = ctx.session;
-  const current = session.getSummarizeHintConfig();
   const hint = ctx.showHint ?? ctx.showMessage;
-  let input = args.trim();
 
-  // Interactive path: no args → picker (On / Off / Set levels with inline input).
-  if (!input && ctx.promptCommandPicker) {
-    const picked = await ctx.promptCommandPicker(
-      summarizeHintOptions({ session: ctx.session, store: ctx.store }),
-    );
-    if (!picked) return;
-    if (picked.value === "levels") {
-      input = (picked.note ?? "").trim();
-      if (!input) {
-        ctx.showMessage(`Enter two levels, e.g. "50 75". ${SUMMARIZE_HINT_USAGE}`);
-        return;
-      }
-    } else {
-      input = picked.value;
-    }
-  }
-
-  if (input === "on" || input === "off") {
-    const enabled = input === "on";
+  const applyEnabled = (enabled: boolean): void => {
+    const current = session.getSummarizeHintConfig();
     session.setSummarizeHintConfig({ enabled });
     persistSettingsPatch({
       summarize_hint: { enabled, level1: current.level1, level2: current.level2 },
     }, ctx.fermiHomeDir);
     hint(`Summarize hints: ${enabled ? "ON" : "OFF"}`);
-    return;
-  }
+  };
 
-  const parts = input.split(/\s+/);
-  if (parts.length === 2) {
-    const level1 = Number(parts[0]);
-    const level2 = Number(parts[1]);
+  const applyLevels = (level1: number, level2: number): boolean => {
+    const current = session.getSummarizeHintConfig();
     const error = validateSummarizeHintLevels(level1, level2);
     if (error) {
       ctx.showMessage(`Invalid levels: ${error}\n${SUMMARIZE_HINT_USAGE}`);
-      return;
+      return false;
     }
     session.setSummarizeHintConfig({ level1, level2 });
     persistSettingsPatch({
       summarize_hint: { enabled: current.enabled, level1, level2 },
     }, ctx.fermiHomeDir);
     hint(`Summarize hint levels: ${level1}% / ${level2}%`);
+    return true;
+  };
+
+  const input = args.trim();
+
+  // Interactive path: no args → picker. Setting a level returns to the
+  // picker (with refreshed labels) so both levels can be adjusted in one
+  // visit; On/Off applies and closes.
+  if (!input && ctx.promptCommandPicker) {
+    for (;;) {
+      const picked = await ctx.promptCommandPicker(
+        summarizeHintOptions({ session: ctx.session, store: ctx.store }),
+        { title: "Summarize Hints" },
+      );
+      if (!picked) return;
+      if (picked.value === "on" || picked.value === "off") {
+        applyEnabled(picked.value === "on");
+        return;
+      }
+      const current = session.getSummarizeHintConfig();
+      const typed = Number((picked.note ?? "").trim());
+      if (picked.value === "level1") {
+        applyLevels(typed, current.level2);
+      } else if (picked.value === "level2") {
+        applyLevels(current.level1, typed);
+      }
+    }
+  }
+
+  // Inline shortcut path: on | off | "<level1> <level2>".
+  if (input === "on" || input === "off") {
+    applyEnabled(input === "on");
     return;
   }
 
+  const parts = input.split(/\s+/);
+  if (parts.length === 2) {
+    applyLevels(Number(parts[0]), Number(parts[1]));
+    return;
+  }
+
+  const current = session.getSummarizeHintConfig();
   ctx.showMessage(
     `Summarize hints: ${current.enabled ? "on" : "off"} · level1 ${current.level1}% · level2 ${current.level2}%\n${SUMMARIZE_HINT_USAGE}`,
   );
@@ -1382,6 +1413,7 @@ async function cmdDiff(ctx: CommandContext, args: string): Promise<void> {
   if (!choice && ctx.promptCommandPicker) {
     const picked = await ctx.promptCommandPicker(
       diffDisplayOptions({ session: ctx.session, store: ctx.store }),
+      { title: "Diff Display" },
     );
     if (!picked) return;
     choice = picked.value;
@@ -2002,7 +2034,7 @@ async function cmdReview(ctx: CommandContext, args: string): Promise<void> {
         return;
       }
     }
-    dispatchReview(ctx, "uncommitted", "", trimmed);
+    dispatchReview(ctx, "custom", "", trimmed);
     return;
   }
 
@@ -2013,6 +2045,7 @@ async function cmdReview(ctx: CommandContext, args: string): Promise<void> {
 
   const picked = await ctx.promptCommandPicker(
     reviewOptions({ session: ctx.session, store: ctx.store }),
+    { title: "Review", allowNote: true },
   );
   if (!picked) return;
 
@@ -2054,7 +2087,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/new", description: "Start a new session", handler: cmdNew });
   registry.register({ name: "/session", description: "Resume a previous session", handler: cmdResume, options: resumeOptions, pickerTitle: "Sessions", aliases: ["/resume"] });
   registry.register({ name: "/summarize", description: "Manually summarize older context", handler: cmdSummarize });
-  registry.register({ name: "/summarize_hint", description: "Configure two-tier summarize hints (on/off, trigger levels)", handler: cmdSummarizeHint, options: summarizeHintOptions, pickerTitle: "Summarize Hints" });
+  registry.register({ name: "/summarize_hint", description: "Configure two-tier summarize hints (on/off, trigger levels)", handler: cmdSummarizeHint });
   registry.register({ name: "/shells", description: "View and stop background shells", handler: cmdShells });
   registry.register({ name: "/model", description: "Switch model", handler: cmdModel, options: modelOptions });
   registry.register({ name: "/tier", description: "Configure sub-agent model tiers", handler: cmdTier, options: tierOptions });
@@ -2067,15 +2100,15 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/raw", description: "Toggle markdown raw/rendered mode", handler: cmdRaw, aliases: ["/md"] });
   registry.register({ name: "/agents", description: "Toggle agents panel", handler: cmdAgents });
   registry.register({ name: "/todos", description: "Toggle todo panel", handler: cmdTodos });
-  registry.register({ name: "/permission", description: "Set permission mode", handler: cmdPermission, options: permissionOptions });
-  registry.register({ name: "/rewind", description: "Rewind to a previous turn", handler: cmdRewind, options: rewindOptions, aliases: ["/undo"] });
+  registry.register({ name: "/permission", description: "Set permission mode", handler: cmdPermission });
+  registry.register({ name: "/rewind", description: "Rewind to a previous turn", handler: cmdRewind, aliases: ["/undo"] });
   registry.register({ name: "/hooks", description: "Show registered hooks", handler: cmdHooks });
   registry.register({ name: "/copy", description: "Copy the agent's most recent text response", handler: cmdCopy });
   registry.register({ name: "/fork", description: "Fork the current session into a new branch", handler: cmdFork });
-  registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme, options: themeModeOptions });
-  registry.register({ name: "/diff", description: "Set write/edit diff display (compact / full)", handler: cmdDiff, options: diffDisplayOptions, pickerTitle: "Diff Display" });
-  registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate, options: autoUpdateOptions });
-  registry.register({ name: "/review", description: "Review code changes", handler: cmdReview, options: reviewOptions, pickerTitle: "Review", allowPickerNote: true });
+  registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme });
+  registry.register({ name: "/diff", description: "Set write/edit diff display (compact / full)", handler: cmdDiff });
+  registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate });
+  registry.register({ name: "/review", description: "Review code changes", handler: cmdReview });
   return registry;
 }
 
@@ -2552,7 +2585,7 @@ function formatRewindDetail(target: {
   return parts.join(" ");
 }
 
-function rewindOptions(ctx: CommandOptionsContext): CommandOption[] {
+export function rewindOptions(ctx: CommandOptionsContext): CommandOption[] {
   const session = ctx.session;
   const targets: Array<{
     turnIndex: number;

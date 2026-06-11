@@ -1,13 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { buildDefaultRegistry } from "../src/commands.js";
+import { rewindOptions } from "../src/commands.js";
 import { acceptCommandPickerSelection, createCommandPicker } from "../src/ui/command-picker.js";
 
 describe("rewind command picker", () => {
   it("renders a Message/Changes header, current marker, and newest-first targets", () => {
-    const registry = buildDefaultRegistry();
-    const rewind = registry.lookup("/rewind");
-
-    const options = rewind!.options!({
+    const options = rewindOptions({
       session: {
         getRewindTargets: () => [
           {

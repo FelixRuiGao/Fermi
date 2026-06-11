@@ -234,12 +234,19 @@ export function CommandPickerView(
       })}
       {(picker.noteEditing || picker.customInputMode) && (
         <box flexDirection="column">
-          <text fg={theme.colors.accent} content={picker.customInputMode ? "Your instructions:" : "Instructions:"} />
+          <text
+            fg={theme.colors.accent}
+            content={picker.customInputMode
+              ? (picker.customInputLabel ?? "Your instructions:")
+              : "Instructions:"}
+          />
           <input
             ref={(node) => { if (noteInputRef) (noteInputRef as React.MutableRefObject<InputRenderable | null>).current = node; }}
             value={noteValue ?? ""}
             focused={picker.noteEditing || picker.customInputMode}
-            placeholder={picker.customInputMode ? "Type your instructions" : "Add review instructions..."}
+            placeholder={picker.customInputMode
+              ? (picker.customInputPlaceholder ?? "Type your instructions")
+              : "Add review instructions..."}
             textColor={theme.colors.text}
             focusedTextColor={theme.colors.text}
             placeholderColor={theme.colors.dim}

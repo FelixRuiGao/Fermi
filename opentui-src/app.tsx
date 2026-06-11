@@ -38,6 +38,7 @@ import {
   createCommandPicker,
   exitCommandPickerLevel,
   exitCommandPickerCustomInput,
+  getCommandPickerLevel,
   isCommandPickerActive,
   isCommandPickerCustomInputOption,
   moveCommandPickerSelection,
@@ -1399,7 +1400,6 @@ export function OpenTuiApp({
         options,
         pickerMaxVisible,
         command?.pickerTitle,
-        command?.allowPickerNote,
       ),
     );
     return true;
@@ -1706,7 +1706,7 @@ export function OpenTuiApp({
           });
         });
       },
-      promptCommandPicker: async (options: CommandOption[]) => {
+      promptCommandPicker: async (options: CommandOption[], config?: { title?: string; allowNote?: boolean }) => {
         resolvePromptSelect(undefined);
         resolvePromptSecret(undefined);
         return await new Promise<CommandPickerResult | undefined>((resolve) => {
@@ -1716,7 +1716,7 @@ export function OpenTuiApp({
           setCheckboxPicker(null);
           setPickerNoteValue("");
           setCommandPicker(
-            createCommandPicker("", options, pickerMaxVisible),
+            createCommandPicker("", options, pickerMaxVisible, config?.title, config?.allowNote),
           );
         });
       },
@@ -2594,7 +2594,20 @@ export function OpenTuiApp({
         if (event.name === "return") {
           event.preventDefault();
           event.stopPropagation();
-          setCommandPicker((current) => current ? toggleCommandPickerNoteEditing(current) : current);
+          const level = getCommandPickerLevel(commandPicker);
+          const option = level.options[level.selected];
+          const typed = pickerNoteValue.trim();
+          setCommandPicker(null);
+          setPickerNoteValue("");
+          if (option) {
+            const pickerResolver = commandPickerResolverRef.current;
+            if (pickerResolver) {
+              commandPickerResolverRef.current = null;
+              pickerResolver({ value: option.value, note: typed || undefined });
+            } else {
+              void handleSubmit(`${commandPicker.commandName} ${option.value}`.trim());
+            }
+          }
           return;
         }
         if (event.name === "escape") {
@@ -2612,13 +2625,26 @@ export function OpenTuiApp({
         if (event.name === "return") {
           event.preventDefault();
           event.stopPropagation();
-          // Write custom input text into note, exit custom input, then submit
-          setCommandPicker((current) => {
-            if (!current) return current;
-            return { ...exitCommandPickerCustomInput(current), note: pickerNoteValue };
-          });
-          // Defer submit to next tick so state is settled
-          queueMicrotask(() => acceptCommandPickerSelectionLocal());
+          // Submit directly from the live closure. Broken since the feature
+          // shipped (v0.3.7): the old "exit mode, then re-accept in a
+          // microtask" round trip invoked the PREVIOUS render's accept
+          // callback, whose closure still saw customInputMode=true and an
+          // empty note — accept hit the customInput option again, re-entered
+          // input mode, and cleared the field. Enter appeared to do nothing.
+          const level = getCommandPickerLevel(commandPicker);
+          const option = level.options[level.selected];
+          const typed = pickerNoteValue.trim();
+          setCommandPicker(null);
+          setPickerNoteValue("");
+          if (option) {
+            const pickerResolver = commandPickerResolverRef.current;
+            if (pickerResolver) {
+              commandPickerResolverRef.current = null;
+              pickerResolver({ value: option.value, note: typed || undefined });
+            } else {
+              void handleSubmit(`${commandPicker.commandName} ${option.value}`.trim());
+            }
+          }
           return;
         }
         if (event.name === "escape") {

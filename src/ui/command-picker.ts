@@ -18,6 +18,10 @@ export interface CommandPickerState {
   allowNote: boolean;
   /** When true, the user is typing into a custom-input option's inline text field. */
   customInputMode: boolean;
+  /** Label above the custom input field (from the triggering option's inputLabel). */
+  customInputLabel?: string;
+  /** Placeholder inside the custom input field (from the triggering option's inputPlaceholder). */
+  customInputPlaceholder?: string;
 }
 
 export type CommandPickerAcceptResult =
@@ -186,7 +190,7 @@ export function isCommandPickerCustomInputOption(picker: CommandPickerState): bo
 }
 
 export function exitCommandPickerCustomInput(picker: CommandPickerState): CommandPickerState {
-  return { ...picker, customInputMode: false };
+  return { ...picker, customInputMode: false, customInputLabel: undefined, customInputPlaceholder: undefined };
 }
 
 export function exitCommandPickerLevel(picker: CommandPickerState): CommandPickerState | null {
@@ -237,10 +241,18 @@ export function acceptCommandPickerSelection(
     };
   }
 
-  if (option.customInput) {
+  // Enter custom-input mode only when not already in it. While IN the mode,
+  // an accept falls through to submit (note carries the typed text) —
+  // otherwise re-accepting would re-enter the mode and clear the field.
+  if (option.customInput && !picker.customInputMode) {
     return {
       kind: "custom_input",
-      picker: { ...picker, customInputMode: true },
+      picker: {
+        ...picker,
+        customInputMode: true,
+        customInputLabel: option.inputLabel,
+        customInputPlaceholder: option.inputPlaceholder,
+      },
     };
   }
 
