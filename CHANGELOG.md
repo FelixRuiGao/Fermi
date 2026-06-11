@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Changed: Bun runtime upgraded 1.3.9 → 1.3.14 — five releases of upstream fixes baked into the shipped binary, with a Windows-heavy payload (fs.openSync numeric flags, ConPTY groundwork, native win-arm64 toolchain). Version is now pinned in one place (`.bun-version`, read by CI); building from source requires Bun ≥ 1.3.10.
+
 ## v0.3.9
 
 - Fixed: sending a message while an approval prompt (or agent question) was pending could permanently break the session — the approved tool silently never ran, and every later turn failed with an API projection error until the session was resumed from disk. The pending ask now keeps the session in a true waiting state: messages queue and are delivered when work resumes, and the approved tool always executes. GUI/VSCode (server mode) were the most exposed since they have no UI-level guard.
