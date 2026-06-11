@@ -8,6 +8,7 @@ import { AskPendingError } from "../src/ask.js";
 import { createEphemeralLogState } from "../src/ephemeral-log.js";
 import { Session } from "../src/session.js";
 import { LogIdAllocator, createToolCall } from "../src/log-entry.js";
+import { SessionLog } from "../src/session/session-log.js";
 import { SessionStore, saveLog, createLogSessionMeta } from "../src/persistence.js";
 import { asyncRunToolLoop } from "../src/agents/tool-loop.js";
 import { BaseProvider, ProviderResponse, Usage, type ToolCall } from "../src/providers/base.js";
@@ -36,9 +37,7 @@ function makeSessionLike(projectRoot: string): any {
   s._inbox = [];
   s._activeAgents = new Map();
   s._recentSessionEvents = [];
-  s._log = [];
-  s._idAllocator = new LogIdAllocator();
-  s._logListeners = new Set();
+  s._logStore = new SessionLog();
   s._agentState = "idle";
   s._currentTurnSignal = null;
   s.onSaveRequest = undefined;

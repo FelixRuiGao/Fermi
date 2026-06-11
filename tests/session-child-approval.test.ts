@@ -6,7 +6,8 @@ import { describe, expect, it, mock, spyOn } from "bun:test";
 
 import type { PendingAskUi } from "../src/ask.js";
 import { Session } from "../src/session.js";
-import { LogIdAllocator, createToolCall } from "../src/log-entry.js";
+import { createToolCall } from "../src/log-entry.js";
+import { SessionLog } from "../src/session/session-log.js";
 import { ToolResult } from "../src/providers/base.js";
 
 function makeTempDir(prefix: string): string {
@@ -28,14 +29,12 @@ function makeSessionLike(): any {
   s._childSessions = new Map();
   s._archivedChildren = new Map();
   s._inbox = [];
-  s._log = [];
-  s._idAllocator = new LogIdAllocator();
+  s._logStore = new SessionLog();
   s._turnCount = 1;
   s._activeAsk = null;
   s._askHistory = [];
   s._pendingTurnState = null;
   s._currentTurnSignal = null;
-  s._logListeners = new Set();
   s._usedContextIds = new Set();
   s._activeLogEntryId = null;
   s._projectRoot = process.cwd();

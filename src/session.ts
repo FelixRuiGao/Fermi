@@ -56,6 +56,7 @@ import {
 import type { FileMutation } from "./tools/basic.js";
 import type { RewindPlan, RewindApplyResult } from "./ui/contracts.js";
 import { RewindEngine } from "./session/rewind-engine.js";
+import { SessionLog, type TurnListing } from "./session/session-log.js";
 import { buildActiveContextView } from "./active-context.js";
 import { execSummarizeContextOnLog } from "./summarize-context.js";
 import { resolveSkillContent, loadSkillsMulti, type SkillMeta } from "./skills/loader.js";
@@ -508,11 +509,26 @@ export class Session {
   private _title: string | undefined;
   private _cachedSummary: string | undefined;
 
-  // Structured log (v2 architecture — dual-array transition)
-  private _log: LogEntry[] = [];
-  private _logRevision = 0;
-  private _idAllocator = new LogIdAllocator();
-  private _logListeners = new Set<() => void>();
+  // Structured log — entries, revision, listeners, and id allocation live in
+  // SessionLog (src/session/session-log.ts); these accessors keep the many
+  // Session-internal `_log` / `_idAllocator` call sites unchanged.
+  private _logStore = new SessionLog();
+
+  private get _log(): LogEntry[] {
+    return this._logStore.entries;
+  }
+
+  private set _log(entries: LogEntry[]) {
+    this._logStore.replace(entries);
+  }
+
+  private get _idAllocator(): LogIdAllocator {
+    return this._logStore.idAllocator;
+  }
+
+  private set _idAllocator(alloc: LogIdAllocator) {
+    this._logStore.idAllocator = alloc;
+  }
 
   // Token tracking
   private _lastInputTokens = 0;
@@ -1041,7 +1057,7 @@ export class Session {
     this._title = undefined;
     this._cachedSummary = undefined;
     this._log = [];
-    this._logRevision = 0;
+    this._logStore.resetRevision();
     this._idAllocator = new LogIdAllocator();
     this._currentWorkId = null;
     this._currentWorkStartedAt = 0;
@@ -1086,42 +1102,25 @@ export class Session {
    * Auto-triggers save request and notifies log listeners.
    */
   private _appendEntry(entry: LogEntry, save = true): void {
-    if (
-      entry.roundIndex !== undefined &&
-      (
-        entry.type === "assistant_text" ||
-        entry.type === "reasoning" ||
-        entry.type === "tool_call" ||
-        entry.type === "tool_result" ||
-        entry.type === "no_reply"
-      )
-    ) {
-      entry.meta["providerRoundId"] ??= `input-${entry.turnIndex}:round-${entry.roundIndex}`;
-    }
-    this._log.push(entry);
-    this._bumpLogRevision();
-    this._notifyLogListeners();
+    this._logStore.append(entry);
     if (save) this.onSaveRequest?.();
   }
 
   private _touchLog(): void {
-    this._bumpLogRevision();
-    this._notifyLogListeners();
+    this._logStore.touch();
   }
 
   private _bumpLogRevision(): void {
-    this._logRevision += 1;
+    this._logStore.bumpRevision();
   }
 
   private _notifyLogListeners(): void {
-    for (const listener of this._logListeners) {
-      listener();
-    }
+    this._logStore.notifyListeners();
   }
 
   /** Allocate the next log entry ID for a given type. */
   private _nextLogId(type: LogEntry["type"]): string {
-    return this._idAllocator.next(type);
+    return this._logStore.nextId(type);
   }
 
   private _nextWorkId(): string {
@@ -1315,12 +1314,7 @@ export class Session {
 
   /** Index of the first entry after the last live compact_marker (active window start). */
   private _activeWindowStartIdx(): number {
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      if (this._log[i].type === "compact_marker" && !this._log[i].discarded) {
-        return i + 1;
-      }
-    }
-    return 0;
+    return this._logStore.activeWindowStartIdx();
   }
 
   /**
@@ -1969,7 +1963,7 @@ export class Session {
   }
 
   getLogRevision(): number {
-    return this._logRevision;
+    return this._logStore.revision;
   }
 
   /** The ID of the currently active (streaming/executing) log entry, or null. */
@@ -1979,8 +1973,7 @@ export class Session {
 
   /** Subscribe to log changes. Returns an unsubscribe function. */
   subscribeLog(listener: () => void): () => void {
-    this._logListeners.add(listener);
-    return () => { this._logListeners.delete(listener); };
+    return this._logStore.subscribe(listener);
   }
 
   // ------------------------------------------------------------------
@@ -1988,62 +1981,11 @@ export class Session {
   // ------------------------------------------------------------------
 
   /**
-   * Return metadata for every turn in the log.
-   * Each entry includes turnKind (from turn_start meta) and a preview.
-   * Callers filter by turnKind, active window, etc.
+   * Return metadata for every turn in the log (see SessionLog.listTurns).
+   * Shared by the /summarize and /rewind pickers.
    */
-  listTurns(): Array<{
-    turnIndex: number;
-    entryIndex: number;
-    turnKind: TurnKind;
-    preview: string;
-    timestamp: number;
-    /** Whether this turn is inside the active window (after last compact_marker). */
-    inActiveWindow: boolean;
-  }> {
-    let lastCompactMarkerIdx = -1;
-    for (let i = this._log.length - 1; i >= 0; i--) {
-      if (this._log[i].type === "compact_marker" && !this._log[i].discarded) {
-        lastCompactMarkerIdx = i;
-        break;
-      }
-    }
-
-    const turns: Array<{
-      turnIndex: number;
-      entryIndex: number;
-      turnKind: TurnKind;
-      preview: string;
-      timestamp: number;
-      inActiveWindow: boolean;
-    }> = [];
-
-    for (let i = 0; i < this._log.length; i++) {
-      const entry = this._log[i];
-      if (entry.discarded) continue;
-      if (entry.type !== "input_received" && entry.type !== "turn_start") continue;
-
-      const meta = entry.meta as Record<string, unknown>;
-      const turnKind = entry.type === "input_received"
-        ? ((meta.inputKind as TurnKind) ?? "user")
-        : ((meta.turnKind as TurnKind) ?? "user");
-      if (turnKind !== "user" && turnKind !== "summarize" && turnKind !== "compact") continue;
-
-      const preview = entry.type === "input_received"
-        ? (entry.display || "").replace(/\s+/g, " ").trim().slice(0, 240)
-        : "";
-
-      turns.push({
-        turnIndex: entry.turnIndex,
-        entryIndex: i,
-        turnKind,
-        preview: preview || `(turn ${entry.turnIndex})`,
-        timestamp: entry.timestamp,
-        inActiveWindow: i > lastCompactMarkerIdx,
-      });
-    }
-
-    return turns;
+  listTurns(): TurnListing[] {
+    return this._logStore.listTurns();
   }
 
   // ------------------------------------------------------------------
@@ -2431,7 +2373,7 @@ export class Session {
 
     // Core log state
     this._log = entries;
-    this._logRevision = 0;
+    this._logStore.resetRevision();
     this._idAllocator = idAllocator;
 
     // Counters from meta
