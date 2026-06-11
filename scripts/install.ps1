@@ -1,11 +1,22 @@
-# Fermi installer for Windows (x64)
+# Fermi installer for Windows (x64 / arm64)
 # Usage: irm https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
 $Repo = if ($env:FERMI_REPO) { $env:FERMI_REPO } else { "FelixRuiGao/Fermi" }
 $InstallDir = if ($env:FERMI_INSTALL_DIR) { $env:FERMI_INSTALL_DIR } else { "$env:USERPROFILE\.fermi\bin" }
-$Asset = "fermi-win32-x64.tar.gz"
+
+# Pick the asset for the real OS architecture. PROCESSOR_ARCHITECTURE lies
+# inside an emulated x64 PowerShell on an ARM64 machine, so prefer
+# RuntimeInformation (reports the OS, not the process).
+$Arch = "x64"
+try {
+    $OsArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    if ($OsArch -eq "Arm64") { $Arch = "arm64" }
+} catch {
+    if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { $Arch = "arm64" }
+}
+$Asset = "fermi-win32-$Arch.tar.gz"
 
 if ($env:FERMI_VERSION) {
     $Url = "https://github.com/$Repo/releases/download/$env:FERMI_VERSION/$Asset"

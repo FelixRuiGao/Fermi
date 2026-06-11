@@ -6,17 +6,17 @@ title: "快速开始"
 
 ![Fermi TUI — 子代理生成、构建验证和实时上下文统计](/session.png)
 
-**平台：** macOS (Apple Silicon) / Linux (x86_64) / Windows (x64)。
+**平台：** macOS (Apple Silicon) / Linux (x86_64、arm64) / Windows (x64、arm64)。
 
 ## 安装
 
-### macOS (Apple Silicon) / Linux (x86_64)
+### macOS (Apple Silicon) / Linux (x86_64、arm64)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.sh | sh
 ```
 
-### Windows (x64)
+### Windows (x64、arm64)
 
 ```powershell
 irm https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.ps1 | iex

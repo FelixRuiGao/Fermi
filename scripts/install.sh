@@ -25,14 +25,10 @@ case "$os" in
     asset="fermi-darwin-arm64.tar.gz"
     ;;
   Linux)
-    if [ "$arch_label" != "x64" ]; then
-      echo "fermi: this script does not publish a Linux $arch_label build. Run on x86_64, or build from source: https://github.com/${REPO}#building-from-source" >&2
-      exit 1
-    fi
-    asset="fermi-linux-x64.tar.gz"
+    asset="fermi-linux-${arch_label}.tar.gz"
     ;;
   *)
-    echo "fermi: unsupported OS: $os (this script supports Darwin and Linux; Windows users should download fermi-win32-x64.tar.gz directly from Releases)" >&2
+    echo "fermi: unsupported OS: $os (this script supports Darwin and Linux; Windows users should run scripts/install.ps1 or download fermi-win32-{x64,arm64}.tar.gz directly from Releases)" >&2
     exit 1
     ;;
 esac

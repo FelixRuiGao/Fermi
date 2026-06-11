@@ -21,8 +21,8 @@ const REPO = "FelixRuiGao/Fermi";
 function assetName(): string | null {
   const { platform, arch } = process;
   if (platform === "darwin" && arch === "arm64") return "fermi-darwin-arm64.tar.gz";
-  if (platform === "linux" && arch === "x64") return "fermi-linux-x64.tar.gz";
-  if (platform === "win32" && arch === "x64") return "fermi-win32-x64.tar.gz";
+  if (platform === "linux" && (arch === "x64" || arch === "arm64")) return `fermi-linux-${arch}.tar.gz`;
+  if (platform === "win32" && (arch === "x64" || arch === "arm64")) return `fermi-win32-${arch}.tar.gz`;
   return null;
 }
 

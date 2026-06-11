@@ -1,8 +1,11 @@
 name: Build platform binaries
 
-# Matrix build for darwin-arm64 / linux-x64 / win32-x64. Each runner
-# builds for its own platform (no cross-compilation) so the bundler
-# and the bundled `libopentui` native lib are always in sync.
+# Matrix build for darwin-arm64 / linux-{x64,arm64} / win32-{x64,arm64}.
+# Each runner builds for its own platform (no cross-compilation) so the
+# bundler and the bundled `libopentui` native lib are always in sync.
+# The arm64 runners (ubuntu-24.04-arm / windows-11-arm) are free for
+# public repos; windows-11-arm needs Bun >= 1.3.10 and setup-bun >=
+# 2.1.3 to get the native aarch64 toolchain.
 
 on:
   # Manual trigger from the Actions tab; pick any branch.
@@ -25,16 +28,27 @@ jobs:
         include:
           - os: macos-14
             target: darwin-arm64
+            exe: fermi
           - os: ubuntu-latest
             target: linux-x64
+            exe: fermi
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            exe: fermi
           - os: windows-latest
             target: win32-x64
+            exe: fermi.exe
+          - os: windows-11-arm
+            target: win32-arm64
+            exe: fermi.exe
     runs-on: ${{ matrix.os }}
     name: build ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      # Pinned past 2.1.3: the floating v2 tag predates the native
+      # bun-windows-aarch64 download logic that windows-11-arm needs.
+      - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version-file: .bun-version
 
@@ -47,6 +61,13 @@ jobs:
       - name: List build output
         shell: bash
         run: ls -la build/
+
+      # host == target, so the freshly built binary runs right here.
+      # Catches "compiles but won't start" regressions (bad native lib,
+      # broken bootstrap) before they reach a release.
+      - name: Smoke test binary
+        shell: bash
+        run: ./build/${{ matrix.exe }} --version
 
       - uses: actions/upload-artifact@v4
         with:

@@ -6,7 +6,7 @@ title: "常见问题"
 
 ### Fermi 支持哪些平台？
 
-macOS (Apple Silicon)、Linux (x86_64) 和 Windows (x64)。三者都有预构建二进制发布。
+macOS (Apple Silicon)、Linux (x86_64、arm64) 和 Windows (x64、arm64)。五个目标都有预构建二进制发布。
 
 ### 需要什么运行时？
 

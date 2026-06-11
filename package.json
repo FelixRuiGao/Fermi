@@ -79,7 +79,9 @@
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@opentui/core-darwin-arm64": "0.3.1",
+    "@opentui/core-linux-arm64": "0.3.1",
     "@opentui/core-linux-x64": "0.3.1",
+    "@opentui/core-win32-arm64": "0.3.1",
     "@opentui/core-win32-x64": "0.3.1"
   },
   "overrides": {

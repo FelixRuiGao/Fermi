@@ -10,6 +10,10 @@ Release notes. A missing or empty section fails CI.
 ## Unreleased
 
 - Changed: Bun runtime upgraded 1.3.9 → 1.3.14 — five releases of upstream fixes baked into the shipped binary, with a Windows-heavy payload (fs.openSync numeric flags, ConPTY groundwork, native win-arm64 toolchain). Version is now pinned in one place (`.bun-version`, read by CI); building from source requires Bun ≥ 1.3.10.
+- Fixed: on macOS/Linux, background processes that ignore SIGTERM no longer survive `/clear`, rewind, or session shutdown as orphans — the batch kill path now escalates to a process-group SIGKILL after 1.5s, mirroring what single-shell kill already did (and what Windows' force-kill always did).
+- Fixed: `FERMI_OPENTUI_USE_THREAD` was silently ignored on Linux — the renderer forced single-threaded mode over any explicit setting while the startup diag log recorded the value you asked for. Defaults are unchanged on all platforms; the override now actually takes effect.
+- Fixed: paths under your home directory now display as `~/...` on Windows/macOS even when the drive letter or profile casing differs, and a sibling directory sharing the home prefix (e.g. `/Users/felixfoo`) is no longer mis-shortened.
+- Added: Windows arm64 and Linux arm64 release builds. Snapdragon/ARM Windows machines get a native binary instead of x64 emulation, and Linux arm64 covers Docker on Apple Silicon, ARM servers, and Raspberry Pi. `install.sh` / `install.ps1` now detect the machine architecture (the PowerShell installer reads the real OS architecture, so it picks arm64 even from an emulated x64 shell), the VS Code extension downloads the matching asset, and self-update follows automatically. Release CI gained the two arm64 runners plus a `fermi --version` smoke test on every freshly built binary.
 
 ## v0.3.9
 

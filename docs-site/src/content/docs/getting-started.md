@@ -6,17 +6,17 @@ Get Fermi running in under a minute. Three commands — install, configure, laun
 
 ![Fermi TUI — sub-agent spawning, build verification, and live context stats](/session.png)
 
-**Platform:** macOS (Apple Silicon) / Linux (x86_64) / Windows (x64).
+**Platform:** macOS (Apple Silicon) / Linux (x86_64, arm64) / Windows (x64, arm64).
 
 ## Install
 
-### macOS (Apple Silicon) / Linux (x86_64)
+### macOS (Apple Silicon) / Linux (x86_64, arm64)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.sh | sh
 ```
 
-### Windows (x64)
+### Windows (x64, arm64)
 
 ```powershell
 irm https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/scripts/install.ps1 | iex

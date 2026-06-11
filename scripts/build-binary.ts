@@ -4,24 +4,25 @@ import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 // Builds the single-file binary for the host platform. CI runs this
-// once per matrix slot (darwin-arm64 / linux-x64 / win32-x64) so each
-// runner produces its own tarball. Cross-compilation is intentionally
-// not supported here — the bundled native libopentui binary has to
-// match the host, and that's simplest when host == target.
+// once per matrix slot (darwin-arm64 / linux-{x64,arm64} /
+// win32-{x64,arm64}) so each runner produces its own tarball.
+// Cross-compilation is intentionally not supported here — the bundled
+// native libopentui binary has to match the host, and that's simplest
+// when host == target.
 
 type SupportedHost =
   | { platform: "darwin"; arch: "arm64" }
-  | { platform: "linux"; arch: "x64" }
-  | { platform: "win32"; arch: "x64" };
+  | { platform: "linux"; arch: "x64" | "arm64" }
+  | { platform: "win32"; arch: "x64" | "arm64" };
 
 function detectHost(): SupportedHost {
   const { platform, arch } = process;
   if (platform === "darwin" && arch === "arm64") return { platform, arch };
-  if (platform === "linux" && arch === "x64") return { platform, arch };
-  if (platform === "win32" && arch === "x64") return { platform, arch };
+  if (platform === "linux" && (arch === "x64" || arch === "arm64")) return { platform, arch };
+  if (platform === "win32" && (arch === "x64" || arch === "arm64")) return { platform, arch };
   console.error(
     `build-binary: unsupported host ${platform}-${arch}. ` +
-      `Supported: darwin-arm64, linux-x64, win32-x64.`,
+      `Supported: darwin-arm64, linux-x64, linux-arm64, win32-x64, win32-arm64.`,
   );
   process.exit(1);
 }

@@ -6,7 +6,7 @@ title: "FAQ"
 
 ### What platforms does Fermi support?
 
-macOS (Apple Silicon), Linux (x86_64), and Windows (x64). Prebuilt binaries are published for all three.
+macOS (Apple Silicon), Linux (x86_64, arm64), and Windows (x64, arm64). Prebuilt binaries are published for all five targets.
 
 ### What runtime is required?
 
