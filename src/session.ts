@@ -18,7 +18,7 @@ import { join, dirname, resolve, relative, isAbsolute } from "node:path";
 // child_process — now only used by BackgroundShellManager
 import * as yaml from "js-yaml";
 
-import { loadTemplate, validateTemplate, assembleSystemPrompt } from "./templates/loader.js";
+import { assembleSystemPrompt } from "./templates/loader.js";
 
 import { Agent, isNoReply, NO_REPLY_MARKER } from "./agents/agent.js";
 import type {
@@ -58,6 +58,7 @@ import type { RewindPlan, RewindApplyResult } from "./ui/contracts.js";
 import { RewindEngine } from "./session/rewind-engine.js";
 import { SessionLog, type TurnListing } from "./session/session-log.js";
 import { ContextManager } from "./session/context-manager.js";
+import { SubAgentFactory } from "./session/sub-agent-factory.js";
 import {
   COMPACT_PROMPT_OUTPUT,
   COMPACT_PROMPT_TOOLCALL,
@@ -232,11 +233,6 @@ const SYSTEM_PREFIXES = [
   "[SESSION INTERRUPTED]",
   "[SKILL:",
 ];
-
-const COMM_TOOL_NAMES = new Set([
-  "spawn", "kill_agent", "check_status", "await_event", "show_context", "summarize_context", "ask", "skill",
-  "bash_background", "bash_output", "kill_shell", "send",
-]);
 
 type DrainPendingToolCallsResult =
   | { kind: "drained" }
@@ -500,6 +496,11 @@ export class Session {
 
   // File/bash rewind planning + application (owns the crash journal).
   private _rewindEngine!: RewindEngine;
+
+  // Builds Agent instances for child sessions (templates + model resolution).
+  // Lazily constructed so prototype-based test doubles get a working factory
+  // wired to their own stubbed fields on first use.
+  private _subAgentFactory?: SubAgentFactory;
 
   // Session tree / child sessions
   private _childSessions = new Map<string, ChildSessionHandle>();
@@ -926,6 +927,7 @@ export class Session {
       projectRoot: this._projectRoot,
       getArtifactsDir: () => this._getArtifactsDirIfAvailable(),
     });
+    this._subAgentFactory = this._buildSubAgentFactory();
 
     // Permission system
     this._permissionRuleStore = opts.permissionRuleStore ?? new PermissionRuleStore({
@@ -6981,177 +6983,46 @@ export class Session {
     this._shellManager.forceKillAll();
   }
 
-  private _createSubAgentFromPredefined(templateName: string, taskId: string, modelLevel?: string): { agent: Agent; thinkingLevel?: string } {
-    // Try exact match first, then case-insensitive fallback
-    let templateAgent = this.agentTemplates[templateName];
-    if (!templateAgent) {
-      const lower = templateName.toLowerCase();
-      for (const [key, agent] of Object.entries(this.agentTemplates)) {
-        if (key.toLowerCase() === lower) {
-          templateAgent = agent;
-          break;
-        }
-      }
-    }
-    if (!templateAgent) {
-      const available = Object.keys(this.agentTemplates).sort();
-      throw new Error(
-        `Unknown template '${templateName}'. Available: ${available.join(", ") || "(none)"}`,
-      );
-    }
-
-    const { modelConfig, thinkingLevel } = this._resolveSubAgentModel(templateName, modelLevel);
-    const tools = [...templateAgent.tools]; // Use template's tools, not primary agent's
-
-    const agent = new Agent({
-      name: taskId,
-      modelConfig,
-      // Pass the raw template prompt — the child Session layers memory, mode
-      // prompt, and path variables itself during its own assembly.
-      systemPrompt: templateAgent.systemPrompt,
-      tools,
-      maxToolRounds: templateAgent.maxToolRounds,
-      description: `Sub-agent '${taskId}' (${templateName})`,
+  private _buildSubAgentFactory(): SubAgentFactory {
+    return new SubAgentFactory({
+      getAgentTemplates: () => this.agentTemplates,
+      getConfig: () => this.config,
+      getMcpManager: () => this._mcpManager,
+      getPromptsDirs: () => this._promptsDirs,
+      resolveSessionArtifacts: () => this._resolveSessionArtifacts(),
+      getParentModelConfig: () => this.primaryAgent.modelConfig,
+      resolvePinnedModel: (entry) => {
+        const resolved = resolveAgentModelEntry(this, entry);
+        return { modelConfig: resolved.modelConfig, thinkingLevel: resolved.thinkingLevel };
+      },
+      resolveTierModel: (tier) => {
+        const resolved = resolveModelTierEntry(this, tier);
+        return { modelConfig: resolved.modelConfig, thinkingLevel: resolved.thinkingLevel };
+      },
+      appendStatus: (message, statusType) => {
+        this._appendEntry(createStatus(this._nextLogId("status"), this._turnCount, message, statusType));
+      },
     });
-    this._applySubAgentConstraints(agent);
-    return { agent, thinkingLevel };
+  }
+
+  private get _subAgentFactoryInstance(): SubAgentFactory {
+    return this._subAgentFactory ??= this._buildSubAgentFactory();
+  }
+
+  private _createSubAgentFromPredefined(templateName: string, taskId: string, modelLevel?: string): { agent: Agent; thinkingLevel?: string } {
+    return this._subAgentFactoryInstance.createFromPredefined(templateName, taskId, modelLevel);
   }
 
   private _createSubAgentFromPath(templateDir: string, taskId: string, modelLevel?: string): { agent: Agent; thinkingLevel?: string } {
-    const templateAgent = loadTemplate(templateDir, this.config, taskId, this._mcpManager, this._promptsDirs);
-    const { modelConfig, thinkingLevel } = this._getSubAgentModelConfig(modelLevel);
-
-    const agent = new Agent({
-      name: taskId,
-      modelConfig,
-      // Pass the raw template prompt — the child Session layers memory, mode
-      // prompt, and path variables itself during its own assembly.
-      systemPrompt: templateAgent.systemPrompt,
-      tools: [...templateAgent.tools],
-      maxToolRounds: templateAgent.maxToolRounds,
-      description: `Sub-agent '${taskId}' (custom)`,
-    });
-    this._applySubAgentConstraints(agent);
-    return { agent, thinkingLevel };
+    return this._subAgentFactoryInstance.createFromPath(templateDir, taskId, modelLevel);
   }
 
   private _resolveTemplatePath(relPath: string): string {
-    const artifactsDir = this._resolveSessionArtifacts();
-    let absPath: string;
-    try {
-      absPath = safePath({
-        baseDir: artifactsDir,
-        requestedPath: relPath,
-        cwd: artifactsDir,
-        mustExist: true,
-        expectDirectory: true,
-        accessKind: "template",
-      }).safePath!;
-    } catch (e) {
-      if (e instanceof SafePathError) {
-        if (e.code === "PATH_OUTSIDE_SCOPE") {
-          throw new Error("Template path must be within SESSION_ARTIFACTS");
-        }
-        if (e.code === "PATH_SYMLINK_ESCAPES_SCOPE") {
-          throw new Error("Template path escapes SESSION_ARTIFACTS via a symbolic link");
-        }
-        throw new Error(e.message);
-      }
-      throw e;
-    }
-
-    const validationError = validateTemplate(absPath);
-    if (validationError) {
-      throw new Error(`Template validation failed: ${validationError}`);
-    }
-
-    return absPath;
+    return this._subAgentFactoryInstance.resolveTemplatePath(relPath);
   }
 
-  private _applySubAgentConstraints(agent: Agent): void {
-    // Strip comm tools — send is re-added later for interactive/team agents
-    agent.tools = agent.tools.filter((t) => !COMM_TOOL_NAMES.has(t.name));
-    // Strip MCP tools when sub-agent inheritance is disabled. Parent's _ensureMcp
-    // attached MCP tool defs to template agents; without an executor in the child
-    // session the model would see them and fail on call.
-    if (!this.config.subAgentInheritMcp) {
-      agent.tools = agent.tools.filter((t) => !t.name.startsWith("mcp__"));
-    }
-    // Lifecycle-specific constraints are injected via _buildSubAgentSystemPrompt,
-    // not here — to avoid one-shot language leaking into interactive agents.
-  }
-
-  /**
-   * Resolve model for a predefined sub-agent template.
-   * Priority: agent_models pin > model_level tier > parent model.
-   */
-  private _resolveSubAgentModel(templateName: string, modelLevel?: string): { modelConfig: ModelConfig; thinkingLevel?: string } {
-    // Priority 1: agent_models[templateName] — silently ignores model_level
-    try {
-      const pinnedEntry = this.config.agentModels[templateName];
-      if (pinnedEntry) {
-        const resolved = resolveAgentModelEntry(this, pinnedEntry);
-        return { modelConfig: resolved.modelConfig, thinkingLevel: resolved.thinkingLevel };
-      }
-    } catch (err) {
-      // Pinned model configured but unavailable — fallback to parent model
-      const msg = `Pinned model for '${templateName}' unavailable: ${err instanceof Error ? err.message : String(err)}. Using parent model.`;
-      this._appendEntry(createStatus(this._nextLogId("status"), this._turnCount, msg, "agent_model_fallback"));
-      return { modelConfig: this.primaryAgent.modelConfig };
-    }
-
-    // Priority 2+3: tier or parent model
-    return this._getSubAgentModelConfig(modelLevel);
-  }
-
-  private _getSubAgentModelConfig(modelLevel?: string): { modelConfig: ModelConfig; thinkingLevel?: string } {
-    if (modelLevel && (modelLevel === "high" || modelLevel === "medium" || modelLevel === "low")) {
-      try {
-        const tier = this.config.modelTiers[modelLevel];
-        if (!tier) {
-          throw new Error(`Model tier '${modelLevel}' is not configured.`);
-        }
-        const resolved = resolveModelTierEntry(this, tier);
-        return { modelConfig: resolved.modelConfig, thinkingLevel: resolved.thinkingLevel };
-      } catch (err) {
-        const msg = `Sub-agent requested model tier '${modelLevel}' but it failed: ${err instanceof Error ? err.message : String(err)}. Falling back to current model.`;
-        this._appendEntry(createStatus(this._nextLogId("status"), this._turnCount, msg, "tier_fallback"));
-        return { modelConfig: this.primaryAgent.modelConfig };
-      }
-    }
-    return { modelConfig: this.primaryAgent.modelConfig };
-  }
-
-  /**
-   * Build a child session's full system prompt by layering:
-   * 1. Template system prompt
-   * 2. Mode-specific prompt
-   */
-  private _buildSubAgentSystemPrompt(
-    basePrompt: string,
-    persistent: boolean,
-  ): string {
-    const parts = [basePrompt];
-
-    try {
-      const modeFile = persistent ? "persistent.md" : "oneshot.md";
-      const modePrompt = this._readPromptFile(`sub-agent/${modeFile}`);
-      if (modePrompt) parts.push(modePrompt);
-    } catch { /* optional */ }
-
-    return parts.join("\n\n");
-  }
-
-  private _readPromptFile(relativePath: string): string {
-    if (this._promptsDirs) {
-      for (const dir of this._promptsDirs) {
-        const fullPath = join(dir, relativePath);
-        try {
-          return readFileSync(fullPath, "utf-8").trim();
-        } catch { /* try next */ }
-      }
-    }
-    return "";
+  private _buildSubAgentSystemPrompt(basePrompt: string, persistent: boolean): string {
+    return this._subAgentFactoryInstance.buildSubAgentSystemPrompt(basePrompt, persistent);
   }
 
   // _waitForAnyAgent removed — await_event uses 1s polling now, and the

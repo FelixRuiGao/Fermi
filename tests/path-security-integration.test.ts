@@ -11,7 +11,28 @@ import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 
 import { Session } from "../src/session.js";
+import { SubAgentFactory } from "../src/session/sub-agent-factory.js";
 import { executeTool } from "../src/tools/basic.js";
+
+function makeTemplateFactory(artifactsDir: string): SubAgentFactory {
+  // Template-path resolution only touches resolveSessionArtifacts; the other
+  // deps are inert stubs.
+  return new SubAgentFactory({
+    getAgentTemplates: () => ({}),
+    getConfig: () => ({ agentModels: {}, modelTiers: {}, subAgentInheritMcp: false }) as never,
+    getMcpManager: () => undefined,
+    getPromptsDirs: () => undefined,
+    resolveSessionArtifacts: () => artifactsDir,
+    getParentModelConfig: () => ({}) as never,
+    resolvePinnedModel: () => {
+      throw new Error("unused");
+    },
+    resolveTierModel: () => {
+      throw new Error("unused");
+    },
+    appendStatus: () => {},
+  });
+}
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -112,19 +133,12 @@ describe("path security integration", () => {
         "utf-8",
       );
 
-      const fakeSession = {
-        _resolveSessionArtifacts: () => artifactsDir,
-      };
+      const factory = makeTemplateFactory(artifactsDir);
 
-      const resolved = (Session.prototype as any)._resolveTemplatePath.call(
-        fakeSession,
-        "my-template",
-      );
+      const resolved = factory.resolveTemplatePath("my-template");
       expect(resolved).toBe(validTemplate);
 
-      expect(() =>
-        (Session.prototype as any)._resolveTemplatePath.call(fakeSession, "../escape"),
-      ).toThrow(/within SESSION_ARTIFACTS/);
+      expect(() => factory.resolveTemplatePath("../escape")).toThrow(/within SESSION_ARTIFACTS/);
 
       const linkDir = join(artifactsDir, "linked-template");
       try {
@@ -143,9 +157,7 @@ describe("path security integration", () => {
         "utf-8",
       );
 
-      expect(() =>
-        (Session.prototype as any)._resolveTemplatePath.call(fakeSession, "linked-template"),
-      ).toThrow(/symbolic link/);
+      expect(() => factory.resolveTemplatePath("linked-template")).toThrow(/symbolic link/);
     } finally {
       rmSync(artifactsDir, { recursive: true, force: true });
       rmSync(externalDir, { recursive: true, force: true });
