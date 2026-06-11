@@ -10,6 +10,9 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <script is:inline>
+    (function(){var s=localStorage.getItem('fermi-docs-lang');if(!s&&navigator.languages&&navigator.languages.some(function(l){return/^zh\b/i.test(l)})){window.location.replace('/zh/')}})();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fermi — the coding agent that manages its own contexts</title>
   <meta name="description" content="A terminal AI coding agent with surgical context management for multi-hour sessions." />
@@ -164,11 +167,6 @@ const githubHref = "https://github.com/FelixRuiGao/Fermi";
   </div>
 
   <script is:inline>
-    const LANG_PREF_KEY = 'fermi-docs-lang';
-    const savedLang = localStorage.getItem(LANG_PREF_KEY);
-    if (!savedLang && navigator.languages?.some((lang) => /^zh\b/i.test(lang))) {
-      window.location.replace('/zh/');
-    }
     document.querySelectorAll('[data-lang-link]').forEach((link) => {
       link.addEventListener('click', () => {
         localStorage.setItem(LANG_PREF_KEY, link.getAttribute('data-lang-link'));

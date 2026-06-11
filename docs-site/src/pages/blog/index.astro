@@ -11,6 +11,9 @@ const posts = [
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <script is:inline>
+    (function(){var s=localStorage.getItem('fermi-docs-lang');if(!s&&navigator.languages&&navigator.languages.some(function(l){return/^zh\b/i.test(l)})){window.location.replace('/zh/blog/')}})();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Blog — Fermi</title>
   <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
@@ -105,11 +108,6 @@ const posts = [
     </ul>
   </main>
   <script is:inline>
-    const LANG_PREF_KEY = 'fermi-docs-lang';
-    const savedLang = localStorage.getItem(LANG_PREF_KEY);
-    if (!savedLang && navigator.languages?.some((lang) => /^zh\b/i.test(lang))) {
-      window.location.replace('/zh/blog/');
-    }
     document.querySelectorAll('[data-lang-link]').forEach((link) => {
       link.addEventListener('click', () => {
         localStorage.setItem(LANG_PREF_KEY, link.getAttribute('data-lang-link'));
