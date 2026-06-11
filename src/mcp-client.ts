@@ -19,6 +19,7 @@ import { ToolDef, ToolResult } from "./providers/base.js";
 import { VERSION } from "./version.js";
 import { osCapabilities } from "./platform/index.js";
 import { chmodSync, existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import * as path from "node:path";
 
 // ------------------------------------------------------------------
@@ -100,7 +101,7 @@ export function ensureCredentialFilePermissions(
   for (const [key, rawValue] of Object.entries(env)) {
     if (!isCredentialFileEnvKey(key)) continue;
     if (!looksLikePathValue(rawValue)) continue;
-    const filePath = rawValue.replace(/^~(?=$|\/|\\)/, process.env["HOME"] ?? "~");
+    const filePath = rawValue.replace(/^~(?=$|\/|\\)/, homedir());
     if (!existsSync(filePath)) continue;
     let st;
     try {

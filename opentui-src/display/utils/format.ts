@@ -1,4 +1,5 @@
 import type { DisplayThemeLayoutTokens } from "../theme/index.js";
+import { osCapabilities } from "../../../src/platform/index.js";
 
 export function formatCompactTokens(value: number | undefined): string {
   const safeValue = value ?? 0;
@@ -75,7 +76,16 @@ export function formatExpiryRemaining(expiresAt: Date): string {
 
 export function shortenPath(fullPath: string): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  return home && fullPath.startsWith(home) ? "~" + fullPath.slice(home.length) : fullPath;
+  if (!home) return fullPath;
+  // Case-insensitive filesystems (macOS, Windows) can hand us the same
+  // location in different casing (drive letter, profile dir) — fold before
+  // comparing. The boundary check keeps /Users/felixfoo from shortening
+  // under /Users/felix.
+  const fold = (s: string) => (osCapabilities.caseInsensitiveFilesystem ? s.toLowerCase() : s);
+  if (!fold(fullPath).startsWith(fold(home))) return fullPath;
+  const rest = fullPath.slice(home.length);
+  if (rest === "" || rest.startsWith("/") || rest.startsWith("\\")) return "~" + rest;
+  return fullPath;
 }
 
 export function truncateToWidth(text: string, maxWidth: number): string {

@@ -28,7 +28,7 @@ import {
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
-import { binaryAsset } from "./platform/index.js";
+import { binaryAsset, osCapabilities } from "./platform/index.js";
 import { binaryAssetForPlatform } from "./platform/binary-asset/index.js";
 import { currentPlatform, type SupportedPlatform } from "./platform/detect.js";
 import { getFermiHomeDir } from "./home-path.js";
@@ -313,10 +313,12 @@ function installStagedEntries(staged: string, installDir: string): void {
       const tmp = `${dest}.tmp`;
       rmSync(tmp, { force: true });
       cpSync(src, tmp);
-      try {
-        const mode = statSync(dest).mode;
-        chmodSync(tmp, mode);
-      } catch { /* dest might not exist yet */ }
+      if (osCapabilities.supportsPosixPermissions) {
+        try {
+          const mode = statSync(dest).mode;
+          chmodSync(tmp, mode);
+        } catch { /* dest might not exist yet */ }
+      }
       renameSync(tmp, dest);
     } else {
       rmSync(dest, { recursive: true, force: true });

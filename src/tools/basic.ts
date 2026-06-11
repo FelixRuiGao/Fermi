@@ -12,7 +12,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { shell } from "../platform/index.js";
+import { osCapabilities, shell } from "../platform/index.js";
 
 import type { ToolDef } from "../providers/base.js";
 import { ToolResult } from "../providers/base.js";
@@ -1735,7 +1735,7 @@ async function atomicWriteTextFile(
     await fs.writeFile(tmpPath, content, { encoding: "utf-8" });
     tmpExists = true;
 
-    if (mode !== undefined) {
+    if (mode !== undefined && osCapabilities.supportsPosixPermissions) {
       try {
         await fs.chmod(tmpPath, mode);
       } catch {
