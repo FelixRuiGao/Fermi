@@ -1,5 +1,10 @@
 ---
 const base = import.meta.env.BASE_URL;
+const enHref = base + "blog/";
+const posts = [
+  { date: "2026 年 6 月 5 日", title: "单 Agent 就够了", href: base + "zh/blog/one-agent-is-enough/", desc: "为什么单执行者 + 干净上下文的辅助 Agent 胜过多 Agent 协作——至少现在是这样。" },
+  { date: "2026 年 5 月 29 日", title: "与 Fermi 对话的正确方式", href: base + "zh/blog/how-to-talk-to-fermi/", desc: "与 Coding Agent 协作时真正有用的三个沟通技巧。" },
+];
 ---
 
 <!DOCTYPE html>
@@ -13,13 +18,13 @@ const base = import.meta.env.BASE_URL;
   <link rel="stylesheet" href={base + "fonts/fonts.css"} />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; }
     body {
       background: #0a0c11; color: #e8ecf2; font-family: "Source Serif 4", "Noto Serif SC", serif;
     }
     .topbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 6;
       display: flex; align-items: center; justify-content: space-between; padding: 22px 36px;
+      background: rgba(10,12,17,.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     }
     .wordmark {
       font-family: "Instrument Serif", serif; font-style: italic;
@@ -38,22 +43,37 @@ const base = import.meta.env.BASE_URL;
     .langswitch a { font-size: inherit; color: #80838a; }
     .langswitch a.active { color: #8ab4f8; }
     main {
-      min-height: 100%; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; text-align: center; padding: 0 24px;
+      max-width: 680px; margin: 0 auto; padding: 140px 24px 100px;
     }
     .eyebrow {
       font-family: "JetBrains Mono", monospace; font-size: 13px; letter-spacing: 0.14em;
       text-transform: uppercase; color: #8ab4f8; margin-bottom: 20px;
     }
     h1 {
-      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400; font-size: 64px;
-      letter-spacing: 0; color: #f4f6fa; margin-bottom: 14px;
+      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400; font-size: 48px;
+      letter-spacing: 0; color: #f4f6fa; margin-bottom: 48px;
     }
-    p { color: #aeb6c1; font-size: 18px; }
+    .post-list { list-style: none; }
+    .post-item { border-top: 1px solid #1a1d24; padding: 28px 0; }
+    .post-date {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #6b7280;
+      margin-bottom: 8px; letter-spacing: 0.02em;
+    }
+    .post-title {
+      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400; font-size: 28px;
+      color: #f4f6fa; text-decoration: none; line-height: 1.25;
+      transition: color .2s;
+    }
+    .post-title:hover { color: #8ab4f8; }
+    .post-desc {
+      color: #9ca3af; font-size: 16px; margin-top: 8px; line-height: 1.5;
+    }
     @media (max-width: 30rem) {
-      .topbar { padding: 22px 28px; }
+      .topbar { padding: 22px 20px; }
       .navlinks { gap: 18px; }
-      .navlinks > a:nth-child(-n + 2) { display: none; }
+      .navlinks > a:nth-child(-n + 1) { display: none; }
+      h1 { font-size: 36px; }
+      main { padding: 120px 18px 60px; }
     }
   </style>
 </head>
@@ -65,7 +85,7 @@ const base = import.meta.env.BASE_URL;
       <a href={base + "zh/blog/"}>博客</a>
       <a href="https://github.com/FelixRuiGao/Fermi">GitHub ↗</a>
       <span class="langswitch" aria-label="语言切换">
-        <a href={base + "blog/"} data-lang-link="en" lang="en">EN</a>
+        <a href={enHref} data-lang-link="en" lang="en">EN</a>
         <span aria-hidden="true">/</span>
         <a class="active" href={base + "zh/blog/"} data-lang-link="zh" lang="zh-CN">中文</a>
       </span>
@@ -73,8 +93,16 @@ const base = import.meta.env.BASE_URL;
   </header>
   <main>
     <div class="eyebrow">// 博客</div>
-    <h1>即将上线。</h1>
-    <p>文章正在准备中，请稍后再回来看看。</p>
+    <h1>博客</h1>
+    <ul class="post-list">
+      {posts.map((post) => (
+        <li class="post-item">
+          <div class="post-date">{post.date}</div>
+          <a class="post-title" href={post.href}>{post.title}</a>
+          <p class="post-desc">{post.desc}</p>
+        </li>
+      ))}
+    </ul>
   </main>
   <script is:inline>
     const LANG_PREF_KEY = 'fermi-docs-lang';

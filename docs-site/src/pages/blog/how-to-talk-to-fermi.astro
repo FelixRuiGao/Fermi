@@ -1,0 +1,152 @@
+---
+const base = import.meta.env.BASE_URL;
+const zhHref = base + "zh/blog/how-to-talk-to-fermi/";
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How to Talk to Fermi — Fermi Blog</title>
+  <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href={base + "fonts/instrument-serif-400-italic-latin.woff2"} as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href={base + "fonts/fonts.css"} />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0c11; color: #c8cdd5;
+      font-family: "Source Serif 4", serif; line-height: 1.75; font-size: 17px;
+    }
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 6;
+      display: flex; align-items: center; justify-content: space-between; padding: 22px 36px;
+      background: rgba(10,12,17,.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    .wordmark {
+      font-family: "Instrument Serif", serif; font-style: italic;
+      font-size: 30px; color: #f4f6fa; text-decoration: none; line-height: 1;
+    }
+    .navlinks { display: flex; gap: 32px; align-items: center; }
+    .navlinks a {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #aeb6c1;
+      text-decoration: none; transition: color .2s;
+    }
+    .navlinks a:hover { color: #f4f6fa; }
+    .langswitch {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: "JetBrains Mono", monospace; font-size: 12px; color: #80838a;
+    }
+    .langswitch a { font-size: inherit; color: #80838a; }
+    .langswitch a.active { color: #8ab4f8; }
+    article {
+      max-width: 680px; margin: 0 auto; padding: 140px 24px 100px;
+    }
+    .meta {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #6b7280;
+      margin-bottom: 12px; letter-spacing: 0.02em;
+    }
+    .meta a { color: #8ab4f8; text-decoration: none; }
+    .meta a:hover { text-decoration: underline; }
+    h1 {
+      font-family: "Instrument Serif", serif; font-weight: 400; font-size: 48px;
+      letter-spacing: -0.02em; line-height: 1.1; color: #f4f6fa; margin-bottom: 40px;
+    }
+    h3 {
+      font-family: "Source Serif 4", serif; font-weight: 600; font-size: 22px;
+      color: #e8ecf2; margin: 48px 0 16px;
+    }
+    p { margin-bottom: 18px; }
+    strong { color: #e8ecf2; }
+    code {
+      font-family: "JetBrains Mono", monospace; font-size: 0.88em;
+      background: #15171c; border: 1px solid #23262d; border-radius: 4px; padding: 2px 6px;
+    }
+    pre {
+      background: #15171c; border: 1px solid #23262d; border-radius: 8px;
+      padding: 18px 20px; overflow-x: auto; margin: 16px 0 24px;
+    }
+    pre code { background: none; border: none; padding: 0; font-size: 14px; color: #aeb6c1; }
+    @media (max-width: 30rem) {
+      .topbar { padding: 22px 20px; }
+      .navlinks { gap: 18px; }
+      .navlinks > a:nth-child(-n + 1) { display: none; }
+      h1 { font-size: 36px; }
+      article { padding: 120px 18px 60px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href={base}>Fermi</a>
+    <nav class="navlinks">
+      <a href={base + "getting-started/"}>Docs</a>
+      <a href={base + "blog/"}>Blog</a>
+      <a href="https://github.com/FelixRuiGao/Fermi">GitHub ↗</a>
+      <span class="langswitch" aria-label="Language switcher">
+        <a class="active" href="#" data-lang-link="en" lang="en">EN</a>
+        <span aria-hidden="true">/</span>
+        <a href={zhHref} data-lang-link="zh" lang="zh-CN">中文</a>
+      </span>
+    </nav>
+  </header>
+  <article>
+    <div class="meta"><a href={base + "blog/"}>← Blog</a> &middot; May 29, 2026</div>
+    <h1>How to Talk to Fermi</h1>
+
+    <p>For a few years, "prompt engineering," the art of talking to large models, was all the rage. Then generalization, a model's ability to perform well on things it has never seen, improved by leaps and bounds, and the prompt engineering craze faded with it. As the parlor tricks washed out, the communication habits that actually matter became easier to see.</p>
+
+    <h3>Give More Background</h3>
+
+    <p>When you work with Fermi, avoid handing it a single isolated instruction. That treats Fermi as a robot that follows orders mechanically; it'll complete the task, but you're leaving a lot on the table. Give it more background, including the intent and motivation behind the instruction, and Fermi can extrapolate and work toward what you actually want. Two things happen when you do:</p>
+
+    <p><strong>It builds and honors more implicit constraints:</strong></p>
+
+    <p>A weak prompt:</p>
+    <pre><code>Use simple words and avoid idioms</code></pre>
+
+    <p>A strong prompt:</p>
+    <pre><code>This user manual will be translated into several languages by non-professional translators, so keep the sentence structure simple and avoid idioms, since idioms rarely translate directly</code></pre>
+
+    <p>Knowing the manual will be translated, Fermi avoids idioms and goes further on its own: it steers clear of cultural references and uses short sentences to cut ambiguity. You never asked for any of that, and it matters for translation all the same.</p>
+
+    <p><strong>It catches the blind spots in your plan:</strong></p>
+
+    <p>A weak prompt:</p>
+    <pre><code>Remove the last three commits from the Git history completely</code></pre>
+
+    <p>A strong prompt:</p>
+    <pre><code>I just realized I committed the database password in a config file. Remove those commits from the Git history completely</code></pre>
+
+    <p>Without the background, Fermi does exactly what you asked: rewrites the history, force pushes, task "done." With it, Fermi first points out the real problem: the password is already exposed, and deleting history doesn't undo the leak, since remote forks, CI logs, and coworkers' local clones may all hold copies. Step one is rotating the password immediately; cleaning up the history comes after.</p>
+
+    <h3>Know Each Model's Limits and Habits</h3>
+
+    <p>Given the same prompt, different models behave very differently inside Fermi. Some understand you perfectly even when the prompt is rough; others need it precise before they do good work. Knowing each model's habits and limits pays off: you can talk to different models differently, and you can switch models deliberately depending on the task. Some models tend to over-engineer, so scope the task explicitly and say what to leave alone. Some are conservative and will only attempt a sweeping refactor with explicit permission. Some forget early agreements late in a long task, so restate important constraints in later messages.</p>
+
+    <h3>Use Examples to Show What You Mean</h3>
+
+    <p>With a frontier model behind it, Fermi understands a great deal, but it can't read minds. For subtle requirements, one or two examples usually make your intent much clearer.</p>
+
+    <p>A weak prompt:</p>
+    <pre><code>Clean up these commit messages</code></pre>
+
+    <p>A strong prompt:</p>
+    <pre><code>Clean up these commit messages, following this format:
+feat(parser): support nested array parsing
+- Motivation: the old implementation silently dropped data on nested arrays
+- Scope: parser module only, no API changes</code></pre>
+
+    <p>"Clean" means different things to different people. A sample carries the definition faster than any description.</p>
+
+    <p>These three tips are variations on one move: hand Fermi the context in your head. The more you let it see, the more it can think of for you.</p>
+  </article>
+  <script is:inline>
+    document.querySelectorAll('[data-lang-link]').forEach((link) => {
+      link.addEventListener('click', () => {
+        localStorage.setItem('fermi-docs-lang', link.getAttribute('data-lang-link'));
+      });
+    });
+  </script>
+</body>
+</html>

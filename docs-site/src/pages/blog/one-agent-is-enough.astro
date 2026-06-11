@@ -1,0 +1,221 @@
+---
+const base = import.meta.env.BASE_URL;
+const zhHref = base + "zh/blog/one-agent-is-enough/";
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>One Agent Is Enough — Fermi Blog</title>
+  <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href={base + "fonts/instrument-serif-400-italic-latin.woff2"} as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href={base + "fonts/fonts.css"} />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0c11; color: #c8cdd5;
+      font-family: "Source Serif 4", serif; line-height: 1.75; font-size: 17px;
+    }
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 6;
+      display: flex; align-items: center; justify-content: space-between; padding: 22px 36px;
+      background: rgba(10,12,17,.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    .wordmark {
+      font-family: "Instrument Serif", serif; font-style: italic;
+      font-size: 30px; color: #f4f6fa; text-decoration: none; line-height: 1;
+    }
+    .navlinks { display: flex; gap: 32px; align-items: center; }
+    .navlinks a {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #aeb6c1;
+      text-decoration: none; transition: color .2s;
+    }
+    .navlinks a:hover { color: #f4f6fa; }
+    .langswitch {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: "JetBrains Mono", monospace; font-size: 12px; color: #80838a;
+    }
+    .langswitch a { font-size: inherit; color: #80838a; }
+    .langswitch a.active { color: #8ab4f8; }
+    article {
+      max-width: 680px; margin: 0 auto; padding: 140px 24px 100px;
+    }
+    .meta {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #6b7280;
+      margin-bottom: 12px; letter-spacing: 0.02em;
+    }
+    .meta a { color: #8ab4f8; text-decoration: none; }
+    .meta a:hover { text-decoration: underline; }
+    h1 {
+      font-family: "Instrument Serif", serif; font-weight: 400; font-size: 48px;
+      letter-spacing: -0.02em; line-height: 1.1; color: #f4f6fa; margin-bottom: 40px;
+    }
+    h3 {
+      font-family: "Source Serif 4", serif; font-weight: 600; font-size: 22px;
+      color: #e8ecf2; margin: 48px 0 16px;
+    }
+    p { margin-bottom: 18px; }
+    strong { color: #e8ecf2; }
+    a { color: #8ab4f8; }
+    blockquote {
+      border-left: 3px solid #23262d; padding: 2px 0 2px 20px; margin: 20px 0;
+      color: #9ca3af; font-size: 16px;
+    }
+    blockquote p { margin-bottom: 12px; }
+    ul, ol { margin: 0 0 18px 24px; }
+    li { margin-bottom: 8px; }
+    li ul { margin-top: 8px; margin-bottom: 0; }
+    code {
+      font-family: "JetBrains Mono", monospace; font-size: 0.88em;
+      background: #15171c; border: 1px solid #23262d; border-radius: 4px; padding: 2px 6px;
+    }
+    @media (max-width: 30rem) {
+      .topbar { padding: 22px 20px; }
+      .navlinks { gap: 18px; }
+      .navlinks > a:nth-child(-n + 1) { display: none; }
+      h1 { font-size: 36px; }
+      article { padding: 120px 18px 60px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href={base}>Fermi</a>
+    <nav class="navlinks">
+      <a href={base + "getting-started/"}>Docs</a>
+      <a href={base + "blog/"}>Blog</a>
+      <a href="https://github.com/FelixRuiGao/Fermi">GitHub ↗</a>
+      <span class="langswitch" aria-label="Language switcher">
+        <a class="active" href="#" data-lang-link="en" lang="en">EN</a>
+        <span aria-hidden="true">/</span>
+        <a href={zhHref} data-lang-link="zh" lang="zh-CN">中文</a>
+      </span>
+    </nav>
+  </header>
+  <article>
+    <div class="meta"><a href={base + "blog/"}>← Blog</a> &middot; June 5, 2026</div>
+    <h1>One Agent Is Enough</h1>
+
+    <p>Models have taken several leaps in intelligence and generalization since the GPT-4 era, and on frontier models, the edge that clever prompting and tool design once provided is fading. Context windows, though, are still finite, and models suffer from context rot as conversations grow long. For long-horizon tasks, context engineering has become the central problem of agent design.</p>
+
+    <blockquote>
+      <p>What context engineering means in concrete terms has been covered thoroughly elsewhere; LangChain's <a href="https://www.langchain.com/blog/context-engineering-for-agents"><em>Context Engineering for Agents</em></a> is a good place to start. I'll go straight to comparing how today's mainstream coding agents manage context, and explain why I picked a single agent as the "executor."</p>
+    </blockquote>
+
+    <h3>Auto-Compaction: One Executor, Conservative, Sensible, Simple</h3>
+
+    <p>Claude Code and Codex, the two coding agents that lead the field by a wide margin in user count, both default to the same conservative, simple approach: when the conversation nears the context limit, compact it in one shot, summarizing the entire session and carrying on with the summary as the new context. It's stable, it's simple, and it asks the least of the model. The drawback seems just as obvious: condensing a long-running conversation into a summary that may run under 5% of its original length is bound to lose information... or is it?</p>
+
+    <p>The problem with auto-compaction runs deeper than "compress too much and the summary can't hold everything." Models are still poor summarizers of their own work; an agent carrying a long context struggles to infer what an agent without that context will actually need. Two kinds of information get dropped or distorted most often during compaction. One is the reasoning and decision-making on both sides as the user and the agent worked things out (when constraints were loose, the compacted summary often keeps the "how" and loses the "why"). The other is the implicit decisions made while writing the code. User intent and those implicit decisions matter enormously during execution: they encode the unstated constraints that keep the agent on track. After auto-compaction, much of that implicit knowledge is gone. It looks like an agent's version of the <a href="https://en.wikipedia.org/wiki/Curse_of_knowledge"><em>curse of knowledge</em></a>.</p>
+
+    <p>The real mechanism is probably messier than that. If you use the feature often, you'll notice that conversation quality after a compaction is sometimes unexpectedly bad: the model seems to get irreversibly "dumber" in some way nobody has pinned down, possibly because the summary breaks the chain of reasoning. You see something similar when you ask an agent to write a complex prompt for itself: what it turns in is usually noticeably worse than its own direct work.</p>
+
+    <p>On long tasks that span several compactions, the implementation inevitably drifts. Claude Code has clearly designed against this: its compaction prompt explicitly requires the summary to list every user message in detail. That keeps the user's decisions, and the intent behind them, from falling through the cracks, and it goes a long way toward easing the problem.</p>
+
+    <h3>Multi-Agent Collaboration: Multiple Executors, Imitating Humans</h3>
+
+    <p>Over the past few months, especially since Claude Code shipped its Agent Team feature, parallel multi-agent collaboration has become one of the hottest ideas in agent design. It hasn't been a clear success.</p>
+
+    <p>Set aside the complexity of the system itself, the edge cases and all; even on a hypothetically bug-free message bus, this is a hard route to defend. Splitting one task across collaborating agents imitates how humans work, and the imitation travels badly. Humans have no hard cap on context, and we think and work slowly enough that communication slots naturally into the gaps. Agents are different: they think and execute so fast that communication itself becomes the hard part. Different agents rarely hold identical views of the implementation plan. Halfway through, agent A decides B's work has a problem and messages it. B may well accept the point, but by then C has already built a long way on top of B's code. Dial down the pushback and you get harmony instead, the expensive kind: a pile of individually "okay" parts stitched into a shoddy whole that barely runs, like Frankenstein's monster, messy and out of control. That's in the nature of most large tasks: the pieces usually depend on each other instead of parallelizing cleanly.</p>
+
+    <p>The system itself is also brutally hard to build and quick to fall over, with hard failures like deadlocks and plenty of soft ones, such as communication quietly eating large amounts of context. Say A proposes a plan. B and C each draft a different revision and broadcast it to the whole team for review; B's lands first. By the time C's arrives, everyone has already written and sent their response to B's. What now? Review C's too and reply all over again? In conditions like these, context burns off fast. And if an agent can only send and receive messages, it's working blind: it can't see what anyone else is doing and has to guess at their intentions from the code they produce. Give it the ability to watch what others are doing (which tools they call) and it'll keep checking, until its context fills up with repetitive, mostly useless updates. The worst case: a sub-agent triggers auto-compaction mid-collaboration and rejoins the shared task with a damaged brain, dragging down the final result. So even leaving aside the steep cost multiplier of running agents in parallel, this is poor practice.</p>
+
+    <p>There's a lesson in the failure, though: which parts of human collaboration are actually worth borrowing? Humans communicate, divide the work, then each do their own share. I'll come back to the "communicate" part in <em>Good Sub-Agents Don't Write Code</em>. We've just seen that working in parallel barely holds together in agent systems. What about dividing the work, then executing serially?</p>
+
+    <p>Droid tried exactly that.</p>
+
+    <h3>Sequential Execution by Plan: Multiple Executors, Working in Silos?</h3>
+
+    <p>Droid's Mission feature plans first and executes serially afterward. An Orchestrator (the architect) works out a detailed plan and acceptance contract with the user, broken into subtasks and milestones. Once the plan is set, a separate Runner takes over execution: it dispatches a Worker for each subtask node (when a Worker hits a question that needs a decision, the question routes back to the Orchestrator), and at each milestone an independent Validator reviews the whole stage.</p>
+
+    <p>The first problem with architectures like this is that the train of thought breaks. Will a Worker truly absorb what the Orchestrator was thinking at planning time, especially the reasons behind its decisions? Will the next Worker really understand the implicit decisions the previous one made? No plan covers every detail. A Worker will inevitably make judgment calls the plan never mentioned, picking one data structure over another, or choosing between two equivalent approaches. The reasons never reach the next Worker explicitly, yet they shape its work. Without that implicit knowledge, each Worker works in its own silo: the code runs, but it builds poorly on what came before, and Workers sometimes make outright contradictory design choices.</p>
+
+    <p>Once the work drifts, correcting it is expensive. A Worker is assigned one specific subtask; even if it notices something worth fixing in earlier work, it won't change course, because that isn't its job. Worse, when an earlier Worker has already strayed from the plan, later Workers see the existing code, treat it as authoritative, and build on it, so the drift compounds. The Orchestrator only hears back through Validators at milestones; by the time it spots the problem, several Workers may have piled up a lot of code in the wrong direction, and rewriting the contract or rolling everything back is costly. The bigger risk sits outside the plan: a Validator can only review code against the plan, and if a Worker's or Validator's reading of the plan conflicts with what the Orchestrator actually meant, the Orchestrator usually finds out too late. Rewrite the whole contract to fix it? Or settle for a result that isn't quite what you wanted?</p>
+
+    <p>Another lurking problem is over-engineering. To keep a complex, easily derailed multi-agent architecture under control, Droid pins down nearly every step that can be pinned down and wraps the whole flow in hard constraints. When a Worker hits a decision point, for instance, it doesn't simply raise the question in its output the way most projects do; the handoff runs through the <code>returnToOrchestrator</code> field of the <code>EndFeatureRun</code> tool (the system makes the transfer automatically, the Runner never decides), with a summary written into the handoff. The heavyweight design clearly improves stability and keeps the system running for long stretches, but heavy process has its price: it adds cognitive load for the model (models of different ability and working style can respond to the same harness very differently), and it costs flexibility, since everything must first be planned and contracted. All of that guarantees stable execution. None of it guarantees a better implementation.</p>
+
+    <p>Still, Droid's Mission feature remains the most sensible multi-executor design so far. Serial execution sidesteps the worst chaos of parallel collaboration, and the heavy process really does keep the system alive for hours at a time.</p>
+
+    <blockquote>
+      <p>While I was writing this post, Claude Code shipped Dynamic Workflows / Ultracode. It's a fairly dated approach: something like a lightweight, customized, dynamic LangGraph, with plenty of prior art behind the idea. It solves none of the problems above, including the loss of implicit knowledge and the inability to correct course mid-run (the flexibility problem). The orchestrate-once, dispatch-and-wait mechanism costs it most of the flexibility an ordinary multi-agent system has. The script may contain branches and while loops, and the number of agents dispatched can depend on a list a sub-agent returns at runtime, but the orchestration itself is locked in before every run. Once a sub-agent is dispatched, all that connects it to the main agent is a single return value; there's no communication or negotiation in flight. Put differently, to keep "communication chaos" from eating context, it simply forbids the main agent from intervening mid-run. That leaves it in an awkward spot as a multi-executor system: its guardrails fall well short of Mission's, and its flexibility falls short of Agent Team's.</p>
+      <p>The one apparent benefit: orchestration overhead stays out of the main context. That leaves the system valuable in only a few scenarios, such as automating high-quality code review (dispatch several Reviewers across different parts of the code, then pair each with an adversarial agent for cross-examination). The stubbornly high cost, though, makes it a poor deal.</p>
+    </blockquote>
+
+    <h3>Fermi's Self-Compaction: One Executor, More Flexible, Still Unproven</h3>
+
+    <p>Single-agent auto-compaction and multi-agent orchestration face the same question: how do you carry implicit knowledge across intact? Today's models simply aren't good at it; they fixate on details and let the thinking behind them slip. That's why the Worker, or Executor, needs a single persistent brain, as intact as possible, for the whole task: it keeps the train of thought from breaking.</p>
+
+    <p>So in Fermi I built self-compaction tools to help a single executor through long tasks. Whole-session compaction damages user intent and the reasoning laid down during planning, so Fermi compresses at a much finer grain, down to a single tool call. Critical reasoning and conversation stay untouched while the less important parts get compressed hard. For example:</p>
+
+    <ul>
+      <li>Compress oversized tool calls and tool results, distilling the few pieces that future work will actually need</li>
+      <li>In auto-research tasks, compress the details of each exploratory experiment after it finishes, scripts and runs included, keeping only the idea behind the experiment, a short description of the script, the results, and any insight useful for future experiments</li>
+      <li>When a change touches several parts of a large repository, compact after finishing each part or batch of parts</li>
+    </ul>
+
+    <p>This way Fermi never compresses its discussions with the user, preserves the decision process as fully as it can, and keeps the implicit constraints from washing away. Self-compaction comes in two forms today (they may merge later):</p>
+
+    <ol>
+      <li>The user runs /summarize manually, picks a range of consecutive turns (a user message plus the agent's actions and output that followed), and can attach custom instructions for the summary.</li>
+      <li>Fermi compacts on its own, but only within a single turn: user messages can never be compressed, and Fermi can't compact across them.</li>
+    </ol>
+
+    <p>Plenty of open questions remain:</p>
+
+    <ul>
+      <li>Can the agent judge soundly what deserves compression, avoid compressing too much or too little, and pick the right moment?</li>
+      <li>Can it write a summary that keeps what will actually matter later? This is auto-compaction's problem again, just at a smaller scale</li>
+      <li>Every compaction breaks some prompt cache hits, so frequent compaction costs extra money</li>
+      <li>A bad compaction can't be undone. Worse, once the wrong context is gone, the agent is even less likely to realize the compaction was wrong, so it can't correct course</li>
+    </ul>
+
+    <h3>Good Sub-Agents Don't Write Code</h3>
+
+    <p>So far, sub-agents work best when they keep their hands off the code and take on everything else:</p>
+
+    <ul>
+      <li>Sub-agents are a natural fit for exploration. They spare the main agent from over-exploring a repository it doesn't know yet, with all the excess file searching and reading that entails. An Explorer does that work in the main agent's place and hands back just the clean result the main agent asked for.</li>
+      <li>Sub-agents also make excellent Reviewers. An independent Reviewer catches more blind spots in an implementation.</li>
+    </ul>
+
+    <blockquote>
+      <p>As Walden Yan of Cognition notes in <a href="https://cognition.ai/blog/multi-agents-working"><em>Multi-Agents: What's Actually Working</em></a>, sub-agents work surprisingly well as Reviewers, especially when they share no context with the executor. He attributes it to two factors: the Reviewer has to reason backward from the implementation since it never saw the spec or the user's instructions, and a long context suffers from context rot. I suspect a third factor. LLM training leans heavily on tightly reasoned problem solving and probably seldom asks the model to find its own mistakes; labs want a model that writes the best code on the first try, and nobody trains write-then-self-correct. That makes bugs in its own code hard for it to see. An independent Reviewer is in a completely different position: in the end it comes down to whether the code arrives as role="assistant" or role="user" (unverified).</p>
+    </blockquote>
+
+    <ul>
+      <li>In human collaboration, communication does more than settle on a plan; we complement each other and sometimes land on better ideas together. The same holds for agents. During the brainstorming phase of planning (complex plans especially), spinning up several sub-agents to plan in parallel makes sense. Most providers run their backends at temperature 1.0, so the proposals tend to complement one another, and for complex engineering tasks they usually beat a single agent's one-shot plan, with fewer blind spots.</li>
+      <li>Consulting: run the work on a weaker model and consult a stronger one when the problem gets hard. Anthropic has an <a href="https://claude.com/blog/the-advisor-strategy">article</a> showing the approach works. The tricky part is that the agent on the weaker model has to know when to ask and what context to hand over. Consult too often and the premium model's tokens cost more than just using it outright; consult too little, which usually means not knowing what it doesn't know, or handing over poor context, and the scheme buys you nothing. Amp's Oracle takes the same path. Counterintuitively, in my experience the consultant doesn't even need to be a stronger model. A peer model, a slightly weaker one, even the very same model can give useful counsel: when an agent is stuck on a problem it can't locate, a fresh session pointed straight at the problem often finds and fixes it quickly. Sampling differences between models and a clean context likely work together here, and this is one of the places where sub-agents genuinely shine.</li>
+    </ul>
+
+    <blockquote>
+      <p>It pays to configure several models for sub-agents. Fermi exposes three configurable tiers, and when the going gets tough the main agent automatically picks the Tier-High model for the sub-agent. My usual setup: main agent on DeepSeek V4 Pro max, High on Codex/GPT 5.5 xhigh, Medium on DeepSeek V4 Pro max, Low on Codex/GPT 5.4 mini.</p>
+    </blockquote>
+
+    <ul>
+      <li>There's one more arrangement worth singling out: when spawning a sub-agent, pass it the full context of the current process (or the context minus tool results), so the sub-agent receives the complete train of thought and the user's intent. Two concrete ways to do it:
+        <ul>
+          <li>Wrap that context up and pass it in whole, much like an auto-compaction summary: semantically it comes from the system, and it enters the assembled context as a role="user" message. This version saves tokens, since tool results can be dropped</li>
+          <li>Fork the main agent outright and add a system prompt telling it "you are a forked agent"</li>
+        </ul>
+      </li>
+    </ul>
+
+    <blockquote>
+      <p>Taken further, the main agent could keep forking itself all the way down, executing each subtask directly. Maybe that's an option too? With no compression and no handoff involved, implicit knowledge never becomes a problem. Codex already does this, and Fermi will support it soon.</p>
+    </blockquote>
+
+    <h3>Closing Thoughts</h3>
+
+    <p>"There must be exactly one executor"... or must there? Multi-executor systems aren't wrong by nature. The bottleneck sits with today's models: implicit knowledge doesn't transfer reliably, whether handed to a "future self" through auto-compaction or to another agent through collaboration. Under that bottleneck, one executor plus clean-context helper agents (exploration, review, consulting) is the most dependable design. If models ever shake off the curse of knowledge, most of this post will need rewriting. Until then, protect the executor's brain.</p>
+  </article>
+  <script is:inline>
+    document.querySelectorAll('[data-lang-link]').forEach((link) => {
+      link.addEventListener('click', () => {
+        localStorage.setItem('fermi-docs-lang', link.getAttribute('data-lang-link'));
+      });
+    });
+  </script>
+</body>
+</html>

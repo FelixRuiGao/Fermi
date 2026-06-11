@@ -1,0 +1,152 @@
+---
+const base = import.meta.env.BASE_URL;
+const enHref = base + "blog/how-to-talk-to-fermi/";
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>与 Fermi 对话的正确方式 — Fermi 博客</title>
+  <link rel="preload" href={base + "fonts/instrument-serif-400-normal-latin.woff2"} as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href={base + "fonts/instrument-serif-400-italic-latin.woff2"} as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href={base + "fonts/fonts.css"} />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0c11; color: #c8cdd5;
+      font-family: "Source Serif 4", "Noto Serif SC", serif; line-height: 1.85; font-size: 17px;
+    }
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 6;
+      display: flex; align-items: center; justify-content: space-between; padding: 22px 36px;
+      background: rgba(10,12,17,.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    .wordmark {
+      font-family: "Instrument Serif", serif; font-style: italic;
+      font-size: 30px; color: #f4f6fa; text-decoration: none; line-height: 1;
+    }
+    .navlinks { display: flex; gap: 32px; align-items: center; }
+    .navlinks a {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #aeb6c1;
+      text-decoration: none; transition: color .2s;
+    }
+    .navlinks a:hover { color: #f4f6fa; }
+    .langswitch {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: "JetBrains Mono", monospace; font-size: 12px; color: #80838a;
+    }
+    .langswitch a { font-size: inherit; color: #80838a; }
+    .langswitch a.active { color: #8ab4f8; }
+    article {
+      max-width: 680px; margin: 0 auto; padding: 140px 24px 100px;
+    }
+    .meta {
+      font-family: "JetBrains Mono", monospace; font-size: 13px; color: #6b7280;
+      margin-bottom: 12px; letter-spacing: 0.02em;
+    }
+    .meta a { color: #8ab4f8; text-decoration: none; }
+    .meta a:hover { text-decoration: underline; }
+    h1 {
+      font-family: "Instrument Serif", "Noto Serif SC", serif; font-weight: 400; font-size: 48px;
+      letter-spacing: 0; line-height: 1.2; color: #f4f6fa; margin-bottom: 40px;
+    }
+    h3 {
+      font-family: "Source Serif 4", "Noto Serif SC", serif; font-weight: 600; font-size: 22px;
+      color: #e8ecf2; margin: 48px 0 16px;
+    }
+    p { margin-bottom: 18px; }
+    strong { color: #e8ecf2; }
+    code {
+      font-family: "JetBrains Mono", monospace; font-size: 0.88em;
+      background: #15171c; border: 1px solid #23262d; border-radius: 4px; padding: 2px 6px;
+    }
+    pre {
+      background: #15171c; border: 1px solid #23262d; border-radius: 8px;
+      padding: 18px 20px; overflow-x: auto; margin: 16px 0 24px;
+    }
+    pre code { background: none; border: none; padding: 0; font-size: 14px; color: #aeb6c1; }
+    @media (max-width: 30rem) {
+      .topbar { padding: 22px 20px; }
+      .navlinks { gap: 18px; }
+      .navlinks > a:nth-child(-n + 1) { display: none; }
+      h1 { font-size: 36px; }
+      article { padding: 120px 18px 60px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href={base + "zh/"}>Fermi</a>
+    <nav class="navlinks">
+      <a href={base + "zh/getting-started/"}>文档</a>
+      <a href={base + "zh/blog/"}>博客</a>
+      <a href="https://github.com/FelixRuiGao/Fermi">GitHub ↗</a>
+      <span class="langswitch" aria-label="语言切换">
+        <a href={enHref} data-lang-link="en" lang="en">EN</a>
+        <span aria-hidden="true">/</span>
+        <a class="active" href="#" data-lang-link="zh" lang="zh-CN">中文</a>
+      </span>
+    </nav>
+  </header>
+  <article>
+    <div class="meta"><a href={base + "zh/blog/"}>← 博客</a> &middot; 2026 年 5 月 29 日</div>
+    <h1>与 Fermi 对话的正确方式</h1>
+
+    <p>过去几年，教你如何与大模型对话的"提示词工程（Prompt Engineering）"盛极一时，但随着模型的泛化能力，也就是"在未见过的数据上也能表现好"的能力在这几年大幅提升，提示词工程的热潮也随之消退。大浪淘沙，随着提示词里的"奇技淫巧"被逐渐淘汰，真正有意义的沟通技巧和对话方式凸显出来。</p>
+
+    <h3>提供更多背景信息</h3>
+
+    <p>在使用 Fermi 时，避免只给出一条孤立的局部指令，这等同于把 Fermi 当成一个只会机械跟随指令的机器人——虽然可以跟随该指令完成任务，但不是最佳的对话方式。相反，你应该提供更多的背景信息，包括指令与任务背后的意图和动机，Fermi 可以举一反三，自动地根据你的真实意图进行工作（而不是机械性地完成任务），这包括：</p>
+
+    <p><strong>构建并遵从更多隐性约束：</strong></p>
+
+    <p>不好的提示词：</p>
+    <pre><code>使用简单的词汇，不要用习语</code></pre>
+
+    <p>好的提示词：</p>
+    <pre><code>这份用户手册将被非专业译者翻译成多种语言，所以请使用简单的句式，避免习语，因为习语往往难以直接翻译</code></pre>
+
+    <p>有了"会被翻译"的背景，Fermi 不仅会避免习语，还会自动避免文化典故、用短句降低歧义，你虽然没明确要求，但这些对翻译工作同样重要。</p>
+
+    <p><strong>发现你方案中的盲点：</strong></p>
+
+    <p>不好的提示词：</p>
+    <pre><code>帮我把最近三个 commit 从 Git 历史里彻底删掉</code></pre>
+
+    <p>好的提示词：</p>
+    <pre><code>我刚发现自己把数据库密码写进配置文件提交了，帮我把那几个 commit 从 Git 历史里彻底删掉</code></pre>
+
+    <p>没有背景时，Fermi 会照做：改写历史、force push，任务"完成"了。但有了背景，Fermi 会先指出真正的问题：密码已经泄露，删除历史并不能撤销泄露——远端的 fork、CI 日志、同事的本地仓库里都可能还有副本。第一步应该是立刻轮换密码，清理历史只是善后。</p>
+
+    <h3>了解不同模型的能力边界和习性</h3>
+
+    <p>即使使用的是同一套提示词，不同模型在 Fermi 中的表现也大相径庭，例如，有些模型在提示词不尽完善时也能完美地理解你的意思，但有些模型必须给出精准无误的提示词才能把工作做好。因此，了解不同模型的习性和它们的能力边界，往往对你使用 Fermi 大有裨益，你不仅可以在不同模型上使用不同的对话策略，甚至可以在不同任务上主动切换不一样的模型来执行。例如，有些模型倾向过度工程，布置任务时要明确划定范围、说清哪些不要做；有的模型偏保守，大刀阔斧的重构需要明确授权才会动手；还有的模型在长任务后段容易遗忘早期的约定，重要约束值得在后续消息里适时重申。</p>
+
+    <h3>使用例子来辅助说明你的问题或需求</h3>
+
+    <p>配备前沿模型时，Fermi 有着强大的理解能力，但它无法读心。因此，面对一些细微巧妙的需求时，用 1-2 个例子辅助说明往往能够让 Fermi 更清楚你的意图。</p>
+
+    <p>不好的提示词：</p>
+    <pre><code>帮我把这些提交信息改得规范一点</code></pre>
+
+    <p>好的提示词：</p>
+    <pre><code>帮我把这些提交信息改得规范一点，参考这个格式：
+feat(parser): 支持嵌套数组解析
+- 动机：旧实现遇到嵌套数组会静默丢数据
+- 影响范围：仅 parser 模块，对外 API 不变</code></pre>
+
+    <p>"规范"有着各种不同的定义，一个样例能够最高效地传达信息。</p>
+
+    <p>这三条技巧其实很类似，把你的"上下文"交给 Fermi。你让它看到得越多，它能替你想到的就越多。</p>
+  </article>
+  <script is:inline>
+    document.querySelectorAll('[data-lang-link]').forEach((link) => {
+      link.addEventListener('click', () => {
+        localStorage.setItem('fermi-docs-lang', link.getAttribute('data-lang-link'));
+      });
+    });
+  </script>
+</body>
+</html>
