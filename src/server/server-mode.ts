@@ -18,7 +18,7 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { createRpcServer } from "./rpc-transport.js";
-import { registerSessionRpc } from "./session-rpc.js";
+import { buildMeta, registerSessionRpc } from "./session-rpc.js";
 import { registerInitRpc } from "./init-rpc.js";
 import { Config, resolveAssetPaths, getBundledAssetsDir } from "../config.js";
 import { Agent } from "../agents/agent.js";
@@ -249,19 +249,9 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
   });
 
   // Emit ready event with session metadata so the GUI can populate its UI.
-  // Field names must match session-rpc.ts buildMeta() for consistency.
-  rpc.emit("ready", {
-    sessionId: session.createdAt,
-    sessionDir: store.sessionDir ?? null,
-    workDir: projectPath,
-    modelConfigName: session.currentModelConfigName ?? "",
-    modelProvider: session.primaryAgent?.modelConfig?.provider ?? "",
-    thinkingLevel: (session as any).thinkingLevel ?? "none",
-    accentColor: (session as any).accentColor,
-    turnCount: session.turnCount,
-    title: session.getTitle(),
-    displayName: session.getDisplayName(),
-  });
+  // Shares buildMeta() with session-rpc so the payload (including
+  // protocolVersion/capabilities) can never drift between the two emitters.
+  rpc.emit("ready", buildMeta(session, projectPath, store.sessionDir ?? null));
 
   // Last-resort crash guard. Without it, any escaped exception kills the
   // process silently: the client sees a frozen UI with no explanation (the

@@ -15,6 +15,7 @@ import type { RpcServer } from "./rpc-transport.js";
 import type { Session } from "../session.js";
 import type { LogEntry } from "../log-entry.js";
 import type { PermissionMode } from "../permissions/index.js";
+import { projectToTuiEntries } from "../log-projection.js";
 import { randomSessionId, saveGlobalSettingsPatch, saveLog, SessionStore, type AgentModelEntry, type ModelTierEntry } from "../persistence.js";
 import { applySessionRestore } from "../session-resume.js";
 import { getTierEligibleThinkingLevels, getThinkingLevels } from "../config.js";
@@ -32,6 +33,25 @@ export interface SessionRpcOptions {
 /** A snapshot of a log entry suitable for JSON serialization. */
 type SerializedLogEntry = LogEntry;
 
+/**
+ * Wire-protocol version, advertised in the `ready` meta. Bump when an event
+ * payload or method contract changes incompatibly. Capability strings let
+ * clients feature-detect additive surface without version arithmetic.
+ */
+export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_CAPABILITIES = [
+  /** session.getProjectedLog / session.getProjectedChildLog */
+  "projectedLog",
+  /** ask.pending / ask.resolved driven by a real runtime subscription (child asks included) */
+  "askEvents",
+  /** turn.started / turn.ended emitted by the runtime for ALL turns (incl. auto-resume) */
+  "turnLifecycle",
+  /** turn.ended may carry status "waiting" (turn parked on a pending ask) */
+  "waitingStatus",
+  /** server.crashed emitted on fatal process errors */
+  "crashEvent",
+] as const;
+
 interface MetaPayload {
   readonly sessionId: string;
   readonly title: string | undefined;
@@ -43,6 +63,8 @@ interface MetaPayload {
   readonly thinkingLevel: string;
   readonly accentColor: string | undefined;
   readonly turnCount: number;
+  readonly protocolVersion: number;
+  readonly capabilities: readonly string[];
 }
 
 interface StatusPayload {
@@ -133,7 +155,7 @@ interface AgentModelPinsPayload {
   }[];
 }
 
-function buildMeta(s: Session, workDir: string, sessionDir: string | null): MetaPayload {
+export function buildMeta(s: Session, workDir: string, sessionDir: string | null): MetaPayload {
   return {
     sessionId: sessionDir ? basename(sessionDir) : s.createdAt,
     title: s.getTitle(),
@@ -145,6 +167,8 @@ function buildMeta(s: Session, workDir: string, sessionDir: string | null): Meta
     thinkingLevel: s.thinkingLevel ?? "none",
     accentColor: s.accentColor,
     turnCount: s.turnCount,
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities: PROTOCOL_CAPABILITIES,
   };
 }
 
@@ -472,6 +496,12 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   let sessionDir = opts.sessionDir;
   const disposers: Array<() => void> = [];
 
+  // Incremented by the turn-lifecycle subscription (bottom of this function)
+  // every time the runtime emits an "ended" event. Fire-and-forget handlers
+  // compare before/after to avoid emitting a duplicate turn.ended for errors
+  // the runtime already reported.
+  let lifecycleEndedCount = 0;
+
   const getCurrentSessionDir = (): string | null => {
     const liveDir = (session as unknown as SessionStoreAccess)._store?.sessionDir;
     if (typeof liveDir === "string" && liveDir.length > 0) {
@@ -576,54 +606,61 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     return entries ? [...entries] : null;
   });
 
+  // ── Projected log (capability "projectedLog") ──
+  // Returns the canonical TUI projection (ConversationEntry[]) computed
+  // server-side, so out-of-process UIs render the same conversation the TUI
+  // does instead of re-implementing pairing/filtering over raw LogEntry[].
+  // The raw-log methods above remain for legacy clients.
+  server.on("session.getProjectedLog", () => ({
+    revision: session.getLogRevision(),
+    activeLogEntryId: session.activeLogEntryId,
+    entries: projectToTuiEntries([...session.log] as LogEntry[]),
+  }));
+
+  server.on("session.getProjectedChildLog", (params) => {
+    const p = expectObject(params, "session.getProjectedChildLog");
+    const childId = expectString(p, "childId", "session.getProjectedChildLog");
+    const entries = session.getChildSessionLog(childId);
+    return entries ? projectToTuiEntries([...entries] as LogEntry[]) : null;
+  });
+
   server.on("session.getChildSnapshots", () => session.getChildSessionSnapshots());
 
   server.on("session.getPlanState", () => session.getPlanState());
 
   // ── Turn submission ──
+  // Fire-and-forget: do not block the RPC response on the turn completion.
+  // turn.started / turn.ended come from the runtime's turn-lifecycle
+  // subscription (bottom of this function), which also covers turns with no
+  // RPC caller (auto-resume, post-approval resume). The catch here only
+  // covers errors thrown before the activation loop starts (storage / MCP /
+  // attachment failures) — `lifecycleEndedCount` dedups against the runtime.
+  const fireAndForgetTurn = (run: () => Promise<unknown>): { ok: true } => {
+    void (async () => {
+      const endedBefore = lifecycleEndedCount;
+      try {
+        await run();
+      } catch (err) {
+        if (lifecycleEndedCount === endedBefore) {
+          server.emit("turn.ended", {
+            status: "error",
+            turnCount: session.turnCount,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    })();
+    return { ok: true };
+  };
+
   server.on("session.submitTurn", (params) => {
     const p = expectObject(params, "session.submitTurn");
     const input = expectString(p, "input", "session.submitTurn");
-    // Fire-and-forget: do not block the RPC response on the turn completion.
-    // The peer subscribes to log events to observe progress.
-    void (async () => {
-      try {
-        server.emit("turn.started", { input, turnCount: session.turnCount + 1 });
-        await session.turn(input);
-        server.emit("turn.ended", {
-          status: session.lastTurnEndStatus ?? "completed",
-          turnCount: session.turnCount,
-        });
-      } catch (err) {
-        server.emit("turn.ended", {
-          status: "error",
-          turnCount: session.turnCount,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })();
-    return { ok: true };
+    return fireAndForgetTurn(() => session.turn(input));
   });
 
-  server.on("session.resumePendingTurn", () => {
-    void (async () => {
-      try {
-        server.emit("turn.started", { resumed: true, turnCount: session.turnCount });
-        await session.resumePendingTurn();
-        server.emit("turn.ended", {
-          status: session.lastTurnEndStatus ?? "completed",
-          turnCount: session.turnCount,
-        });
-      } catch (err) {
-        server.emit("turn.ended", {
-          status: "error",
-          turnCount: session.turnCount,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })();
-    return { ok: true };
-  });
+  server.on("session.resumePendingTurn", () =>
+    fireAndForgetTurn(() => session.resumePendingTurn()));
 
   server.on("session.requestTurnInterrupt", () => session.requestTurnInterrupt());
   server.on("session.cancelCurrentTurn", () => {
@@ -868,25 +905,16 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     const p = expectObject(params, "session.summarize");
     const targetContextIds = p["targetContextIds"] as string[] | undefined;
     const focusPrompt = optString(p, "focusPrompt");
-    void session.runManualSummarize({ targetContextIds: targetContextIds ?? undefined, focusPrompt: focusPrompt ?? undefined }).catch((err) => {
-      server.emit("turn.ended", {
-        status: "error",
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    return { ok: true };
+    return fireAndForgetTurn(() => session.runManualSummarize({
+      targetContextIds: targetContextIds ?? undefined,
+      focusPrompt: focusPrompt ?? undefined,
+    }));
   });
 
   server.on("session.compact", (params) => {
     const p = expectObject(params, "session.compact");
     const instruction = optString(p, "instruction");
-    void session.runManualCompact(instruction).catch((err) => {
-      server.emit("turn.ended", {
-        status: "error",
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    return { ok: true };
+    return fireAndForgetTurn(() => session.runManualCompact(instruction));
   });
 
   // ── Background shells (badge / picker / detail tab) ──
@@ -957,11 +985,12 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   const unsubscribePlan = session.subscribePlan(onPlanChange);
   disposers.push(unsubscribePlan);
 
-  // Ask polling — Session doesn't expose a subscription, so we poll on every
-  // log change (asks always create log entries). The renderer also calls
-  // session.getPendingAsk on demand.
+  // Ask events — driven by the runtime's real ask subscription (capability
+  // "askEvents"). Unlike the old log-change polling, this also observes
+  // child-session asks, which never touch the root log. The wire events and
+  // dedup behavior are unchanged for legacy clients.
   let lastAskId: string | null = null;
-  const onLogChangeForAsk = (): void => {
+  const onAskChange = (): void => {
     const ask = session.getPendingAsk();
     const askId = ask?.id ?? null;
     if (askId !== lastAskId) {
@@ -970,8 +999,26 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
       else server.emit("ask.resolved", {});
     }
   };
-  const unsubscribeAsk = session.subscribeLog(onLogChangeForAsk);
+  const unsubscribeAsk = session.subscribeAsk(onAskChange);
   disposers.push(unsubscribeAsk);
+
+  // Turn lifecycle — forwarded from the runtime (capability "turnLifecycle").
+  // Covers every activation-loop run, including auto-resume and post-approval
+  // resume turns that have no RPC caller. Status "waiting" means the turn
+  // parked on a pending ask (capability "waitingStatus").
+  const unsubscribeLifecycle = session.subscribeTurnLifecycle((event) => {
+    if (event.phase === "started") {
+      server.emit("turn.started", { turnCount: session.turnCount });
+      return;
+    }
+    lifecycleEndedCount += 1;
+    server.emit("turn.ended", {
+      status: event.status,
+      turnCount: session.turnCount,
+      ...(event.error !== undefined ? { error: event.error } : {}),
+    });
+  });
+  disposers.push(unsubscribeLifecycle);
 
   // Save-on-checkpoint: Session expects an external persister.
   session.onSaveRequest = () => {
