@@ -258,9 +258,14 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
   // TUI entry point installs the equivalent handlers in opentui-src/main.tsx).
   // Best-effort order: persist the session, tell the client why, then exit
   // non-zero so the supervisor (GUI / VSCode extension) can react.
+  let crashing = false;
   const crashGuard = (origin: "uncaughtException" | "unhandledRejection") => (err: unknown): void => {
-    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    process.stderr.write(`[server] ${origin}: ${message}\n`);
+    if (crashing) return; // a second fault during cleanup must not recurse
+    crashing = true;
+    try {
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      process.stderr.write(`[server] ${origin}: ${message}\n`);
+    } catch { /* stderr may already be closed */ }
     try {
       session.onSaveRequest?.();
     } catch { /* saving is best-effort during a crash */ }

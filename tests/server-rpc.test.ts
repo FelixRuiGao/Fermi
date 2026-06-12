@@ -75,10 +75,19 @@ describe("protocol handshake", () => {
     const h = makeScriptedSession({ rounds: [] });
     try {
       const meta = buildMeta(h.session as unknown as Session, h.projectRoot, null);
-      expect(meta.protocolVersion).toBe(PROTOCOL_VERSION);
+      // Pin the literal wire values (not the exported constants — comparing a
+      // constant to itself would let a typo sail through). Adding a NEW
+      // capability is fine; renaming or dropping one is a breaking change.
+      expect(meta.protocolVersion).toBe(1);
+      expect([...meta.capabilities]).toEqual([
+        "projectedLog",
+        "askEvents",
+        "turnLifecycle",
+        "waitingStatus",
+        "crashEvent",
+      ]);
+      expect(PROTOCOL_VERSION).toBe(1);
       expect(meta.capabilities).toEqual(PROTOCOL_CAPABILITIES);
-      expect(meta.capabilities).toContain("projectedLog");
-      expect(meta.capabilities).toContain("turnLifecycle");
     } finally {
       h.dispose();
     }

@@ -116,10 +116,28 @@ function renderProjectedItem(item: ProjectedItem, index: number) {
       return <Divider key={key} label="Interrupted" />;
     case "compact_mark":
       return <Divider key={key} label={entry.text || "Context compacted"} />;
-    case "status":
+    case "status": {
+      // work_end/turn_end project as empty-text status entries carrying
+      // turnEndStatus/elapsedMs in meta — render the turn summary instead of
+      // a blank line.
+      const turnEnd = entry.meta?.turnEndStatus;
+      if (typeof turnEnd === "string") {
+        const ms = entry.meta?.elapsedMs;
+        const elapsed = typeof ms === "number" && ms > 0 ? ` · ${(ms / 1000).toFixed(1)}s` : "";
+        const label = turnEnd === "interrupted"
+          ? `⏹ Interrupted${elapsed}`
+          : turnEnd === "error"
+            ? `⚠ Turn ended with an error${elapsed}`
+            : `✓ Done${elapsed}`;
+        return <StatusLine key={key} text={label} dim />;
+      }
+      if (!entry.text.trim()) return null;
+      return <StatusLine key={key} text={entry.text} dim={entry.dim} />;
+    }
     case "progress":
     case "sub_agent_rollup":
     case "sub_agent_done":
+      if (!entry.text.trim()) return null;
       return <StatusLine key={key} text={entry.text} dim={entry.dim} />;
     default:
       return null;
@@ -225,10 +243,25 @@ export function Transcript() {
   }, [itemCount, isRunning]);
 
   // The error log entry is the primary surface; the banner covers turns whose
-  // error never reached the log (legacy binaries, pre-activation failures).
-  const lastEntryIsError = usingProjection
-    ? conversation[conversation.length - 1]?.kind === "error"
-    : logEntries[logEntries.length - 1]?.type === "error";
+  // error never reached the log (legacy binaries). Skip trailing bookkeeping
+  // entries (work_end projects as a status entry AFTER the error entry) when
+  // checking whether the log already shows this failure.
+  const lastEntryIsError = useMemo(() => {
+    if (usingProjection) {
+      for (let i = conversation.length - 1; i >= 0; i--) {
+        const e = conversation[i];
+        if (e.kind === "status" || e.kind === "progress") continue;
+        return e.kind === "error";
+      }
+      return false;
+    }
+    for (let i = logEntries.length - 1; i >= 0; i--) {
+      const e = logEntries[i];
+      if (e.type === "status" || e.type === "work_end" || e.type === "turn_end" || e.type === "token_update") continue;
+      return e.type === "error";
+    }
+    return false;
+  }, [usingProjection, conversation, logEntries]);
   const showErrorBanner = Boolean(lastTurnError) && !lastEntryIsError;
 
   return (

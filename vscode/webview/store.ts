@@ -92,9 +92,11 @@ export const useStore = create<StoreState>((set, get) => ({
       const p = params as { modelConfigName?: string };
       const currentMeta = get().meta;
       set({
+        conversation: [],
         logEntries: [],
         logRevision: -1,
         activeLogEntryId: null,
+        lastTurnError: null,
         pendingAsk: null,
         status: null,
         meta: currentMeta
@@ -204,9 +206,11 @@ export const useStore = create<StoreState>((set, get) => ({
     // Session reset (legacy, kept for compat)
     onEvent("session.reset", () => {
       set({
+        conversation: [],
         logEntries: [],
         logRevision: -1,
         activeLogEntryId: null,
+        lastTurnError: null,
         pendingAsk: null,
       });
     });

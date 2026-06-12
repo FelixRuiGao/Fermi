@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { rpcRequest } from "../vscode-api.js";
 import type { ConversationEntry, LogEntry } from "../../src/types.js";
 
 const TOOL_ICONS: Record<string, string> = {
@@ -21,8 +20,6 @@ function getToolIcon(name: string): string {
 
 interface FileModifyData {
   path: string;
-  before: string;
-  after: string;
   added: number;
   removed: number;
 }
@@ -51,16 +48,30 @@ function summarizeArgs(toolName: string, args: Record<string, unknown> | undefin
   return "";
 }
 
+/**
+ * Real shape (src/diff-hunk.ts FileModifyDisplayData):
+ * { filePath, language?, mode, totalLineCount, hunks: DiffHunk[], writeLines? }
+ * with DiffHunk = { startLine, contextBefore, deletions, additions, contextAfter }.
+ */
 function normalizeFileModify(raw: unknown): FileModifyData | null {
   if (!raw || typeof raw !== "object") return null;
   const d = raw as Record<string, unknown>;
-  return {
-    path: typeof d.path === "string" ? d.path : "",
-    before: typeof d.before === "string" ? d.before : "",
-    after: typeof d.after === "string" ? d.after : "",
-    added: typeof d.linesAdded === "number" ? d.linesAdded : 0,
-    removed: typeof d.linesRemoved === "number" ? d.linesRemoved : 0,
-  };
+  const filePath = typeof d.filePath === "string" ? d.filePath : "";
+  if (!filePath) return null;
+  let added = 0;
+  let removed = 0;
+  if (Array.isArray(d.hunks)) {
+    for (const hunk of d.hunks) {
+      const h = hunk as { additions?: unknown[]; deletions?: unknown[] } | null;
+      added += Array.isArray(h?.additions) ? h.additions.length : 0;
+      removed += Array.isArray(h?.deletions) ? h.deletions.length : 0;
+    }
+  }
+  // write mode carries the whole file as writeLines instead of hunks.
+  if (added === 0 && removed === 0 && Array.isArray(d.writeLines)) {
+    added = d.writeLines.length;
+  }
+  return { path: filePath, added, removed };
 }
 
 /** Adapter: server-projected ConversationEntry pair → view. */
@@ -99,14 +110,8 @@ export function ToolCallEntry({ view }: { view: ToolCallView }) {
   const [expanded, setExpanded] = useState(false);
   const { toolName, summary, fileModify } = view;
 
-  const handleShowDiff = async () => {
-    if (!fileModify) return;
-    await rpcRequest("vscode.showDiff", {
-      filePath: fileModify.path,
-      before: fileModify.before,
-      after: fileModify.after,
-    });
-  };
+  // No Diff button: fileModifyData carries hunks, not full before/after
+  // texts, so a side-by-side diff cannot be reconstructed client-side yet.
 
   return (
     <div className="tool-call">
@@ -117,17 +122,12 @@ export function ToolCallEntry({ view }: { view: ToolCallView }) {
         {view.isError && <span className="tool-error-pill">failed</span>}
         {fileModify ? (
           <span className="tool-file-pill">
-            {fileModify.path.split("/").pop()}
+            {fileModify.path.split(/[\\/]/).pop()}
             {fileModify.added > 0 && <span style={{ color: "var(--vscode-testing-iconPassed)" }}>+{fileModify.added}</span>}
             {fileModify.removed > 0 && <span style={{ color: "var(--vscode-testing-iconFailed)" }}>-{fileModify.removed}</span>}
           </span>
         ) : (
           <span className="tool-summary">{summary}</span>
-        )}
-        {fileModify && (
-          <button className="tool-diff-btn" onClick={(e) => { e.stopPropagation(); handleShowDiff(); }}>
-            Diff
-          </button>
         )}
       </div>
       {expanded && view.resultText && (
