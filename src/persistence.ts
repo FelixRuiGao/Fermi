@@ -1109,16 +1109,22 @@ export function archiveWindow(
   windowStartIdx: number,
   windowEndIdx: number,
 ): void {
-  const archived: Array<{ id: string; content: unknown }> = [];
+  const targets: LogEntry[] = [];
   for (let i = windowStartIdx; i <= windowEndIdx && i < entries.length; i++) {
     const e = entries[i];
-    if (e.content !== null && !e.archived) {
-      archived.push({ id: e.id, content: e.content });
-      e.content = null;
-      e.archived = true;
-    }
+    if (e.content !== null && !e.archived) targets.push(e);
   }
-  writeArchiveFile(dir, `window-${windowIndex}.json.gz`, archived);
+  // Write first, strip after — a failed write must leave content resident
+  // (a stripped entry with no archive file is unrecoverable).
+  writeArchiveFile(
+    dir,
+    `window-${windowIndex}.json.gz`,
+    targets.map((e) => ({ id: e.id, content: e.content })),
+  );
+  for (const e of targets) {
+    e.content = null;
+    e.archived = true;
+  }
 }
 
 /**
@@ -1126,25 +1132,26 @@ export function archiveWindow(
  * nulling each entry's content and marking it archived (same contract as
  * archiveWindow, but with an explicit target list). Entries that are already
  * archived or have no content are skipped. No file is written when nothing
- * qualifies; returns the number of entries archived.
+ * qualifies; returns the number of entries archived. Write-then-strip: if
+ * the write throws, every entry keeps its content.
  */
 export function archiveEntryContents(
   dir: string,
   fileName: string,
   targets: LogEntry[],
 ): number {
-  const archived: Array<{ id: string; content: unknown }> = [];
-  for (const e of targets) {
-    if (e.content !== null && !e.archived) {
-      archived.push({ id: e.id, content: e.content });
-      e.content = null;
-      e.archived = true;
-    }
+  const archivable = targets.filter((e) => e.content !== null && !e.archived);
+  if (archivable.length === 0) return 0;
+  writeArchiveFile(
+    dir,
+    fileName,
+    archivable.map((e) => ({ id: e.id, content: e.content })),
+  );
+  for (const e of archivable) {
+    e.content = null;
+    e.archived = true;
   }
-  if (archived.length > 0) {
-    writeArchiveFile(dir, fileName, archived);
-  }
-  return archived.length;
+  return archivable.length;
 }
 
 export function loadArchive(

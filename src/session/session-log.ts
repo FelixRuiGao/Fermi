@@ -180,6 +180,13 @@ export class SessionLog {
   /** Append an entry, stamping providerRoundId for provider-round types. */
   append(entry: LogEntry): void {
     stampProviderRoundId(entry);
+    // Closes the contract-violation blind spot: if the array shrank without
+    // an invalidate and then grows back past the old watermark, lazily
+    // extended indexes would skip the re-grown span. Any append while
+    // shrunken rebuilds instead.
+    if (this._entries.length < this._indexedUpTo) {
+      this.invalidateIndexes();
+    }
     this._entries.push(entry);
     this.touch();
   }

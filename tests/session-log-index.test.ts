@@ -145,4 +145,24 @@ describe("SessionLog index equivalence", () => {
     expect(log.findEntryById(truncatedId)).toBeUndefined();
     expect(log.findEntryById(entries[5].id)).toBe(entries[5]);
   });
+
+  it("shrink-then-regrow without invalidate still indexes the re-grown span", () => {
+    const log = new SessionLog();
+    buildRandomLog(log, 100, "f");
+    const entries = log.entries;
+    expect(log.findEntryById(entries[99].id)).toBe(entries[99]); // watermark = 100
+
+    entries.length = 50; // contract violation: no invalidate, no lookup yet
+    // Grow back past the old watermark purely via append().
+    const fresh: LogEntry[] = [];
+    for (let i = 0; i < 60; i++) {
+      const e = mk("status", `f-regrow-${i}`);
+      fresh.push(e);
+      log.append(e);
+    }
+    for (const e of fresh) {
+      expect(log.findEntryById(e.id)).toBe(e);
+    }
+    expect(log.findEntryById(entries[5].id)).toBe(entries[5]);
+  });
 });

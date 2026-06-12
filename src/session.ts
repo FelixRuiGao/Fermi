@@ -150,7 +150,7 @@ import {
   createAskRequest,
   createAskResolution,
 } from "./log-entry.js";
-import { invalidateTuiProjectionMemos, projectToApiMessages, projectToTuiEntries } from "./log-projection.js";
+import { invalidateTuiProjectionMemos, projectToApiMessages } from "./log-projection.js";
 import {
   archiveEntryContents,
   archiveWindow,
@@ -857,6 +857,10 @@ export class Session {
     this._cachedSummary = undefined;
     this._log = [];
     this._logStore.resetRevision();
+    // resetRevision restarts the revision sequence from 0 — the memoized API
+    // projection would otherwise collide with the old conversation's early
+    // revisions and feed the model pre-/new content.
+    this._apiProjectionCache = null;
     this._idAllocator = new LogIdAllocator();
     this._currentWorkId = null;
     this._currentWorkStartedAt = 0;
@@ -1948,10 +1952,16 @@ export class Session {
       if (typeof ctx === "string" && coveredSet.has(ctx)) targets.push(e);
     }
     try {
-      archiveEntryContents(sessionDir, `summary-${summaryEntry.id}.json.gz`, targets);
+      const archived = archiveEntryContents(sessionDir, `summary-${summaryEntry.id}.json.gz`, targets);
+      if (archived > 0) {
+        // Stripping content is TUI-projection-visible (tool args / full
+        // text render from entry.content) — bump the revision so memoized
+        // projections recompute.
+        this._touchLog();
+      }
     } catch {
-      // Disk error — leave the content in memory; the next compaction's
-      // archiveWindow will retry the same entries.
+      // Disk error — write-then-strip left every content in place; the next
+      // compaction's archiveWindow picks the same entries up.
     }
   }
 
@@ -4765,6 +4775,9 @@ export class Session {
       displayKind?: LogEntry["displayKind"];
       meta?: Record<string, unknown>;
     }): void => {
+      // Contract: the elapsed-pairing memo in log-projection folds each
+      // entry once — timestamp, meta.toolCallId and meta.execStartMs are
+      // fixed at append time and must not be patched here.
       const entry = this._logStore.findEntryById(entryId);
       if (!entry) return;
       if (patch.apiRole !== undefined) entry.apiRole = patch.apiRole;

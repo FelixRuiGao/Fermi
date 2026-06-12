@@ -85,6 +85,27 @@ describe("API projection cache", () => {
     }
   });
 
+  it("does not survive /new — colliding revisions of the fresh conversation must not serve the old one", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "reply alpha" }] });
+    try {
+      await h.session.turn("alpha secret input");
+      const cachedAt = h.session.getLogRevision();
+      expect(JSON.stringify(h.internals._projectApiMessagesCached())).toContain("alpha secret input");
+
+      await h.session.resetForNewSession();
+      // The revision sequence restarts after /new — walk it back up to the
+      // exact revision the cache was populated at.
+      while (h.session.getLogRevision() < cachedAt) h.internals._touchLog();
+      expect(h.session.getLogRevision()).toBe(cachedAt);
+
+      const fresh = JSON.stringify(h.internals._projectApiMessagesCached());
+      expect(fresh).not.toContain("alpha secret input");
+      expect(fresh).toBe(naiveProjection(h));
+    } finally {
+      h.dispose();
+    }
+  });
+
   it("keys on the system prompt so prompt reloads invalidate", async () => {
     const h = makeScriptedSession({ rounds: [{ text: "hi" }] });
     try {

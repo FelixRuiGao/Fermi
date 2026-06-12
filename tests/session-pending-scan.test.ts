@@ -1,8 +1,10 @@
 /**
- * Pending tool_call scan — the merged single-pass implementation must be
- * exactly equivalent to the old two-pass scan (collect all result ids, then
- * first unresolved call), including the adversarial shapes: results logged
- * before duplicate-id calls, discarded entries, and compact-marker windows.
+ * Pending tool_call scan — regression lock for the shared
+ * _firstPendingToolCall helper against the original two-pass reference
+ * (collect all result ids, then first unresolved call), including the
+ * adversarial shapes: results logged before duplicate-id calls, discarded
+ * entries, and compact-marker windows. (A single-pass merge was tried and
+ * reverted after benchmarking slower — see scripts/bench-log-hotpaths.ts.)
  */
 
 import { describe, expect, it } from "bun:test";

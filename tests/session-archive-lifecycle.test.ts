@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createCompactMarker, type LogEntry } from "../src/log-entry.js";
@@ -127,6 +127,13 @@ describe("eager summary archival", () => {
       expect(contextId).toBeTruthy();
       const originalContent = JSON.parse(JSON.stringify(assistant.content));
 
+      // A live TUI projects on every log notification — this is what makes a
+      // strip-without-touch observable: the memo would capture pre-strip
+      // output at a revision that never gets bumped.
+      const unsubscribe = h.session.subscribeLog(() => {
+        projectToTuiEntries(h.session.log, { revision: h.session.getLogRevision() });
+      });
+
       h.provider.rounds.push(
         {
           toolCalls: [{
@@ -145,6 +152,13 @@ describe("eager summary archival", () => {
       // Covered entry content released to disk, scrollback display intact.
       expect(assistant.archived).toBe(true);
       expect(assistant.content).toBeNull();
+
+      // The strip is TUI-projection-visible (tool args / fullText read from
+      // content), so it must have bumped the revision: a projection memoized
+      // at the current revision must equal a from-scratch reference even if
+      // a live subscriber projected mid-turn before the strip.
+      expect(JSON.stringify(projectToTuiEntries(h.session.log, { revision: h.session.getLogRevision() })))
+        .toBe(JSON.stringify(projectToTuiEntries([...h.session.log])));
       const sessionDir = h.internals._store.sessionDir as string;
       expect(existsSync(join(sessionDir, "archive", `summary-${summary!.id}.json.gz`))).toBe(true);
       const tui = projectToTuiEntries(h.session.log);
@@ -162,6 +176,47 @@ describe("eager summary archival", () => {
       expect(assistant.content).toEqual(originalContent as never);
       const apiAfter = JSON.stringify(projectToApiMessages(h.session.log as LogEntry[]));
       expect(apiAfter).toContain("alpha findings worth summarizing");
+      unsubscribe();
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("a failed archive write leaves every content resident (write-then-strip)", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "gamma findings" }] });
+    h.session.permissionMode = "yolo";
+    try {
+      await h.session.turn("explore");
+      const assistant = h.session.log.find((e) => e.type === "assistant_text" && !e.discarded)!;
+      const contextId = String((assistant.meta as Record<string, unknown>)?.contextId ?? "");
+
+      // Point the store at a session dir whose archive/ path is occupied by a
+      // plain file — mkdirSync inside the write explodes.
+      const brokenDir = join(h.projectRoot, "broken-session");
+      mkdirSync(brokenDir, { recursive: true });
+      writeFileSync(join(brokenDir, "archive"), "not a directory");
+      const realStore = h.internals._store;
+      h.internals._store = new Proxy(realStore, {
+        get: (target, prop) => (prop === "sessionDir" ? brokenDir : Reflect.get(target, prop)),
+      });
+
+      h.provider.rounds.push(
+        {
+          toolCalls: [{
+            id: "sum-1",
+            name: "summarize_context",
+            arguments: { operations: [{ from: contextId, to: contextId, content: "gamma summary" }] },
+          }],
+        },
+        { text: "done" },
+      );
+      await h.session.turn("summarize that");
+
+      // Summary landed, but with the write failed the covered content must
+      // still be resident and re-archivable by the next compaction.
+      expect(h.session.log.some((e) => e.type === "summary" && !e.discarded)).toBe(true);
+      expect(assistant.archived).toBe(false);
+      expect(assistant.content).not.toBeNull();
     } finally {
       h.dispose();
     }
