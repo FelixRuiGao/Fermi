@@ -86,10 +86,6 @@ await run([
   `--target=${bunTarget}`,
   "--outfile",
   binaryPath,
-  "--external",
-  "youtube-transcript",
-  "--external",
-  "unzipper",
   entrypoint,
 ]);
 
@@ -117,18 +113,6 @@ const nativeTargetDir = join(buildDir, "native", `${host.platform}-${host.arch}`
 mkdirSync(nativeTargetDir, { recursive: true });
 cpSync(nativeSource, join(nativeTargetDir, basename(nativeSource)), { dereference: true });
 
-// Copy pdfjs-dist worker (needed by pdf-parse for PDF text extraction; the bundler
-// can't follow pdfjs-dist's dynamic import("./pdf.worker.mjs") so we ship it as an asset)
-const pdfjsWorkerDir = join(buildDir, "pdfjs");
-mkdirSync(pdfjsWorkerDir, { recursive: true });
-{
-  const { createRequire: cr } = await import("node:module");
-  const mktReq = cr(require.resolve("markitdown-ts"));
-  const ppReq = cr(mktReq.resolve("pdf-parse"));
-  const workerSrc = ppReq.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  cpSync(workerSrc, join(pdfjsWorkerDir, "pdf.worker.mjs"), { dereference: true });
-}
-
 // Copy shell parser WASM files (used by the permission system's tree-sitter classifier)
 const bashParserDir = join(buildDir, "bash-parser");
 mkdirSync(bashParserDir, { recursive: true });
@@ -152,7 +136,6 @@ await run([
   "native",
   "tree-sitter",
   "bash-parser",
-  "pdfjs",
   ...assetDirs,
 ]);
 

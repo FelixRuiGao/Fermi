@@ -3,25 +3,85 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import JSZip from "jszip";
 
 import { Session } from "../src/session.js";
 import { executeTool } from "../src/tools/basic.js";
 
-mock.module("markitdown-ts", () => ({
-  MarkItDown: class {
-    async convert(source: string): Promise<{ markdown: string }> {
-      if (source.endsWith(".docx")) {
-        return { markdown: "# Converted DOCX\n\nDocx body\n".repeat(40) };
-      }
-      if (source.endsWith(".xlsx")) {
-        return { markdown: "# Converted XLSX\n\n| A | B |\n| - | - |\n| 1 | 2 |\n".repeat(40) };
-      }
-      return {
-        markdown: "# Converted PDF\n\nThis is a converted PDF body.\n".repeat(200),
-      };
-    }
-  },
+// PDF extraction is mocked at the unpdf seam (real PDFs are exercised in
+// tests/document-projection.test.ts and the build verification). DOCX/XLSX/PPTX
+// below use real minimal OOXML files and run through the real converters.
+mock.module("unpdf", () => ({
+  getDocumentProxy: async () => ({}),
+  extractText: async () => ({
+    totalPages: 3,
+    text: "# Converted PDF\n\nThis is a converted PDF body.\n".repeat(200),
+  }),
 }));
+
+async function writeMinimalDocx(filePath: string, paragraphs: string[]): Promise<void> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+  );
+  zip.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+  );
+  const body = paragraphs.map((p) => `<w:p><w:r><w:t>${p}</w:t></w:r></w:p>`).join("");
+  zip.file(
+    "word/document.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`,
+  );
+  writeFileSync(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+}
+
+async function writeMinimalXlsx(filePath: string, rows: string[][]): Promise<void> {
+  const zip = new JSZip();
+  zip.file(
+    "xl/workbook.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+  );
+  const colLetter = (i: number) => String.fromCharCode(65 + i);
+  const sheetRows = rows
+    .map((cells, r) => {
+      const xmlCells = cells
+        .map((value, c) => `<c r="${colLetter(c)}${r + 1}" t="inlineStr"><is><t>${value}</t></is></c>`)
+        .join("");
+      return `<row r="${r + 1}">${xmlCells}</row>`;
+    })
+    .join("");
+  zip.file(
+    "xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`,
+  );
+  writeFileSync(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+}
+
+async function writeMinimalPptx(filePath: string, slides: string[][]): Promise<void> {
+  const zip = new JSZip();
+  slides.forEach((paragraphs, index) => {
+    const body = paragraphs.map((p) => `<a:p><a:r><a:t>${p}</a:t></a:r></a:p>`).join("");
+    zip.file(
+      `ppt/slides/slide${index + 1}.xml`,
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody>${body}</p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+    );
+  });
+  writeFileSync(filePath, await zip.generateAsync({ type: "nodebuffer" }));
+}
 
 async function callProcessFileAttachments(
   userInput: string,
@@ -152,8 +212,12 @@ describe("Session file attachment integration", () => {
     try {
       const docxPath = join(dir, "spec.docx");
       const xlsxPath = join(dir, "table.xlsx");
-      writeFileSync(docxPath, Buffer.from("fake-docx"));
-      writeFileSync(xlsxPath, Buffer.from("fake-xlsx"));
+      await writeMinimalDocx(docxPath, ["Spec heading", "Docx body text", "Third paragraph"]);
+      await writeMinimalXlsx(xlsxPath, [
+        ["Name", "Count"],
+        ["alpha", "1"],
+        ["beta", "2"],
+      ]);
 
       const docxResult = await executeTool(
         "read_file",
@@ -161,7 +225,7 @@ describe("Session file attachment integration", () => {
         { projectRoot: dir, sessionArtifactsDir: artifactsDir },
       );
       expect(docxResult.content).toContain("DOCX source");
-      expect(docxResult.content).toContain("Converted DOCX");
+      expect(docxResult.content).toContain("Docx body text");
 
       const xlsxResult = await executeTool(
         "read_file",
@@ -169,19 +233,22 @@ describe("Session file attachment integration", () => {
         { projectRoot: dir, sessionArtifactsDir: artifactsDir },
       );
       expect(xlsxResult.content).toContain("XLSX source");
-      expect(xlsxResult.content).toContain("Converted XLSX");
+      expect(xlsxResult.content).toContain("| alpha | 1 |");
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(artifactsDir, { recursive: true, force: true });
     }
   });
 
-  it("reports PPTX projection as unavailable in the current runtime", async () => {
+  it("routes PPTX reads through the extracted-markdown path", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fermi-attach-pptx-"));
     const artifactsDir = mkdtempSync(join(tmpdir(), "fermi-attach-pptx-artifacts-"));
     try {
       const pptxPath = join(dir, "slides.pptx");
-      writeFileSync(pptxPath, Buffer.from("fake-pptx"));
+      await writeMinimalPptx(pptxPath, [
+        ["Roadmap overview", "Q3 milestones"],
+        ["Risks and mitigations"],
+      ]);
 
       const result = await executeTool(
         "read_file",
@@ -189,7 +256,11 @@ describe("Session file attachment integration", () => {
         { projectRoot: dir, sessionArtifactsDir: artifactsDir },
       );
 
-      expect(result.content).toContain("PPTX projection is not yet available");
+      expect(result.content).toContain("PPTX source");
+      expect(result.content).toContain("## Slide 1");
+      expect(result.content).toContain("Roadmap overview");
+      expect(result.content).toContain("## Slide 2");
+      expect(result.content).toContain("Risks and mitigations");
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(artifactsDir, { recursive: true, force: true });

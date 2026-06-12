@@ -5,10 +5,6 @@ import path from "node:path";
 export const PROJECTED_DOCUMENT_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".pptx"]);
 const PROJECTION_CACHE_DIR = ".document-projections";
 
-type MarkItDownLike = {
-  convert: (source: string) => Promise<{ markdown: string } | null | undefined>;
-};
-
 export interface ProjectedDocumentView {
   sourcePath: string;
   sourceExt: string;
@@ -16,8 +12,6 @@ export interface ProjectedDocumentView {
   sizeBytes: number;
   mtimeMs: number;
 }
-
-let markItDownPromise: Promise<MarkItDownLike> | null = null;
 
 function normalizeDocBaseName(filePath: string): string {
   const base = path.basename(filePath, path.extname(filePath)) || "document";
@@ -34,102 +28,332 @@ function buildCachePath(filePath: string, artifactsDir: string, sizeBytes: numbe
   return path.join(artifactsDir, PROJECTION_CACHE_DIR, `${safeBase}-${hash}${ext}.md`);
 }
 
-function installPdfjsPolyfills(): void {
-  // pdfjs-dist (transitive via pdf-parse) needs DOMMatrix and Path2D at runtime.
-  // In Node/Bun without @napi-rs/canvas these globals are missing.  We only do
-  // text extraction — never rendering — so minimal stubs are sufficient.
-  if (!globalThis.DOMMatrix) {
-    globalThis.DOMMatrix = class DOMMatrix {
-      a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
-      m11 = 1; m12 = 0; m13 = 0; m14 = 0;
-      m21 = 0; m22 = 1; m23 = 0; m24 = 0;
-      m31 = 0; m32 = 0; m33 = 1; m34 = 0;
-      m41 = 0; m42 = 0; m43 = 0; m44 = 1;
-      is2D = true; isIdentity = true;
-      constructor(init?: number[] | string) {
-        if (Array.isArray(init) && init.length === 6) {
-          [this.a, this.b, this.c, this.d, this.e, this.f] = init;
-          this.m11 = this.a; this.m12 = this.b;
-          this.m21 = this.c; this.m22 = this.d;
-          this.m41 = this.e; this.m42 = this.f;
-          this.isIdentity = false;
-        }
-      }
-      invertSelf() { return this; }
-      multiplySelf() { return this; }
-      preMultiplySelf() { return this; }
-      translate() { return this; }
-      scale() { return this; }
-      inverse() { return new (globalThis.DOMMatrix as any)(); }
-    } as any;
-  }
-  if (!globalThis.Path2D) {
-    globalThis.Path2D = class Path2D {
-      addPath() {}
-    } as any;
-  }
-  if (!globalThis.ImageData) {
-    globalThis.ImageData = class ImageData {
-      width: number; height: number; data: Uint8ClampedArray;
-      constructor(w: number, h: number) {
-        this.width = w; this.height = h;
-        this.data = new Uint8ClampedArray(w * h * 4);
-      }
-    } as any;
-  }
-}
-
-async function preloadPdfjsWorker(): Promise<void> {
-  if ((globalThis as Record<string, unknown>).pdfjsWorker) return;
-  try {
-    let workerPath: string | undefined;
-    // Compiled binary: worker shipped as runtime asset next to the executable
-    const assetPath = path.join(path.dirname(process.execPath), "pdfjs", "pdf.worker.mjs");
-    if (existsSync(assetPath)) {
-      workerPath = assetPath;
-    } else {
-      // Dev mode: resolve through the dependency chain
-      const { createRequire } = await import("node:module");
-      const mktRequire = createRequire(require.resolve("markitdown-ts"));
-      const ppRequire = createRequire(mktRequire.resolve("pdf-parse"));
-      workerPath = ppRequire.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-    }
-    (globalThis as Record<string, unknown>).pdfjsWorker = await import(workerPath);
-  } catch {
-    // Worker preload failed — pdfjs-dist will attempt its own fallback.
-  }
-}
-
-async function getMarkItDown(): Promise<MarkItDownLike> {
-  if (!markItDownPromise) {
-    markItDownPromise = (async () => {
-      installPdfjsPolyfills();
-      await preloadPdfjsWorker();
-      // Suppress pdfjs-dist's top-level warnings about @napi-rs/canvas (we
-      // already polyfilled above, but the require() still fails and warns).
-      const origWarn = console.warn;
-      console.warn = (...args: unknown[]) => {
-        const msg = typeof args[0] === "string" ? args[0] : "";
-        if (msg.includes("@napi-rs/canvas") || msg.includes("Cannot polyfill")) return;
-        origWarn.apply(console, args);
-      };
-      try {
-        const mod = await import("markitdown-ts");
-        return new mod.MarkItDown();
-      } finally {
-        console.warn = origWarn;
-      }
-    })();
-  }
-  return markItDownPromise;
-}
-
 export function isProjectedDocumentPath(filePath: string): boolean {
   return PROJECTED_DOCUMENT_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 export function projectedDocumentLabel(filePath: string): string {
   return path.extname(filePath).toLowerCase().slice(1).toUpperCase() || "document";
+}
+
+// ── shared markdown helpers ─────────────────────────────────────────────────
+
+function escapeTableCell(text: string): string {
+  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+}
+
+function toMarkdownTable(rows: string[][]): string {
+  if (rows.length === 0) return "";
+  const width = Math.max(...rows.map((r) => r.length), 1);
+  const padded = rows.map((r) => {
+    const cells = r.map(escapeTableCell);
+    while (cells.length < width) cells.push("");
+    return cells;
+  });
+  const line = (cells: string[]) => `| ${cells.join(" | ")} |`;
+  const separator = `| ${Array.from({ length: width }, () => "---").join(" | ")} |`;
+  return [line(padded[0]!), separator, ...padded.slice(1).map(line)].join("\n");
+}
+
+type XmlElement = {
+  localName: string;
+  textContent: string | null;
+  getAttribute(name: string): string | null;
+  getElementsByTagNameNS(ns: string, name: string): ArrayLike<XmlElement>;
+  childNodes: ArrayLike<{ nodeType: number }>;
+};
+
+function byLocalName(node: XmlElement, name: string): XmlElement[] {
+  return Array.from(node.getElementsByTagNameNS("*", name));
+}
+
+async function loadZipXml(filePath: string): Promise<{
+  readXml: (entry: string) => Promise<XmlElement | null>;
+  entryNames: string[];
+}> {
+  const { default: JSZip } = await import("jszip");
+  const { DOMParser } = await import("@xmldom/xmldom");
+  const zip = await JSZip.loadAsync(readFileSync(filePath));
+  const parser = new DOMParser();
+  return {
+    entryNames: Object.keys(zip.files),
+    readXml: async (entry: string) => {
+      const file = zip.file(entry);
+      if (!file) return null;
+      const xml = await file.async("string");
+      return parser.parseFromString(xml, "text/xml").documentElement as unknown as XmlElement;
+    },
+  };
+}
+
+// ── PDF (unpdf: serverless pdf.js build, no worker/DOM requirements) ────────
+
+async function convertPdf(filePath: string): Promise<string> {
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const data = new Uint8Array(readFileSync(filePath));
+  // verbosity 0 = errors only; suppresses pdf.js font warnings ("TT: undefined function")
+  const pdf = await getDocumentProxy(data, { verbosity: 0 });
+  const { text } = await extractText(pdf, { mergePages: true });
+  return String(text);
+}
+
+// ── DOCX (mammoth → HTML → turndown, same engines markitdown used) ──────────
+
+async function convertDocx(filePath: string): Promise<string> {
+  const [{ default: mammoth }, { default: TurndownService }, { gfm }] = await Promise.all([
+    import("mammoth"),
+    import("turndown"),
+    import("@joplin/turndown-plugin-gfm"),
+  ]);
+  const { value: html } = await mammoth.convertToHtml(
+    { path: filePath },
+    // Skip image payloads: projection is text-only and base64 inlining bloats memory.
+    { convertImage: mammoth.images.imgElement(async () => ({ src: "" })) },
+  );
+  const turndown = new TurndownService({
+    headingStyle: "atx",
+    codeBlockStyle: "fenced",
+  });
+  turndown.use(gfm);
+  turndown.addRule("dropImages", { filter: "img", replacement: () => "" });
+  return turndown.turndown(html);
+}
+
+// ── XLSX (zip + XML, read-only projection to markdown tables) ───────────────
+
+const BUILTIN_DATE_NUMFMT_IDS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+
+function looksLikeDateFormat(formatCode: string): boolean {
+  // Strip quoted literals and [] sections, then look for date/time tokens.
+  const bare = formatCode.replace(/"[^"]*"/g, "").replace(/\[[^\]]*\]/g, "");
+  return /[ymdhs]/i.test(bare) && !/^general$/i.test(bare.trim());
+}
+
+function excelSerialToIso(serial: number): string {
+  // Excel 1900 epoch: serial 25569 == 1970-01-01.
+  const ms = Math.round((serial - 25569) * 86400 * 1000);
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return String(serial);
+  const iso = date.toISOString();
+  const hasTime = Math.abs(serial % 1) > 1e-9;
+  return hasTime ? iso.slice(0, 19).replace("T", " ") : iso.slice(0, 10);
+}
+
+function columnIndexFromRef(ref: string): number {
+  let col = 0;
+  for (const ch of ref) {
+    if (ch < "A" || ch > "Z") break;
+    col = col * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return Math.max(0, col - 1);
+}
+
+function sharedStringText(si: XmlElement): string {
+  return byLocalName(si, "t").map((t) => t.textContent ?? "").join("");
+}
+
+async function convertXlsx(filePath: string): Promise<string> {
+  const { readXml } = await loadZipXml(filePath);
+
+  const workbook = await readXml("xl/workbook.xml");
+  if (!workbook) throw new Error("Invalid XLSX: missing xl/workbook.xml");
+
+  const relTargets = new Map<string, string>();
+  const rels = await readXml("xl/_rels/workbook.xml.rels");
+  if (rels) {
+    for (const rel of byLocalName(rels, "Relationship")) {
+      const id = rel.getAttribute("Id");
+      const target = rel.getAttribute("Target");
+      if (!id || !target) continue;
+      relTargets.set(id, target.startsWith("/") ? target.slice(1) : path.posix.join("xl", target));
+    }
+  }
+
+  const sharedStrings: string[] = [];
+  const shared = await readXml("xl/sharedStrings.xml");
+  if (shared) {
+    for (const si of byLocalName(shared, "si")) sharedStrings.push(sharedStringText(si));
+  }
+
+  // Style index → "is a date format" lookup, for serial→ISO rendering.
+  const dateStyleIds = new Set<number>();
+  const styles = await readXml("xl/styles.xml");
+  if (styles) {
+    const customDateFmts = new Set<number>();
+    for (const fmt of byLocalName(styles, "numFmt")) {
+      const id = Number(fmt.getAttribute("numFmtId"));
+      const code = fmt.getAttribute("formatCode") ?? "";
+      if (Number.isFinite(id) && looksLikeDateFormat(code)) customDateFmts.add(id);
+    }
+    const cellXfs = byLocalName(styles, "cellXfs")[0];
+    if (cellXfs) {
+      byLocalName(cellXfs, "xf").forEach((xf, index) => {
+        const numFmtId = Number(xf.getAttribute("numFmtId") ?? 0);
+        if (BUILTIN_DATE_NUMFMT_IDS.has(numFmtId) || customDateFmts.has(numFmtId)) {
+          dateStyleIds.add(index);
+        }
+      });
+    }
+  }
+
+  const cellText = (cell: XmlElement): string => {
+    const type = cell.getAttribute("t") ?? "n";
+    if (type === "inlineStr") {
+      const is = byLocalName(cell, "is")[0];
+      return is ? byLocalName(is, "t").map((t) => t.textContent ?? "").join("") : "";
+    }
+    const value = byLocalName(cell, "v")[0]?.textContent ?? "";
+    if (type === "s") return sharedStrings[Number(value)] ?? "";
+    if (type === "b") return value === "1" ? "TRUE" : "FALSE";
+    if (type === "str" || type === "e") return value;
+    if (value === "") return "";
+    const styleId = Number(cell.getAttribute("s") ?? -1);
+    if (dateStyleIds.has(styleId)) {
+      const serial = Number(value);
+      if (Number.isFinite(serial)) return excelSerialToIso(serial);
+    }
+    return value;
+  };
+
+  const sections: string[] = [];
+  const sheetEls = byLocalName(workbook, "sheet");
+  for (let i = 0; i < sheetEls.length; i++) {
+    const sheetEl = sheetEls[i]!;
+    const name = sheetEl.getAttribute("name") ?? `Sheet${i + 1}`;
+    const relId = sheetEl.getAttribute("r:id") ?? sheetEl.getAttribute("id");
+    const entry = (relId && relTargets.get(relId)) || `xl/worksheets/sheet${i + 1}.xml`;
+    const sheet = await readXml(entry);
+    if (!sheet) continue;
+
+    const rows: string[][] = [];
+    let maxCol = 0;
+    for (const row of byLocalName(sheet, "row")) {
+      const cells: string[] = [];
+      let cursor = 0;
+      for (const cell of byLocalName(row, "c")) {
+        const ref = cell.getAttribute("r");
+        const col = ref ? columnIndexFromRef(ref) : cursor;
+        cells[col] = cellText(cell);
+        cursor = col + 1;
+      }
+      const normalized = Array.from(cells, (c) => c ?? "");
+      if (normalized.some((c) => c !== "")) {
+        let last = normalized.length - 1;
+        while (last >= 0 && normalized[last] === "") last--;
+        maxCol = Math.max(maxCol, last + 1);
+        rows.push(normalized);
+      }
+    }
+    const trimmed = rows.map((r) => r.slice(0, maxCol));
+
+    sections.push(`## ${name}`);
+    sections.push(trimmed.length ? toMarkdownTable(trimmed) : "(empty sheet)");
+  }
+
+  return sections.join("\n\n");
+}
+
+// ── PPTX (zip + XML, text runs / tables / speaker notes per slide) ──────────
+
+function pptxParagraphs(txBody: XmlElement): string[] {
+  const out: string[] = [];
+  for (const p of byLocalName(txBody, "p")) {
+    const text = byLocalName(p, "t").map((t) => t.textContent ?? "").join("");
+    if (text.trim()) out.push(text.trim());
+  }
+  return out;
+}
+
+function pptxTable(tbl: XmlElement): string {
+  const rows: string[][] = [];
+  for (const tr of byLocalName(tbl, "tr")) {
+    const cells: string[] = [];
+    for (const tc of byLocalName(tr, "tc")) {
+      cells.push(byLocalName(tc, "t").map((t) => t.textContent ?? "").join(" "));
+    }
+    rows.push(cells);
+  }
+  return toMarkdownTable(rows);
+}
+
+const ELEMENT_NODE = 1;
+
+function walkSlideTree(el: XmlElement, out: string[]): void {
+  for (const child of Array.from(el.childNodes)) {
+    if (child.nodeType !== ELEMENT_NODE) continue;
+    const elem = child as unknown as XmlElement;
+    if (elem.localName === "txBody") {
+      out.push(...pptxParagraphs(elem));
+    } else if (elem.localName === "tbl") {
+      const table = pptxTable(elem);
+      if (table) out.push(table);
+    } else {
+      walkSlideTree(elem, out);
+    }
+  }
+}
+
+async function convertPptx(filePath: string): Promise<string> {
+  const { readXml, entryNames } = await loadZipXml(filePath);
+
+  const slideNumbers = entryNames
+    .map((name) => /^ppt\/slides\/slide(\d+)\.xml$/.exec(name)?.[1])
+    .filter((n): n is string => n !== undefined)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  const sections: string[] = [];
+  for (const n of slideNumbers) {
+    const slide = await readXml(`ppt/slides/slide${n}.xml`);
+    if (!slide) continue;
+
+    const blocks: string[] = [];
+    walkSlideTree(slide, blocks);
+
+    // Speaker notes, resolved through the slide's relationship file.
+    const slideRels = await readXml(`ppt/slides/_rels/slide${n}.xml.rels`);
+    if (slideRels) {
+      const notesRel = byLocalName(slideRels, "Relationship").find((rel) =>
+        (rel.getAttribute("Type") ?? "").endsWith("/notesSlide"),
+      );
+      const target = notesRel?.getAttribute("Target");
+      if (target) {
+        const entry = target.startsWith("/")
+          ? target.slice(1)
+          : path.posix.normalize(path.posix.join("ppt/slides", target));
+        const notes = await readXml(entry);
+        if (notes) {
+          const noteBlocks: string[] = [];
+          walkSlideTree(notes, noteBlocks);
+          // Drop bare slide-number placeholders that notes masters inject.
+          const noteText = noteBlocks.filter((b) => !/^\d+$/.test(b));
+          if (noteText.length) blocks.push(`**Notes:** ${noteText.join(" ")}`);
+        }
+      }
+    }
+
+    sections.push(`## Slide ${n}`);
+    if (blocks.length) sections.push(blocks.join("\n\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+// ── projection entry point ──────────────────────────────────────────────────
+
+async function convertDocument(filePath: string, ext: string): Promise<string> {
+  switch (ext) {
+    case ".pdf":
+      return convertPdf(filePath);
+    case ".docx":
+      return convertDocx(filePath);
+    case ".xlsx":
+      return convertXlsx(filePath);
+    case ".pptx":
+      return convertPptx(filePath);
+    default:
+      throw new Error(`Unsupported projected document type: ${ext || "(no extension)"}`);
+  }
 }
 
 export async function loadProjectedDocumentView(
@@ -139,9 +363,6 @@ export async function loadProjectedDocumentView(
   const ext = path.extname(filePath).toLowerCase();
   if (!PROJECTED_DOCUMENT_EXTENSIONS.has(ext)) {
     throw new Error(`Unsupported projected document type: ${ext || "(no extension)"}`);
-  }
-  if (ext === ".pptx") {
-    throw new Error("PPTX projection is not yet available in this runtime.");
   }
 
   const stat = statSync(filePath);
@@ -163,9 +384,7 @@ export async function loadProjectedDocumentView(
     }
   }
 
-  const markItDown = await getMarkItDown();
-  const result = await markItDown.convert(filePath);
-  const markdown = result?.markdown?.trim();
+  const markdown = (await convertDocument(filePath, ext)).trim();
   if (!markdown) {
     throw new Error(`${projectedDocumentLabel(filePath)} conversion produced no text.`);
   }
