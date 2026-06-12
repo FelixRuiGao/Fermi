@@ -1090,6 +1090,18 @@ export function validateAndRepairLog(
 // Archive window
 // ------------------------------------------------------------------
 
+function writeArchiveFile(
+  dir: string,
+  fileName: string,
+  archived: Array<{ id: string; content: unknown }>,
+): void {
+  const archiveDir = join(dir, "archive");
+  mkdirSync(archiveDir, { recursive: true });
+  const json = JSON.stringify(archived);
+  const compressed = gzipSync(Buffer.from(json));
+  writeFileSync(join(archiveDir, fileName), compressed);
+}
+
 export function archiveWindow(
   dir: string,
   windowIndex: number,
@@ -1097,9 +1109,6 @@ export function archiveWindow(
   windowStartIdx: number,
   windowEndIdx: number,
 ): void {
-  const archiveDir = join(dir, "archive");
-  mkdirSync(archiveDir, { recursive: true });
-
   const archived: Array<{ id: string; content: unknown }> = [];
   for (let i = windowStartIdx; i <= windowEndIdx && i < entries.length; i++) {
     const e = entries[i];
@@ -1109,11 +1118,33 @@ export function archiveWindow(
       e.archived = true;
     }
   }
+  writeArchiveFile(dir, `window-${windowIndex}.json.gz`, archived);
+}
 
-  const archiveFile = join(archiveDir, `window-${windowIndex}.json.gz`);
-  const json = JSON.stringify(archived);
-  const compressed = gzipSync(Buffer.from(json));
-  writeFileSync(archiveFile, compressed);
+/**
+ * Archive the content of the given entries into `archive/<fileName>`,
+ * nulling each entry's content and marking it archived (same contract as
+ * archiveWindow, but with an explicit target list). Entries that are already
+ * archived or have no content are skipped. No file is written when nothing
+ * qualifies; returns the number of entries archived.
+ */
+export function archiveEntryContents(
+  dir: string,
+  fileName: string,
+  targets: LogEntry[],
+): number {
+  const archived: Array<{ id: string; content: unknown }> = [];
+  for (const e of targets) {
+    if (e.content !== null && !e.archived) {
+      archived.push({ id: e.id, content: e.content });
+      e.content = null;
+      e.archived = true;
+    }
+  }
+  if (archived.length > 0) {
+    writeArchiveFile(dir, fileName, archived);
+  }
+  return archived.length;
 }
 
 export function loadArchive(
@@ -1127,7 +1158,25 @@ export function loadArchive(
 }
 
 /**
- * Restore archived content back into entries (in-memory only).
+ * Load an archive file by name. Returns null when the file doesn't exist
+ * (e.g. archives written by an older binary, or a session dir that was
+ * pruned) — callers degrade to leaving the entries archived.
+ */
+export function loadArchiveFile(
+  dir: string,
+  fileName: string,
+): Array<{ id: string; content: unknown }> | null {
+  const archiveFile = join(dir, "archive", fileName);
+  if (!existsSync(archiveFile)) return null;
+  const compressed = readFileSync(archiveFile);
+  const json = gunzipSync(compressed).toString("utf-8");
+  return JSON.parse(json);
+}
+
+/**
+ * Restore archived content back into entries (in-memory only). Restored
+ * entries drop their archived flag so they re-enter API projection and can
+ * be re-archived by a later summary/compact.
  */
 export function restoreArchiveToEntries(
   entries: LogEntry[],
@@ -1137,6 +1186,7 @@ export function restoreArchiveToEntries(
   for (const e of entries) {
     if (e.archived && contentMap.has(e.id)) {
       e.content = contentMap.get(e.id)!;
+      e.archived = false;
     }
   }
 }

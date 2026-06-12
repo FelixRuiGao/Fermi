@@ -152,9 +152,12 @@ import {
 } from "./log-entry.js";
 import { projectToApiMessages, projectToTuiEntries } from "./log-projection.js";
 import {
+  archiveEntryContents,
   archiveWindow,
   createGlobalTuiPreferences,
   createLogSessionMeta,
+  loadArchiveFile,
+  restoreArchiveToEntries,
   saveLog,
   type GlobalTuiPreferences,
   type LogSessionMeta,
@@ -1902,9 +1905,41 @@ export class Session {
 
     this._killChildSessionsAndShells();
     const removed = this._log.length - cutoff;
+    const removedEntries = this._log.slice(cutoff);
     this._log.length = cutoff;
+    this._restoreArchivesRescindedBy(removedEntries);
     this._resetAfterRewind();
     return { removed };
+  }
+
+  /**
+   * Rewind truncation can remove a summary entry or compact marker whose
+   * covered / pre-compact entries had their content archived to disk. Those
+   * entries are live context again after the rewind, but the API projection
+   * silently skips archived entries with null content — so restore their
+   * content from the archive files, or the revived window would have holes.
+   * Missing/corrupt archive files degrade to leaving the entries archived.
+   */
+  private _restoreArchivesRescindedBy(removedEntries: LogEntry[]): void {
+    const sessionDir = this._store?.sessionDir as string | undefined;
+    if (!sessionDir) return;
+    for (const entry of removedEntries) {
+      if (entry.discarded) continue;
+      let fileName: string | null = null;
+      if (entry.type === "summary") {
+        fileName = `summary-${entry.id}.json.gz`;
+      } else if (entry.type === "compact_marker") {
+        const idx = (entry.meta as Record<string, unknown>)["compactIndex"];
+        if (typeof idx === "number") fileName = `window-${idx}.json.gz`;
+      }
+      if (!fileName) continue;
+      try {
+        const archived = loadArchiveFile(sessionDir, fileName);
+        if (archived) restoreArchiveToEntries(this._log, archived);
+      } catch {
+        // Corrupt archive — keep the entries archived (today's behavior).
+      }
+    }
   }
 
   /**
