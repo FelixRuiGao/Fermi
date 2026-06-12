@@ -3374,27 +3374,42 @@ export class Session {
    * Scanned window-wide (not per-turn): the turn counter may have advanced
    * while the work was suspended, but its orphans still need completion.
    */
-  private _findEarliestPendingToolCallLogIndex(): number {
+  /**
+   * Single-pass scan of the active window for the first tool_call without a
+   * matching tool_result anywhere in the window. Exactly equivalent to the
+   * old two-pass (collect-all-result-ids, then find-first-unresolved-call):
+   * `resolved` makes a result anywhere in the window — even one logged
+   * before a duplicate-id call — exclude every call with that id, and the
+   * insertion-ordered `pending` map yields the earliest surviving index.
+   */
+  private _firstPendingToolCall(): { index: number; entry: LogEntry } | null {
     const windowStart = this._activeWindowStartIdx();
-    const resultIds = new Set<string>();
+    const resolved = new Set<string>();
+    const pending = new Map<string, number>();
     for (let index = windowStart; index < this._log.length; index += 1) {
       const entry = this._log[index]!;
-      if (entry.type !== "tool_result") continue;
       if (entry.discarded) continue;
-      const id = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
-      if (id) resultIds.add(id);
+      const meta = entry.meta as Record<string, unknown>;
+      if (entry.type === "tool_result") {
+        const id = String(meta["toolCallId"] ?? "");
+        if (id) {
+          resolved.add(id);
+          pending.delete(id);
+        }
+      } else if (entry.type === "tool_call") {
+        const id = String(meta["toolCallId"] ?? "");
+        if (id && !resolved.has(id) && !pending.has(id)) {
+          pending.set(id, index);
+        }
+      }
     }
+    const first = pending.values().next();
+    if (first.done) return null;
+    return { index: first.value, entry: this._log[first.value]! };
+  }
 
-    for (let index = windowStart; index < this._log.length; index += 1) {
-      const entry = this._log[index]!;
-      if (entry.type !== "tool_call") continue;
-      if (entry.discarded) continue;
-      const toolCallId = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
-      if (!toolCallId || resultIds.has(toolCallId)) continue;
-      return index;
-    }
-
-    return this._log.length;
+  private _findEarliestPendingToolCallLogIndex(): number {
+    return this._firstPendingToolCall()?.index ?? this._log.length;
   }
 
   private _finalizeDrainInterruptedWork(fromLogIndex: number): void {
@@ -3622,35 +3637,19 @@ export class Session {
     roundIndex: number;
     agentName: string;
   } | null {
-    const windowStart = this._activeWindowStartIdx();
-    const resultIds = new Set<string>();
-    for (let index = windowStart; index < this._log.length; index += 1) {
-      const entry = this._log[index]!;
-      if (entry.type !== "tool_result") continue;
-      if (entry.discarded) continue;
-      const meta = entry.meta as Record<string, unknown>;
-      const id = String(meta["toolCallId"] ?? "");
-      if (id) resultIds.add(id);
-    }
-
-    for (let index = windowStart; index < this._log.length; index += 1) {
-      const entry = this._log[index]!;
-      if (entry.type !== "tool_call") continue;
-      if (entry.discarded) continue;
-      const meta = entry.meta as Record<string, unknown>;
-      const toolCallId = String(meta["toolCallId"] ?? "");
-      if (!toolCallId || resultIds.has(toolCallId)) continue;
-      const content = entry.content as { name?: string; arguments?: Record<string, unknown> };
-      return {
-        toolCallId,
-        toolName: String(content.name ?? meta["toolName"] ?? ""),
-        toolArgs: content.arguments ?? {},
-        turnIndex: entry.turnIndex,
-        roundIndex: entry.roundIndex ?? 0,
-        agentName: String(meta["agentName"] ?? this.primaryAgent.name),
-      };
-    }
-    return null;
+    const found = this._firstPendingToolCall();
+    if (!found) return null;
+    const entry = found.entry;
+    const meta = entry.meta as Record<string, unknown>;
+    const content = entry.content as { name?: string; arguments?: Record<string, unknown> };
+    return {
+      toolCallId: String(meta["toolCallId"] ?? ""),
+      toolName: String(content.name ?? meta["toolName"] ?? ""),
+      toolArgs: content.arguments ?? {},
+      turnIndex: entry.turnIndex,
+      roundIndex: entry.roundIndex ?? 0,
+      agentName: String(meta["agentName"] ?? this.primaryAgent.name),
+    };
   }
 
   /** Update tool_call entry's toolExecState meta in-place. */
