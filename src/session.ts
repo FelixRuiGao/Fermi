@@ -619,7 +619,7 @@ export class Session {
   set permissionMode(mode: PermissionMode) {
     this._permissionAdvisor.sessionMode = mode;
     for (const handle of this._childSessions.values()) {
-      handle.session.permissionMode = mode;
+      if (handle.session) handle.session.permissionMode = mode;
     }
   }
 
@@ -1622,7 +1622,7 @@ export class Session {
       const pendingAsk = this.getPendingAsk();
       if (!pendingAsk) return { accepted: false, reason: "no_pending_ask" };
       const child = this._findChildWithPendingAsk(pendingAsk.id);
-      if (!child) return { accepted: false, reason: "ask_owner_not_found" };
+      if (!child?.session) return { accepted: false, reason: "ask_owner_not_found" };
 
       const decision = child.session.denyAndInterruptPendingAsk();
       if (!decision.accepted) return decision;
@@ -1679,7 +1679,7 @@ export class Session {
       const pendingAsk = this.getPendingAsk();
       if (!pendingAsk) return false;
       const child = this._findChildWithPendingAsk(pendingAsk.id);
-      if (!child) return false;
+      if (!child?.session) return false;
       child.session.denyPendingAsk();
       this._resumeChildPendingTurn(child);
       this._notifyLogListeners();
@@ -2379,8 +2379,9 @@ export class Session {
   // ==================================================================
 
   getAgentLog(agentId: string): readonly LogEntry[] | null {
-    const entry = this._childSessions.get(agentId);
-    return entry ? entry.session.log : null;
+    // Same path as getChildSessionLog — the manager serves released
+    // children's logs from disk.
+    return this.getChildSessionLog(agentId);
   }
 
   getActiveAgentIds(): Array<{ id: string; status: string; interactive: boolean }> {
@@ -3158,7 +3159,7 @@ export class Session {
     const ownAsk = toPendingAskUi(this._activeAsk);
     if (ownAsk) return ownAsk;
     for (const handle of this._childSessions.values()) {
-      const childAsk = handle.session.getPendingAsk();
+      const childAsk = handle.session?.getPendingAsk();
       if (childAsk) return childAsk;
     }
     return null;
@@ -5026,7 +5027,7 @@ export class Session {
     this._withAskRouting(
       askId,
       () => this._resolveOwnAgentQuestionAsk(askId, decision),
-      (child) => child.session.resolveAgentQuestionAsk(askId, decision),
+      (child) => child.session?.resolveAgentQuestionAsk(askId, decision),
     );
   }
 
@@ -5104,7 +5105,7 @@ export class Session {
     this._withAskRouting(
       askId,
       () => this._resolveOwnApprovalAsk(askId, choiceIndex),
-      (child) => child.session.resolveApprovalAsk(askId, choiceIndex),
+      (child) => child.session?.resolveApprovalAsk(askId, choiceIndex),
     );
   }
 
@@ -5714,6 +5715,7 @@ export class Session {
   // ==================================================================
 
   private _saveChildSession(handle: ChildSessionHandle): void {
+    if (!handle.session) return; // released — already persisted at settle
     try {
       const logData = handle.session.getLogForPersistence();
       saveLog(handle.sessionDir, logData.meta, [...logData.entries]);

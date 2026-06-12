@@ -181,9 +181,15 @@ describe("child approval routing", () => {
       expect(decision).toEqual({ accepted: true, turnFinished: false });
       expect(handle.lifecycle).toBe("archived");
       expect(handle.lastOutcome).toBe("interrupted");
-      // Child got a definite deny outcome, not a vanished ask.
-      expect(handle.session.getPendingAsk()).toBeNull();
-      expect(handle.session.log.some((e: any) => e.type === "ask_resolution" && !e.discarded)).toBe(true);
+      // The settled one-shot is released — its Session is gone and the log
+      // is served from disk. No pending ask survives anywhere.
+      expect(handle.session).toBeNull();
+      expect(h.session.getPendingAsk()).toBeNull();
+      // Child got a definite deny outcome, not a vanished ask: the persisted
+      // log carries the resolution.
+      const childLog = h.session.getChildSessionLog("worker-1")!;
+      expect(childLog).not.toBeNull();
+      expect(childLog.some((e: any) => e.type === "ask_resolution" && !e.discarded)).toBe(true);
       expect(h.session.log.some((e) => e.type === "agent_result")).toBe(true);
     } finally {
       h.dispose();

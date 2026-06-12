@@ -73,7 +73,14 @@ export interface ChildSessionHandle {
   lifecycle: ChildSessionLifecycle;
   status: "working" | "idle" | "error" | "interrupted" | "terminated" | "completed";
   phase: ChildSessionPhase;
-  session: Session;
+  /**
+   * Null after a settled one-shot child is released: its log lives on disk
+   * (read back on demand for the child tab) and `frozenSnapshot` serves the
+   * Agents panel. Persistent children keep their Session for revival.
+   */
+  session: Session | null;
+  /** Final snapshot captured at release time (see _freezeAndRelease). */
+  frozenSnapshot?: ChildSessionSnapshot | null;
   sessionDir: string;
   artifactsDir: string;
   resultText: string;
@@ -203,7 +210,49 @@ export class ChildSessionManager {
 
   getChildLog(childId: string): readonly LogEntry[] | null {
     const handle = this._handles.get(childId);
-    return handle ? handle.session.log : null;
+    if (!handle) return null;
+    if (handle.session) return handle.session.log;
+    return this._loadReleasedChildLog(handle);
+  }
+
+  /**
+   * Single-slot cache for released children's logs: at most one released
+   * child's log is resident (the tab being viewed), with a stable array
+   * identity so the TUI projection memo holds across polls.
+   */
+  private _releasedLogCache: { childId: string; entries: LogEntry[] } | null = null;
+
+  private _loadReleasedChildLog(handle: ChildSessionHandle): readonly LogEntry[] {
+    if (this._releasedLogCache?.childId === handle.id) {
+      return this._releasedLogCache.entries;
+    }
+    try {
+      const loaded = loadLog(handle.sessionDir);
+      const repaired = validateAndRepairLog(loaded.entries);
+      this._releasedLogCache = { childId: handle.id, entries: repaired.entries };
+      return repaired.entries;
+    } catch {
+      // Missing/corrupt child log on disk — show an empty transcript rather
+      // than crashing the tab.
+      return [];
+    }
+  }
+
+  /**
+   * A settled one-shot child can never run again: sends are mode-guarded,
+   * revival is persistent-only, and its result already lives in the parent
+   * log. Its Session existed only so the TUI could read the log and the
+   * Agents panel its metadata — freeze the final snapshot, drop the Session
+   * (and with it the in-memory log), and serve the log from disk on demand.
+   * The log was persisted by saveChildSession just before this runs.
+   */
+  private _freezeAndRelease(handle: ChildSessionHandle): void {
+    if (!handle.session) return;
+    if (handle.mode !== "oneshot" || handle.lifecycle !== "archived") return;
+    handle.frozenSnapshot = this._buildSnapshot(handle);
+    handle.session = null;
+    handle.turnPromise = null;
+    handle.abortController = null;
   }
 
   private _isLive(handle: ChildSessionHandle): boolean {
@@ -212,6 +261,38 @@ export class ChildSessionManager {
 
   private _buildSnapshot(handle: ChildSessionHandle): ChildSessionSnapshot {
     const session = handle.session;
+    if (!session) {
+      // Released child — the frozen snapshot is the source of truth.
+      if (handle.frozenSnapshot) return handle.frozenSnapshot;
+      // Defensive: released without a frozen snapshot (shouldn't happen).
+      return {
+        id: handle.id,
+        numericId: handle.numericId,
+        logRevision: 0,
+        template: handle.template,
+        mode: handle.mode,
+        lifecycle: handle.lifecycle,
+        phase: "idle",
+        outcome: handle.lastOutcome,
+        running: false,
+        lifetimeToolCallCount: handle.lifetimeToolCallCount,
+        lastTotalTokens: handle.lastTotalTokens,
+        lastToolCallSummary: handle.lastToolCallSummary,
+        recentEvents: [...handle.recentEvents],
+        pendingInboxCount: 0,
+        lastActivityAt: handle.lastActivityAt,
+        inputTokens: 0,
+        contextBudget: 0,
+        modelConfigName: "",
+        modelProvider: "",
+        modelDisplayLabel: "",
+        pendingAskId: null,
+        pendingAskKind: null,
+        activeLogEntryId: null,
+        turnElapsed: handle.elapsed,
+        cacheReadTokens: 0,
+      };
+    }
     const currentTurnRunning = session.currentTurnRunning;
     const pendingAsk: PendingAskUi | null = session.getPendingAsk();
     const hasPendingResume = session.hasPendingTurnToResume();
@@ -303,7 +384,7 @@ export class ChildSessionManager {
 
   findChildWithPendingAsk(askId: string): ChildSessionHandle | null {
     for (const handle of this._handles.values()) {
-      const ask = handle.session.getPendingAsk();
+      const ask = handle.session?.getPendingAsk();
       if (ask?.id === askId) return handle;
     }
     return null;
@@ -311,7 +392,8 @@ export class ChildSessionManager {
 
   resumeChildPendingTurn(handle: ChildSessionHandle): void {
     if (handle.turnPromise) return;
-    if (!handle.session.hasPendingTurnToResume()) return;
+    const session = handle.session;
+    if (!session?.hasPendingTurnToResume()) return;
 
     handle.startTime = performance.now();
     handle.status = "working";
@@ -325,7 +407,7 @@ export class ChildSessionManager {
     handle.settlePromise = new Promise<void>((resolve) => {
       handle.settleResolve = resolve;
     });
-    handle.turnPromise = handle.session.resumePendingTurn({ signal: abortController.signal });
+    handle.turnPromise = session.resumePendingTurn({ signal: abortController.signal });
     void handle.turnPromise.then(
       () => this.finishChildTurn(handle, undefined),
       (error: unknown) => this.finishChildTurn(handle, error),
@@ -423,6 +505,8 @@ export class ChildSessionManager {
   }
 
   private _startChildTurn(handle: ChildSessionHandle, input: string, options?: { skipUserInput?: boolean }): void {
+    const session = handle.session;
+    if (!session) return; // released one-shot — unreachable via the mode guards
     handle.startTime = performance.now();
     handle.status = "working";
     handle.lifecycle = "running";
@@ -436,7 +520,7 @@ export class ChildSessionManager {
     handle.settlePromise = new Promise<void>((resolve) => {
       handle.settleResolve = resolve;
     });
-    handle.turnPromise = handle.session.turn(input, { signal: abortController.signal, skipUserInput: options?.skipUserInput });
+    handle.turnPromise = session.turn(input, { signal: abortController.signal, skipUserInput: options?.skipUserInput });
     void handle.turnPromise.then(
       () => this.finishChildTurn(handle, undefined),
       (error: unknown) => this.finishChildTurn(handle, error),
@@ -452,10 +536,20 @@ export class ChildSessionManager {
       return;
     }
 
+    // A released handle has no running turn — this callback can only be a
+    // zombie from a path that also violated the release invariant. Bail.
+    const session = handle.session;
+    if (!session) {
+      const resolve = handle.settleResolve;
+      handle.settleResolve = null;
+      resolve?.();
+      return;
+    }
+
     handle.elapsed = handle.startTime > 0 ? (performance.now() - handle.startTime) / 1000 : 0;
 
-    const pendingAsk = !error ? handle.session.getPendingAsk() : null;
-    const hasPendingResume = !error ? handle.session.hasPendingTurnToResume() : false;
+    const pendingAsk = !error ? session.getPendingAsk() : null;
+    const hasPendingResume = !error ? session.hasPendingTurnToResume() : false;
     if (!error && (pendingAsk || hasPendingResume)) {
       handle.abortController = null;
       handle.turnPromise = null;
@@ -485,7 +579,7 @@ export class ChildSessionManager {
     });
 
     // Determine outcome from error / endStatus
-    const endStatus = error ? "error" : handle.session.lastTurnEndStatus;
+    const endStatus = error ? "error" : session.lastTurnEndStatus;
     if (error || endStatus === "error") {
       handle.lastOutcome = "error";
       handle.status = "error";
@@ -545,7 +639,7 @@ export class ChildSessionManager {
       // Persistent: only auto-resume queued work after a natural completion.
       // User/parent-triggered kills must leave the agent idle.
       if (cause === "natural") {
-        if (this.deps.childHasInbox(handle.session)) {
+        if (this.deps.childHasInbox(session)) {
           // Resolve settle before starting next turn (current turn is done)
           const resolve = handle.settleResolve;
           handle.settleResolve = null;
@@ -560,6 +654,10 @@ export class ChildSessionManager {
     const resolve = handle.settleResolve;
     handle.settleResolve = null;
     resolve?.();
+
+    // One-shot children are terminal here — release the Session (the log
+    // was just persisted by saveChildSession above).
+    this._freezeAndRelease(handle);
   }
 
   private _buildAgentResultApiContent(
@@ -623,6 +721,12 @@ export class ChildSessionManager {
     if (handle.mode !== "persistent") {
       return new ToolResult({ content: `Agent '${childId}' is one-shot and cannot receive messages.` });
     }
+    // Persistent children keep their Session for the lifetime of the root —
+    // a null here means the release invariant broke; fail soft.
+    const session = handle.session;
+    if (!session) {
+      return new ToolResult({ content: `Agent '${childId}' is no longer active.` });
+    }
     if (handle.lifecycle === "archived") {
       // Persistent archived child still in the live table — revive in-place.
       if (handle.mode === "persistent") {
@@ -630,7 +734,7 @@ export class ChildSessionManager {
         // Standard delivery (never a raw inbox push): it populates the
         // bookkeeping fields the child's drain invariant requires. wake:false
         // because we start the turn explicitly right after.
-        this.deps.deliverToChild(handle.session, { ...msg, wake: false });
+        this.deps.deliverToChild(session, { ...msg, wake: false });
         this._startChildTurn(handle, "", { skipUserInput: true });
         return new ToolResult({ content: `Agent '${childId}' revived and message sent.` });
       }
@@ -646,21 +750,23 @@ export class ChildSessionManager {
       });
     }
     if (handle.lifecycle === "running") {
-      this.deps.deliverToChild(handle.session, msg);
+      this.deps.deliverToChild(session, msg);
       return new ToolResult({ content: `Message sent to '${childId}'.` });
     }
 
     // idle — queue message and start turn. Standard delivery populates the
     // bookkeeping fields the drain invariant requires; wake:false because we
     // start the turn explicitly right after.
-    this.deps.deliverToChild(handle.session, { ...msg, wake: false });
+    this.deps.deliverToChild(session, { ...msg, wake: false });
     this._startChildTurn(handle, "", { skipUserInput: true });
     return new ToolResult({ content: `Message sent to '${childId}'.` });
   }
 
   private _interruptBlockedChild(handle: ChildSessionHandle, message: string): void {
-    this.deps.normalizeChildInterruptedTurn(handle.session, message);
-    handle.session.requestTurnInterrupt();
+    const session = handle.session;
+    if (!session) return; // released children have no pending turn to normalize
+    this.deps.normalizeChildInterruptedTurn(session, message);
+    session.requestTurnInterrupt();
     handle.lifecycle = handle.mode === "oneshot" ? "archived" : "idle";
     handle.status = handle.mode === "oneshot" ? "interrupted" : "idle";
     handle.phase = "idle";
@@ -704,7 +810,9 @@ export class ChildSessionManager {
       } else {
         this._interruptBlockedChild(handle, "Sub-agent was interrupted while waiting for user approval.");
       }
-      this.deps.recordChildEvent(handle.session, cause === "user_mass_interrupt" ? "interrupted by user" : "interrupted by parent");
+      if (handle.session) {
+        this.deps.recordChildEvent(handle.session, cause === "user_mass_interrupt" ? "interrupted by user" : "interrupted by parent");
+      }
       interrupted += 1;
     }
     return interrupted;
@@ -721,7 +829,7 @@ export class ChildSessionManager {
     const toArchive: string[] = [];
     for (const [name, handle] of this._handles) {
       handle.suspended = true;
-      if (this._isLive(handle)) {
+      if (this._isLive(handle) && handle.session) {
         handle.abortController?.abort();
         // Normalize the child's log before persisting
         this.deps.normalizeChildInterruptedTurn(
@@ -768,7 +876,7 @@ export class ChildSessionManager {
   archiveAll(): void {
     for (const [_name, handle] of this._handles) {
       handle.suspended = true;
-      if (this._isLive(handle)) {
+      if (this._isLive(handle) && handle.session) {
         handle.abortController?.abort();
         this.deps.normalizeChildInterruptedTurn(
           handle.session,
@@ -875,7 +983,9 @@ export class ChildSessionManager {
       const handle = this.createChild(taskId, templateLabel, mode, agent);
       // Tier/pin wins; otherwise inherit parent's preferred level. Setter resolves
       // against the child's model and persists _preferredThinkingLevel into log meta.
-      handle.session.thinkingLevel = tierThinkingLevel ?? this.deps.getPreferredThinkingLevel();
+      if (handle.session) {
+        handle.session.thinkingLevel = tierThinkingLevel ?? this.deps.getPreferredThinkingLevel();
+      }
       this._handles.set(taskId, handle);
       spawned.push(taskId);
       spawnedInfo.push({ numericId: handle.numericId, taskId, template: templateLabel, task: taskDesc });
@@ -944,7 +1054,9 @@ export class ChildSessionManager {
       handle.status = "terminated";
       handle.lastOutcome = "interrupted";
       handle.lastActivityAt = Date.now();
-      this.deps.recordChildEvent(handle.session, "terminated by parent");
+      if (handle.session) {
+        this.deps.recordChildEvent(handle.session, "terminated by parent");
+      }
       this.deps.saveChildSession(handle);
       killed.push(name);
 
@@ -1010,20 +1122,22 @@ export class ChildSessionManager {
     );
 
     // Restore log from disk
+    const session = handle.session;
+    if (!session) throw new Error(`freshly instantiated child '${record.id}' has no session`);
     const loaded = loadLog(record.sessionDir);
     const repaired = validateAndRepairLog(loaded.entries);
-    handle.session.restoreFromLog(loaded.meta, repaired.entries, loaded.idAllocator);
+    session.restoreFromLog(loaded.meta, repaired.entries, loaded.idAllocator);
     handle.lifecycle = "idle";
     handle.lastOutcome = record.outcome;
     handle.lastActivityAt = Date.now();
-    handle.resultText = extractLatestAssistantText(handle.session.log);
+    handle.resultText = extractLatestAssistantText(session.log);
 
     // Move from archived to active
     this._handles.set(record.id, handle);
     this._archived.delete(record.id);
 
     // Deliver message and start turn (standard delivery — see sendMessageToChild)
-    this.deps.deliverToChild(handle.session, {
+    this.deps.deliverToChild(session, {
       type: "user_input",
       sender: "main",
       content: messageContent,
@@ -1105,11 +1219,13 @@ export class ChildSessionManager {
           agent,
           { numericId: record.numericId, order: record.order },
         );
-        handle.session.restoreFromLog(loaded.meta, loaded.entries, loaded.idAllocator);
+        const session = handle.session;
+        if (!session) throw new Error("freshly instantiated child has no session");
+        session.restoreFromLog(loaded.meta, loaded.entries, loaded.idAllocator);
         handle.lifecycle = record.lifecycle;
         handle.lastOutcome = record.outcome ?? "none";
         handle.lastActivityAt = Date.now();
-        handle.resultText = extractLatestAssistantText(handle.session.log);
+        handle.resultText = extractLatestAssistantText(session.log);
         handle.status =
           record.lifecycle === "archived"
             ? "terminated"
@@ -1117,12 +1233,14 @@ export class ChildSessionManager {
 
         if (record.inbox && record.inbox.length > 0) {
           this.deps.setChildInbox(
-            handle.session,
+            session,
             record.inbox.map((m) => migrateMessageEnvelope(m as unknown as Record<string, unknown>)),
           );
         }
 
         this._handles.set(record.id, handle);
+        // Settled one-shot children come back released, same as live settle.
+        this._freezeAndRelease(handle);
       } catch (e) {
         const reason = e instanceof Error ? e.message : String(e);
         warnings.push(`Failed to restore child session '${record.id}': ${reason}`);
