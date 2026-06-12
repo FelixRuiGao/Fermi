@@ -10,8 +10,11 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import { createCompactMarker, type LogEntry } from "../src/log-entry.js";
+import { projectToApiMessages, projectToTuiEntries } from "../src/log-projection.js";
 import { archiveWindow } from "../src/persistence.js";
 import { makeScriptedSession } from "./helpers/session-harness.js";
 
@@ -107,6 +110,92 @@ describe("rewind across a compact marker", () => {
         expect(e.archived).toBe(true);
         expect(e.content).toBeNull();
       }
+    } finally {
+      h.dispose();
+    }
+  });
+});
+
+describe("eager summary archival", () => {
+  it("releases covered content on summary flush; projections stay whole; rewind restores", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "alpha findings worth summarizing" }] });
+    h.session.permissionMode = "yolo";
+    try {
+      await h.session.turn("explore");
+      const assistant = h.session.log.find((e) => e.type === "assistant_text" && !e.discarded)!;
+      const contextId = String((assistant.meta as Record<string, unknown>)?.contextId ?? "");
+      expect(contextId).toBeTruthy();
+      const originalContent = JSON.parse(JSON.stringify(assistant.content));
+
+      h.provider.rounds.push(
+        {
+          toolCalls: [{
+            id: "sum-1",
+            name: "summarize_context",
+            arguments: { operations: [{ from: contextId, to: contextId, content: "alpha summary" }] },
+          }],
+        },
+        { text: "done summarizing" },
+      );
+      await h.session.turn("summarize that");
+
+      const summary = h.session.log.find((e) => e.type === "summary" && !e.discarded);
+      expect(summary).toBeDefined();
+
+      // Covered entry content released to disk, scrollback display intact.
+      expect(assistant.archived).toBe(true);
+      expect(assistant.content).toBeNull();
+      const sessionDir = h.internals._store.sessionDir as string;
+      expect(existsSync(join(sessionDir, "archive", `summary-${summary!.id}.json.gz`))).toBe(true);
+      const tui = projectToTuiEntries(h.session.log);
+      expect(tui.some((e) => e.kind === "assistant" && e.text.includes("alpha findings"))).toBe(true);
+
+      // API projection: summary replaces the covered context — no hole.
+      const api = JSON.stringify(projectToApiMessages(h.session.log as LogEntry[]));
+      expect(api).toContain("alpha summary");
+      expect(api).not.toContain("alpha findings worth summarizing");
+
+      // Rewind across the summary brings the original content back.
+      const result = h.session.rewindConversation(2);
+      expect(result.error).toBeUndefined();
+      expect(assistant.archived).toBe(false);
+      expect(assistant.content).toEqual(originalContent as never);
+      const apiAfter = JSON.stringify(projectToApiMessages(h.session.log as LogEntry[]));
+      expect(apiAfter).toContain("alpha findings worth summarizing");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("skips archival cleanly when the store has no session dir", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "beta findings" }] });
+    h.session.permissionMode = "yolo";
+    try {
+      await h.session.turn("explore");
+      const assistant = h.session.log.find((e) => e.type === "assistant_text" && !e.discarded)!;
+      const contextId = String((assistant.meta as Record<string, unknown>)?.contextId ?? "");
+      // Make the store report no session dir while keeping it functional.
+      const realStore = h.internals._store;
+      h.internals._store = new Proxy(realStore, {
+        get: (target, prop) => (prop === "sessionDir" ? undefined : Reflect.get(target, prop)),
+      });
+
+      h.provider.rounds.push(
+        {
+          toolCalls: [{
+            id: "sum-1",
+            name: "summarize_context",
+            arguments: { operations: [{ from: contextId, to: contextId, content: "beta summary" }] },
+          }],
+        },
+        { text: "done" },
+      );
+      await h.session.turn("summarize that");
+
+      expect(h.session.log.some((e) => e.type === "summary" && !e.discarded)).toBe(true);
+      // No archival without a session dir — content stays resident.
+      expect(assistant.archived).toBe(false);
+      expect(assistant.content).not.toBeNull();
     } finally {
       h.dispose();
     }

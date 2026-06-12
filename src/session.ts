@@ -1913,6 +1913,34 @@ export class Session {
   }
 
   /**
+   * Release the full content of entries covered by a freshly landed summary:
+   * the API projection already replaces them with the summary, and the TUI
+   * scrollback renders from `display`, so the only consumer of the original
+   * content from here on is a rewind that rescinds the summary — which
+   * restores it from the archive file written here. Without this, both the
+   * summary and all covered content stay resident until the next compaction.
+   */
+  private _archiveSummaryCoveredEntries(summaryEntry: LogEntry): void {
+    const sessionDir = this._store?.sessionDir as string | undefined;
+    if (!sessionDir) return;
+    const covered = (summaryEntry.meta as Record<string, unknown>)["coveredContextIds"];
+    if (!Array.isArray(covered) || covered.length === 0) return;
+    const coveredSet = new Set(covered.filter((v): v is string => typeof v === "string"));
+    const targets: LogEntry[] = [];
+    for (const e of this._log) {
+      if (e === summaryEntry || e.discarded) continue;
+      const ctx = (e.meta as Record<string, unknown>)["contextId"];
+      if (typeof ctx === "string" && coveredSet.has(ctx)) targets.push(e);
+    }
+    try {
+      archiveEntryContents(sessionDir, `summary-${summaryEntry.id}.json.gz`, targets);
+    } catch {
+      // Disk error — leave the content in memory; the next compaction's
+      // archiveWindow will retry the same entries.
+    }
+  }
+
+  /**
    * Rewind truncation can remove a summary entry or compact marker whose
    * covered / pre-compact entries had their content archived to disk. Those
    * entries are live context again after the rewind, but the API projection
@@ -4578,6 +4606,9 @@ export class Session {
         const pending = this._pendingSummaryEntries.splice(0);
         for (const entry of pending) {
           this._appendEntry(entry, false);
+          if (entry.type === "summary") {
+            this._archiveSummaryCoveredEntries(entry);
+          }
         }
       }
       if (this._progress) {
