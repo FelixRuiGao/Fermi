@@ -162,8 +162,11 @@ describe("child approval routing", () => {
       expect(handle.lifecycle).toBe("archived");
       expect(handle.lastOutcome).toBe("interrupted");
       expect(h.internals._hasActiveAgents()).toBe(false);
-      // The child's log was really normalized before persisting.
-      expect(handle.session.log.some((e: any) =>
+      // The interrupted one-shot is released like any settled one-shot; the
+      // normalization must therefore be visible on the persisted log.
+      expect(handle.session).toBeNull();
+      const childLog = h.session.getChildSessionLog("worker-1")!;
+      expect(childLog.some((e: any) =>
         String(e.content ?? "").includes("interrupted while waiting for user approval"),
       )).toBe(true);
     } finally {

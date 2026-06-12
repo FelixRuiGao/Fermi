@@ -137,8 +137,10 @@ export interface ChildSessionManagerDeps {
   setChildInbox(child: Session, msgs: MessageEnvelope[]): void;
   recordChildEvent(child: Session, event: string): void;
   normalizeChildInterruptedTurn(child: Session, message: string): void;
-  /** Persist a child's log+meta. Routed via Session._saveChildSession so tests can stub it. */
-  saveChildSession(handle: ChildSessionHandle): void;
+  /** Persist a child's log+meta. Routed via Session._saveChildSession so tests
+   * can stub it. Returns whether the save succeeded — release decisions hinge
+   * on it (never drop an in-memory log whose disk copy is stale). */
+  saveChildSession(handle: ChildSessionHandle): boolean;
   // Parent environment
   getProgress(): ProgressReporter | undefined;
   fireHook(event: HookEvent, payload: HookPayload): void;
@@ -183,6 +185,9 @@ export class ChildSessionManager {
   clearTables(): void {
     this._handles = new Map();
     this._archived = new Map();
+    // Child ids (worker-1, explorer…) recur across sessions — a cache entry
+    // surviving /new or /resume would serve the previous session's log.
+    this._releasedLogCache = null;
   }
 
   // ==================================================================
@@ -218,18 +223,19 @@ export class ChildSessionManager {
   /**
    * Single-slot cache for released children's logs: at most one released
    * child's log is resident (the tab being viewed), with a stable array
-   * identity so the TUI projection memo holds across polls.
+   * identity so the TUI projection memo holds across polls. Keyed by
+   * sessionDir — unique per child per root session, unlike child ids.
    */
-  private _releasedLogCache: { childId: string; entries: LogEntry[] } | null = null;
+  private _releasedLogCache: { sessionDir: string; entries: LogEntry[] } | null = null;
 
   private _loadReleasedChildLog(handle: ChildSessionHandle): readonly LogEntry[] {
-    if (this._releasedLogCache?.childId === handle.id) {
+    if (this._releasedLogCache?.sessionDir === handle.sessionDir) {
       return this._releasedLogCache.entries;
     }
     try {
       const loaded = loadLog(handle.sessionDir);
       const repaired = validateAndRepairLog(loaded.entries);
-      this._releasedLogCache = { childId: handle.id, entries: repaired.entries };
+      this._releasedLogCache = { sessionDir: handle.sessionDir, entries: repaired.entries };
       return repaired.entries;
     } catch {
       // Missing/corrupt child log on disk — show an empty transcript rather
@@ -246,9 +252,13 @@ export class ChildSessionManager {
    * (and with it the in-memory log), and serve the log from disk on demand.
    * The log was persisted by saveChildSession just before this runs.
    */
-  private _freezeAndRelease(handle: ChildSessionHandle): void {
+  private _freezeAndRelease(handle: ChildSessionHandle, persistedOk: boolean): void {
     if (!handle.session) return;
     if (handle.mode !== "oneshot" || handle.lifecycle !== "archived") return;
+    // The disk copy is the only copy after release — never drop the
+    // in-memory log when the settle-time save failed (the on-disk log
+    // would be the stale spawn-time one).
+    if (!persistedOk) return;
     handle.frozenSnapshot = this._buildSnapshot(handle);
     handle.session = null;
     handle.turnPromise = null;
@@ -449,7 +459,7 @@ export class ChildSessionManager {
       lifecycle: "idle",
       status: "idle",
       phase: "idle",
-      session: null as unknown as Session,
+      session: null,
       sessionDir,
       artifactsDir,
       resultText: "",
@@ -628,11 +638,12 @@ export class ChildSessionManager {
 
     // Lifecycle transition: oneshot → archived, persistent → idle
     // NOTE: archived children stay in the live handles table during runtime
-    // (Session instance alive, log readable for TUI). Only move to the
+    // (snapshot + disk-served log readable for TUI). Only move to the
     // archived-records table on close/reset.
+    let savedOk = false;
     if (handle.mode === "oneshot") {
       handle.lifecycle = "archived";
-      this.deps.saveChildSession(handle);
+      savedOk = this.deps.saveChildSession(handle);
     } else {
       handle.lifecycle = "idle";
       this.deps.saveChildSession(handle);
@@ -657,7 +668,7 @@ export class ChildSessionManager {
 
     // One-shot children are terminal here — release the Session (the log
     // was just persisted by saveChildSession above).
-    this._freezeAndRelease(handle);
+    this._freezeAndRelease(handle, savedOk);
   }
 
   private _buildAgentResultApiContent(
@@ -772,7 +783,10 @@ export class ChildSessionManager {
     handle.phase = "idle";
     handle.lastOutcome = "interrupted";
     handle.lastActivityAt = Date.now();
-    this.deps.saveChildSession(handle);
+    const savedOk = this.deps.saveChildSession(handle);
+    // Blocked one-shots never reach finishChildTurn — release here so the
+    // "archived one-shot ⇒ released" invariant has no standing exception.
+    this._freezeAndRelease(handle, savedOk);
   }
 
   interruptChild(childId: string): { accepted: boolean; reason?: string } {
@@ -805,13 +819,15 @@ export class ChildSessionManager {
     for (const handle of this._handles.values()) {
       if (!this._isLive(handle)) continue;
       handle.terminationCause = cause;
+      // Record before the blocked-interrupt path: it may release the handle,
+      // and the event must land inside the frozen snapshot.
+      if (handle.session) {
+        this.deps.recordChildEvent(handle.session, cause === "user_mass_interrupt" ? "interrupted by user" : "interrupted by parent");
+      }
       if (handle.abortController) {
         handle.abortController.abort();
       } else {
         this._interruptBlockedChild(handle, "Sub-agent was interrupted while waiting for user approval.");
-      }
-      if (handle.session) {
-        this.deps.recordChildEvent(handle.session, cause === "user_mass_interrupt" ? "interrupted by user" : "interrupted by parent");
       }
       interrupted += 1;
     }
@@ -1057,6 +1073,17 @@ export class ChildSessionManager {
       if (handle.session) {
         this.deps.recordChildEvent(handle.session, "terminated by parent");
       }
+      // A released handle's panel state comes from the frozen snapshot —
+      // mirror the kill there or it would keep showing the settled state.
+      if (handle.frozenSnapshot) {
+        handle.frozenSnapshot = {
+          ...handle.frozenSnapshot,
+          lifecycle: handle.lifecycle,
+          outcome: handle.lastOutcome,
+          lastActivityAt: handle.lastActivityAt,
+          running: false,
+        };
+      }
       this.deps.saveChildSession(handle);
       killed.push(name);
 
@@ -1232,6 +1259,9 @@ export class ChildSessionManager {
             : "idle";
 
         if (record.inbox && record.inbox.length > 0) {
+          // For a settled one-shot the restored inbox is dropped at the
+          // release below — benign: nothing can ever deliver to or drain a
+          // one-shot archived inbox (pre-release it just sat unread).
           this.deps.setChildInbox(
             session,
             record.inbox.map((m) => migrateMessageEnvelope(m as unknown as Record<string, unknown>)),
@@ -1239,8 +1269,9 @@ export class ChildSessionManager {
         }
 
         this._handles.set(record.id, handle);
-        // Settled one-shot children come back released, same as live settle.
-        this._freezeAndRelease(handle);
+        // Settled one-shot children come back released, same as live settle —
+        // the log was just loaded from this very disk copy.
+        this._freezeAndRelease(handle, true);
       } catch (e) {
         const reason = e instanceof Error ? e.message : String(e);
         warnings.push(`Failed to restore child session '${record.id}': ${reason}`);

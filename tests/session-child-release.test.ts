@@ -68,6 +68,67 @@ describe("one-shot child release", () => {
     }
   });
 
+  it("root persistence keeps working after a one-shot is released", async () => {
+    const h = makeScriptedSession({ rounds: [] });
+    try {
+      const { handle } = makeChild(h, "oneshot", "child says bye");
+      const manager = h.internals._childSessionManagerInstance;
+      manager._startChildTurn(handle, "go", {});
+      await waitFor(() => handle.lifecycle === "archived");
+      expect(handle.session).toBeNull();
+
+      // The released handle stays in the live table for the rest of the root
+      // session — every subsequent root save walks it.
+      const persisted = h.session.getLogForPersistence();
+      expect(JSON.stringify(persisted.meta)).toContain("worker-1");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("the released-log cache is keyed by sessionDir and dropped on table reset", async () => {
+    const h = makeScriptedSession({ rounds: [] });
+    try {
+      const { handle } = makeChild(h, "oneshot", "cache subject");
+      const manager = h.internals._childSessionManagerInstance;
+      manager._startChildTurn(handle, "go", {});
+      await waitFor(() => handle.lifecycle === "archived");
+
+      const log = h.session.getChildSessionLog("worker-1");
+      expect(log!.length).toBeGreaterThan(0);
+
+      // Same id, different session dir (the /new / /resume shape) must not
+      // serve the cached entries.
+      const phantom = { ...handle, sessionDir: handle.sessionDir + "-elsewhere" };
+      expect(manager._loadReleasedChildLog(phantom)).toEqual([]);
+
+      // Fresh-session reset drops the slot entirely.
+      manager.clearTables();
+      expect(manager._releasedLogCache).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("a failed settle-time save keeps the Session resident (no stale disk copy served)", async () => {
+    const h = makeScriptedSession({ rounds: [] });
+    try {
+      const { handle } = makeChild(h, "oneshot", "unsaved words");
+      h.internals._saveChildSession = () => false;
+      const manager = h.internals._childSessionManagerInstance;
+      manager._startChildTurn(handle, "go", {});
+      await waitFor(() => handle.lifecycle === "archived");
+
+      expect(handle.session).not.toBeNull();
+      expect(handle.frozenSnapshot ?? null).toBeNull();
+      // The in-memory log still serves the tab.
+      const log = h.session.getChildSessionLog("worker-1");
+      expect(log!.some((e) => e.type === "assistant_text" && String(e.display).includes("unsaved words"))).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
+
   it("persistent children keep their Session after settling", async () => {
     const h = makeScriptedSession({ rounds: [] });
     try {

@@ -2230,8 +2230,11 @@ export class Session {
         lifecycle: handle.lifecycle,
         outcome: handle.lastOutcome,
         order: handle.order,
-        inbox: (handle.session as Session)._inbox.length > 0
-          ? [...(handle.session as Session)._inbox]
+        // Released one-shots have no Session (and by definition no live
+        // inbox) — this read must tolerate null or every root save after
+        // the first settled one-shot would throw.
+        inbox: handle.session && handle.session._inbox.length > 0
+          ? [...handle.session._inbox]
           : undefined,
       })),
       ...[...this._archivedChildren.values()].map((record) => ({
@@ -5714,13 +5717,15 @@ export class Session {
   // Sub-agent spawn / cancel / lifecycle
   // ==================================================================
 
-  private _saveChildSession(handle: ChildSessionHandle): void {
-    if (!handle.session) return; // released — already persisted at settle
+  private _saveChildSession(handle: ChildSessionHandle): boolean {
+    if (!handle.session) return true; // released — already persisted at settle
     try {
       const logData = handle.session.getLogForPersistence();
       saveLog(handle.sessionDir, logData.meta, [...logData.entries]);
+      return true;
     } catch (e) {
       console.warn(`Failed to save child session '${handle.id}':`, e);
+      return false;
     }
   }
 
