@@ -2,22 +2,51 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import JSZip from "jszip";
 
 import { Session } from "../src/session.js";
 import { executeTool } from "../src/tools/basic.js";
 
-// PDF extraction is mocked at the unpdf seam (real PDFs are exercised in
-// tests/document-projection.test.ts and the build verification). DOCX/XLSX/PPTX
-// below use real minimal OOXML files and run through the real converters.
-mock.module("unpdf", () => ({
-  getDocumentProxy: async () => ({}),
-  extractText: async () => ({
-    totalPages: 3,
-    text: "# Converted PDF\n\nThis is a converted PDF body.\n".repeat(200),
-  }),
-}));
+// All four document formats below are real minimal files run through the real
+// converters. No mock.module here: bun test loads every test file's top level
+// before running, so a module mock would leak into other test files
+// (tests/document-projection.test.ts exercises the real unpdf).
+function makeMinimalPdf(lines: string[]): string {
+  // 50 lines per page keeps every line at a positive y coordinate — text
+  // drawn below the page edge is dropped by pdf.js text extraction.
+  const linesPerPage = 50;
+  const pages: string[][] = [];
+  for (let i = 0; i < lines.length; i += linesPerPage) {
+    pages.push(lines.slice(i, i + linesPerPage));
+  }
+  const fontId = 3 + pages.length * 2;
+  const kids = pages.map((_, i) => `${3 + i * 2} 0 R`).join(" ");
+  const pageObjs = pages
+    .map((pageLines, i) => {
+      const pageId = 3 + i * 2;
+      const contentId = 4 + i * 2;
+      const content = [
+        "BT /F1 10 Tf 36 770 Td",
+        ...pageLines.map((l) => `(${l}) Tj 0 -12 Td`),
+        "ET",
+      ].join("\n");
+      return (
+        `${pageId} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >> endobj\n` +
+        `${contentId} 0 obj << /Length ${content.length} >> stream\n${content}\nendstream\nendobj`
+      );
+    })
+    .join("\n");
+  // No xref table — pdf.js reconstructs it.
+  return `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [${kids}] /Count ${pages.length} >> endobj
+${pageObjs}
+${fontId} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+trailer << /Root 1 0 R >>
+%%EOF
+`;
+}
 
 async function writeMinimalDocx(filePath: string, paragraphs: string[]): Promise<void> {
   const zip = new JSZip();
@@ -176,7 +205,9 @@ describe("Session file attachment integration", () => {
     const artifactsDir = mkdtempSync(join(tmpdir(), "fermi-attach-artifacts-"));
     try {
       const pdfPath = join(dir, "paper.pdf");
-      writeFileSync(pdfPath, Buffer.from("%PDF-1.4\nfake\n"));
+      // >5000 extracted chars so the attachment path takes the preview branch.
+      const pdfLines = Array.from({ length: 300 }, (_, i) => `This is converted PDF body line ${i + 1}.`);
+      writeFileSync(pdfPath, makeMinimalPdf(pdfLines), "utf-8");
 
       const result = await callProcessFileAttachments(
         `Review @${pdfPath}`,
@@ -188,7 +219,7 @@ describe("Session file attachment integration", () => {
       expect(typeof result).toBe("string");
       const text = result as string;
       expect(text).toContain("Review");
-      expect(text).toContain("Converted PDF");
+      expect(text).toContain("This is converted PDF body line 1.");
       expect(text).not.toContain(".pdf.md");
       expect(text).toContain(`Use read_file on the original path (${pdfPath})`);
 
@@ -199,7 +230,10 @@ describe("Session file attachment integration", () => {
       );
       expect(readResult.content).toContain("Auto-extracted Markdown view");
       expect(readResult.content).toContain(pdfPath);
-      expect(readResult.content).toContain("Converted PDF");
+      expect(readResult.content).toContain("This is converted PDF body line 1.");
+      // Line structure must survive projection: 300 source lines, not one blob.
+      expect(readResult.content).toContain("line 2.");
+      expect(readResult.content).not.toContain("line 1. This is converted PDF body line 2.");
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(artifactsDir, { recursive: true, force: true });

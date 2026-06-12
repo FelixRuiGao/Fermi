@@ -129,6 +129,47 @@ describe("DOCX projection", () => {
   });
 });
 
+describe("PDF projection", () => {
+  it("preserves line breaks within pages and separates pages with blank lines", async () => {
+    const dir = tempDir("fermi-proj-pdf-");
+    try {
+      const filePath = join(dir, "min.pdf");
+      // Hand-built 2-page PDF without an xref table (pdf.js reconstructs it).
+      // Page 1 has two text lines at different y positions, which pdf.js
+      // surfaces via hasEOL. Regression guard: unpdf's mergePages option
+      // collapses ALL whitespace into single spaces — the whole document came
+      // back as one giant line that read_file's per-line cap then mangled.
+      writeFileSync(
+        filePath,
+        `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj
+4 0 obj << /Length 90 >> stream
+BT /F1 12 Tf 72 720 Td (Alpha first line) Tj 0 -20 Td (Beta second line) Tj ET
+endstream
+endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+6 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj
+7 0 obj << /Length 50 >> stream
+BT /F1 12 Tf 72 720 Td (Gamma page two) Tj ET
+endstream
+endobj
+trailer << /Root 1 0 R >>
+%%EOF
+`,
+        "utf-8",
+      );
+
+      const view = await loadProjectedDocumentView(filePath);
+      expect(view.text).toContain("Alpha first line\nBeta second line");
+      expect(view.text).toContain("Beta second line\n\nGamma page two");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("projection error handling", () => {
   it("rejects files that are not valid archives", async () => {
     const dir = tempDir("fermi-proj-bad-");

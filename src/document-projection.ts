@@ -93,8 +93,12 @@ async function convertPdf(filePath: string): Promise<string> {
   const data = new Uint8Array(readFileSync(filePath));
   // verbosity 0 = errors only; suppresses pdf.js font warnings ("TT: undefined function")
   const pdf = await getDocumentProxy(data, { verbosity: 0 });
-  const { text } = await extractText(pdf, { mergePages: true });
-  return String(text);
+  // No mergePages: it collapses ALL whitespace (including every newline) into
+  // single spaces, turning the document into one giant line that read_file's
+  // per-line cap then mangles. Per-page extraction keeps pdf.js's hasEOL line
+  // breaks intact; pages are joined as paragraphs.
+  const { text } = await extractText(pdf);
+  return (text as string[]).map((page) => page.trim()).filter(Boolean).join("\n\n");
 }
 
 // ── DOCX (mammoth → HTML → turndown, same engines markitdown used) ──────────

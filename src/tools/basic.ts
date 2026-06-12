@@ -415,7 +415,9 @@ const BASH_TIMEOUT_KILL_SIGNAL: NodeJS.Signals = "SIGKILL";
 const READ_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const READ_MAX_LINES = 2000;
 const READ_MAX_CHARS = 80_000;
-const READ_MAX_LINE_CHARS = 2000; // per-line cap (catches minified files)
+const READ_MAX_LINE_CHARS = 5000; // default per-line cap (catches minified files); model can raise via max_line_chars
+const READ_LINE_CHARS_FLOOR = 80; // lowest accepted max_line_chars
+const READ_LINE_CHARS_CEILING = READ_MAX_CHARS - 1; // a longer line could never fit the per-call char budget anyway
 const READ_MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB limit for images
 
 // ------------------------------------------------------------------
@@ -449,7 +451,7 @@ const READ: ToolDef = {
   description:
     "Read the contents of a text file (max 50 MB). " +
     "Returns up to 2000 lines / 80,000 characters per call; " +
-    "individual lines longer than 2000 chars are truncated. " +
+    "individual lines longer than 5000 chars are truncated by default (raise max_line_chars when you need a long line in full). " +
     "PDF, DOCX, XLSX, and similar formats are returned as auto-extracted Markdown. " +
     "Image files are returned as visual content blocks when the model supports multimodal input. " +
     "Returns file metadata (including mtime_ms) for optional optimistic concurrency checks. " +
@@ -480,6 +482,12 @@ const READ: ToolDef = {
         description:
           "Number of lines to read starting at start_line/offset (NOT an alias for end_line). " +
           "For example, offset=50, limit=100 reads lines 50-149. Must be >= 1.",
+      },
+      max_line_chars: {
+        type: "integer",
+        description:
+          "Per-line character cap (default 5000). When output marks a line as truncated, " +
+          "re-read with a larger value to see it in full. The 80,000-character per-call budget still applies.",
       },
     },
     required: ["path"],
@@ -933,6 +941,7 @@ async function toolReadFile(
   endLine?: number,
   artifactsDir?: string,
   supportsMultimodal?: boolean,
+  maxLineChars?: number,
 ): Promise<string | ToolResult> {
   const sensitiveReason = getSensitiveFileReadReason(filePath);
   if (sensitiveReason) {
@@ -1040,12 +1049,20 @@ async function toolReadFile(
 
   let selected = lines.slice(start - 1, end);
 
-  // Per-line truncation for runaway minified lines.
+  // Per-line truncation for runaway minified lines. The cap is overridable
+  // per call so a truncated long line can be recovered in-tool instead of
+  // through shell pipelines.
+  const lineCap = Math.min(
+    Math.max(maxLineChars ?? READ_MAX_LINE_CHARS, READ_LINE_CHARS_FLOOR),
+    READ_LINE_CHARS_CEILING,
+  );
   let lineTrimCount = 0;
+  let longestLineChars = 0;
   selected = selected.map((line) => {
-    if (line.length > READ_MAX_LINE_CHARS) {
+    if (line.length > lineCap) {
       lineTrimCount += 1;
-      return truncateLine(line, READ_MAX_LINE_CHARS);
+      longestLineChars = Math.max(longestLineChars, line.length);
+      return truncateLine(line, lineCap);
     }
     return line;
   });
@@ -1081,35 +1098,45 @@ async function toolReadFile(
   }
 
   if (lineTrimCount > 0) {
-    // Single-line precision reads aren't supported by read_file itself
-    // (every line is capped at READ_MAX_LINE_CHARS), so point the model
-    // at a pre-approved (read-class) shell escape hatch. The command and
-    // quoting depend on the resolved shell — head/tail/cut don't exist
-    // under PowerShell and its single-quote escaping differs — so render
-    // a shell-appropriate hint. Use the full absolute path so the model
-    // can paste it verbatim from any working directory.
-    const isPwsh = shell.kind === "pwsh" || shell.kind === "powershell";
-    let escapeHatch: string;
-    if (isPwsh) {
-      const psPath = filePath.replace(/'/g, "''");
-      // @(...) forces an array even for a single-line/minified file —
-      // without it Get-Content returns a bare string, indexing yields a
-      // [char], and .Substring throws. This windowing form may prompt for
-      // approval (it's not on the pre-approved read list like the bash
-      // pipeline below).
-      escapeHatch =
-        `run \`@(Get-Content '${psPath}')[LINE_NUM - 1].Substring(START_INDEX, LENGTH)\` ` +
-        `(START_INDEX is 0-based; may prompt for approval).`;
+    const plural = lineTrimCount === 1 ? "" : "s";
+    const wasWere = lineTrimCount === 1 ? "was" : "were";
+    if (longestLineChars <= READ_LINE_CHARS_CEILING) {
+      // Recoverable in-tool: re-reading with a larger cap shows the full line.
+      result +=
+        `\n\n[Note: ${lineTrimCount} line${plural} exceeded ${lineCap} chars and ${wasWere} truncated ` +
+        `(longest is ${longestLineChars} chars). ` +
+        `Re-read with max_line_chars=${longestLineChars} to see ${lineTrimCount === 1 ? "it" : "them"} in full; ` +
+        `the ${READ_MAX_CHARS.toLocaleString()}-character per-call budget still applies.]`;
     } else {
-      const safePath = filePath.replace(/'/g, "'\\''");
-      escapeHatch =
-        `use bash: \`head -n LINE_NUM '${safePath}' | tail -n 1 | cut -c FROM-TO\` ` +
-        `(head/tail/cut are pre-approved, no permission prompt).`;
+      // A line this long cannot fit the per-call char budget at all, so point
+      // the model at a read-class shell escape hatch. The command and quoting
+      // depend on the resolved shell — head/tail/cut don't exist under
+      // PowerShell and its single-quote escaping differs — so render a
+      // shell-appropriate hint. Use the full absolute path so the model can
+      // paste it verbatim from any working directory.
+      const isPwsh = shell.kind === "pwsh" || shell.kind === "powershell";
+      let escapeHatch: string;
+      if (isPwsh) {
+        const psPath = filePath.replace(/'/g, "''");
+        // @(...) forces an array even for a single-line/minified file —
+        // without it Get-Content returns a bare string, indexing yields a
+        // [char], and .Substring throws. This windowing form may prompt for
+        // approval (it's not on the pre-approved read list like the bash
+        // pipeline below).
+        escapeHatch =
+          `run \`@(Get-Content '${psPath}')[LINE_NUM - 1].Substring(START_INDEX, LENGTH)\` ` +
+          `(START_INDEX is 0-based; may prompt for approval).`;
+      } else {
+        const safePath = filePath.replace(/'/g, "'\\''");
+        escapeHatch =
+          `use bash: \`head -n LINE_NUM '${safePath}' | tail -n 1 | cut -c FROM-TO\` ` +
+          `(head/tail/cut are pre-approved, no permission prompt).`;
+      }
+      result +=
+        `\n\n[Note: ${lineTrimCount} line${plural} exceeded ${lineCap} chars and ${wasWere} truncated ` +
+        `(longest is ${longestLineChars} chars — too long for the ${READ_MAX_CHARS.toLocaleString()}-character per-call budget). ` +
+        `To read a slice of a specific long line, ${escapeHatch}]`;
     }
-    result +=
-      `\n\n[Note: ${lineTrimCount} line${lineTrimCount === 1 ? "" : "s"} ` +
-      `exceeded ${READ_MAX_LINE_CHARS} chars and ${lineTrimCount === 1 ? "was" : "were"} truncated. ` +
-      `To read the full content of a specific long line, ${escapeHatch}]`;
   }
 
   return result;
@@ -3057,6 +3084,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
         let endLine = optionalIntegerArg("read_file", a, "end_line");
         const offset = optionalPositiveIntegerArg("read_file", a, "offset");
         const limit = optionalPositiveIntegerArg("read_file", a, "limit");
+        const maxLineChars = optionalPositiveIntegerArg("read_file", a, "max_line_chars");
         // offset is an alias for start_line; limit converts to end_line.
         if (startLine == null && offset != null) startLine = offset;
         if (endLine == null && limit != null) {
@@ -3075,6 +3103,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
           endLine,
           ctx?.sessionArtifactsDir,
           ctx?.supportsMultimodal,
+          maxLineChars,
         );
       } catch (e) {
         return formatToolError("read_file", e);

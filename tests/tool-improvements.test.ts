@@ -43,16 +43,48 @@ describe("read_file improvements", () => {
     }
   });
 
-  it("truncates individual lines longer than the per-line cap", async () => {
+  it("truncates individual lines longer than the per-line cap and points at max_line_chars", async () => {
     const root = makeTempDir("fermi-read-line-trunc-");
     try {
-      const huge = "x".repeat(3500);
+      const huge = "x".repeat(6000);
       writeFileSync(join(root, "big.txt"), `before\n${huge}\nafter\n`, "utf-8");
       const r = await executeTool("read_file", { path: "big.txt" }, { projectRoot: root });
-      expect(r.content).toContain("line truncated at 2000 chars");
-      expect(r.content).toContain("1 line exceeded 2000 chars");
+      expect(r.content).toContain("line truncated at 5000 chars");
+      expect(r.content).toContain("1 line exceeded 5000 chars");
+      expect(r.content).toContain("longest is 6000 chars");
+      expect(r.content).toContain("max_line_chars=6000");
       expect(r.content).toContain("before");
       expect(r.content).toContain("after");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps lines between the old 2000 cap and the 5000 default intact", async () => {
+    const root = makeTempDir("fermi-read-line-mid-");
+    try {
+      const line = "y".repeat(3500);
+      writeFileSync(join(root, "mid.txt"), `${line}\n`, "utf-8");
+      const r = await executeTool("read_file", { path: "mid.txt" }, { projectRoot: root });
+      expect(r.content).toContain(line);
+      expect(r.content).not.toContain("truncated");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("max_line_chars raises the cap so the full line is returned", async () => {
+    const root = makeTempDir("fermi-read-line-override-");
+    try {
+      const huge = "z".repeat(6000);
+      writeFileSync(join(root, "big.txt"), `before\n${huge}\nafter\n`, "utf-8");
+      const r = await executeTool(
+        "read_file",
+        { path: "big.txt", max_line_chars: 6000 },
+        { projectRoot: root },
+      );
+      expect(r.content).toContain(huge);
+      expect(r.content).not.toContain("truncated");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -510,14 +542,17 @@ describe("dispatcher rejects non-positive limit/count args", () => {
 });
 
 describe("read_file long-line escape hatch", () => {
-  it("points at head/tail/cut when lines are truncated", async () => {
+  // The shell hint only appears for lines that cannot fit the per-call char
+  // budget at all; anything shorter is recoverable in-tool via max_line_chars.
+  it("points at head/tail/cut when a line exceeds the per-call char budget", async () => {
     const root = makeTempDir("fermi-fix-read-longline-hint-");
     try {
-      writeFileSync(join(root, "big.txt"), "before\n" + "x".repeat(3500) + "\nafter\n", "utf-8");
+      writeFileSync(join(root, "big.txt"), "before\n" + "x".repeat(90_000) + "\nafter\n", "utf-8");
       const r = await executeTool("read_file", { path: "big.txt" }, { projectRoot: root });
       expect(r.content).toContain("head -n LINE_NUM");
       expect(r.content).toContain("cut -c FROM-TO");
       expect(r.content).toContain("pre-approved");
+      expect(r.content).not.toContain("max_line_chars=");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -529,7 +564,7 @@ describe("read_file long-line escape hatch", () => {
       // Put the long-line file in a subdirectory so basename ≠ full path.
       mkdirSync(join(root, "deep", "nested"), { recursive: true });
       const filePath = join(root, "deep", "nested", "big.txt");
-      writeFileSync(filePath, "before\n" + "x".repeat(3500) + "\nafter\n", "utf-8");
+      writeFileSync(filePath, "before\n" + "x".repeat(90_000) + "\nafter\n", "utf-8");
 
       const r = await executeTool(
         "read_file",
