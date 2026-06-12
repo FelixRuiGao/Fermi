@@ -154,6 +154,10 @@ export async function launchTui(): Promise<void> {
     consoleMode: "disabled",
     backgroundColor: "transparent",
     useThread,
+    // Text content doesn't benefit from the 30/60 defaults; content changes
+    // trigger immediate redraws via requestRender regardless of the cap.
+    targetFps: 15,
+    maxFps: 30,
   });
 
   // Resolve effective theme mode BEFORE mounting React so the first frame
