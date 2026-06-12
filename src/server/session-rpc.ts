@@ -528,8 +528,8 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   // ── Lifecycle ──
   server.on("server.hello", () => ({
     name: "fermi-server",
-    version: 1,
-    capabilities: ["session.submitTurn", "session.getLogSnapshot", "session.subscribe"],
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities: PROTOCOL_CAPABILITIES,
   }));
 
   server.on("server.shutdown", async () => {
