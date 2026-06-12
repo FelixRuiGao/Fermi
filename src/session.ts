@@ -1530,14 +1530,33 @@ export class Session {
    * caller waits for it to finish (which happens quickly after abort).
    */
   private async _withTurnLock<T>(fn: () => Promise<T>): Promise<T> {
-    await this.waitForTurnComplete();
+    // Claim the lock SYNCHRONOUSLY (before any await): the old
+    // check-then-claim around an await let two same-tick callers both see a
+    // free lock and run concurrently — e.g. two fire-and-forget submitTurn
+    // frames arriving in one stdin chunk. Everything layered on this lock
+    // (turn serialization, the error-entry once-flag, lifecycle pairing)
+    // assumes real mutual exclusion.
+    const prev = this._turnInFlight;
     let release!: () => void;
-    this._turnInFlight = new Promise<void>((r) => { release = r; });
+    const myGate = new Promise<void>((resolve) => { release = resolve; });
+    // _turnInFlight resolves when the LAST queued claimant releases. Gate
+    // promises only ever resolve (fn errors propagate to the caller, not the
+    // gate), so the .then chain needs no rejection arm.
+    const tail = prev ? prev.then(() => myGate) : myGate;
+    this._turnInFlight = tail;
+    if (prev) {
+      await prev;
+    }
     this._turnErrorEntryWritten = false;
+    this._lifecycleEndedEmitted = false;
     try {
       return await fn();
     } finally {
-      this._turnInFlight = null;
+      // Only the last claimant clears the field; intermediate finishes leave
+      // it pointing at the still-pending tail so waitForTurnComplete works.
+      if (this._turnInFlight === tail) {
+        this._turnInFlight = null;
+      }
       release();
     }
   }
@@ -3855,6 +3874,7 @@ export class Session {
       if (!this._activeAsk && this._hasUnprocessedUserMessage()) {
         this._scheduleAutoResume();
       }
+      this._lifecycleEndedEmitted = true;
       this._emitTurnLifecycle({
         phase: "ended",
         turnIndex: this._turnCount,
@@ -4072,6 +4092,12 @@ export class Session {
   // (entry-point wrappers, resume stage, manual context commands) can then
   // call _recordTurnErrorEntry without double-writing.
   private _turnErrorEntryWritten = false;
+
+  // Whether the current turn-lock execution emitted a lifecycle "ended"
+  // event (set by _runTurnActivationLoop's finally). Failure paths that die
+  // before the activation loop use this to emit the missing ended(error)
+  // exactly once. Reset on every lock acquisition.
+  private _lifecycleEndedEmitted = false;
 
   /**
    * Write the user-visible error log entry for a failed turn — at most once

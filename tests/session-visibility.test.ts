@@ -112,6 +112,65 @@ describe("runtime-owned error entries", () => {
   });
 });
 
+describe("turn lock", () => {
+  it("serializes two same-tick turn() callers (no concurrent activation loops)", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const h = makeScriptedSession({
+      rounds: [
+        {
+          onCall: () => {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+          },
+          text: "first",
+        },
+        {
+          onCall: () => {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+          },
+          text: "second",
+        },
+      ],
+    });
+    // Decrement when each turn fully ends.
+    h.session.subscribeTurnLifecycle((e) => {
+      if (e.phase === "ended") active -= 1;
+    });
+    try {
+      // Same tick, no await between the two calls — the old check-then-claim
+      // lock let both enter and run concurrent activation loops.
+      const p1 = h.session.turn("one");
+      const p2 = h.session.turn("two");
+      await Promise.all([p1, p2]);
+      expect(maxActive).toBe(1);
+      expect(h.provider.callCount).toBe(2);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("a failed turn does not suppress the next turn's error entry (per-execution once-flag)", async () => {
+    const h = makeScriptedSession({
+      rounds: [
+        { onCall: () => { throw new Error("first failure"); } },
+        { onCall: () => { throw new Error("second failure"); } },
+      ],
+    });
+    try {
+      const p1 = h.session.turn("one").catch(() => {});
+      const p2 = h.session.turn("two").catch(() => {});
+      await Promise.all([p1, p2]);
+      const errors = visibleErrors(h).map((e) => e.display);
+      expect(errors.some((d) => d.includes("first failure"))).toBe(true);
+      expect(errors.some((d) => d.includes("second failure"))).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
+});
+
 describe("ask subscription", () => {
   it("notifies on suspend and on resolve for the session's own ask", async () => {
     const h = makeScriptedSession({
