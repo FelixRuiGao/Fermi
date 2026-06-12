@@ -403,6 +403,16 @@ export class Session {
   // Pending summary entries to flush after tool_result is appended
   private _pendingSummaryEntries: LogEntry[] = [];
 
+  // Memoized API projection (see getMessages in _runActivation). Revision-
+  // keyed: any touch() invalidates by construction, so this never needs
+  // explicit clearing.
+  private _apiProjectionCache: {
+    revision: number;
+    systemPrompt: string;
+    requiresAlternatingRoles: boolean | undefined;
+    messages: Array<Record<string, unknown>>;
+  } | null = null;
+
   // Skills
   private _skills = new Map<string, SkillMeta>();
   private _skillRoots: string[] = [];
@@ -4718,14 +4728,10 @@ export class Session {
     };
 
     // v2: callback-based message management
-    // getMessages projects from _log via projectToApiMessages
+    // getMessages projects from _log via projectToApiMessages (memoized,
+    // see _projectApiMessagesCached).
     const getMessages = (): Array<Record<string, unknown>> => {
-      return projectToApiMessages(this._log, {
-        systemPrompt: this._getSystemPrompt(),
-        resolveImageRef: (refPath) => this._resolveImageRef(refPath),
-        requiresAlternatingRoles: (this.primaryAgent as any)._provider?.requiresAlternatingRoles,
-        enforceToolCallProtocol: true,
-      });
+      return this._projectApiMessagesCached();
     };
 
     const appendEntry = (entry: LogEntry): void => {
@@ -5439,6 +5445,39 @@ export class Session {
    * Get the cached system prompt. Computed once and reused across API calls
    * for prompt cache stability. Refreshed only by _reloadPromptAndTools().
    */
+  /**
+   * The provider-facing projection of the log, memoized on (log revision,
+   * system prompt, provider alternation). The projection is O(log) and runs
+   * on every provider call — network retries and same-revision re-entries
+   * hit the cache instead. Every API-affecting log mutation bumps the
+   * revision (the touch() contract), so a stale hit would mean a missing
+   * touch — that is the bug to fix, not the cache. Callers get a fresh
+   * top-level array; message objects are shared and treated as immutable
+   * by providers.
+   */
+  private _projectApiMessagesCached(): Array<Record<string, unknown>> {
+    const revision = this.getLogRevision();
+    const systemPrompt = this._getSystemPrompt();
+    const requiresAlternatingRoles = (this.primaryAgent as any)._provider?.requiresAlternatingRoles;
+    const cached = this._apiProjectionCache;
+    if (
+      cached &&
+      cached.revision === revision &&
+      cached.systemPrompt === systemPrompt &&
+      cached.requiresAlternatingRoles === requiresAlternatingRoles
+    ) {
+      return [...cached.messages];
+    }
+    const messages = projectToApiMessages(this._log, {
+      systemPrompt,
+      resolveImageRef: (refPath) => this._resolveImageRef(refPath),
+      requiresAlternatingRoles,
+      enforceToolCallProtocol: true,
+    });
+    this._apiProjectionCache = { revision, systemPrompt, requiresAlternatingRoles, messages };
+    return [...messages];
+  }
+
   private _getSystemPrompt(): string {
     if (!this._cachedSystemPrompt) {
       this._cachedSystemPrompt = this._assembleSystemPrompt();
