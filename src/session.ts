@@ -5680,6 +5680,9 @@ export class Session {
           archiveStartIdx,
           archiveEndIdx,
         );
+        // Stripping window content is TUI-projection-visible — same touch
+        // contract as _archiveSummaryCoveredEntries.
+        this._touchLog();
       }
     }
 
