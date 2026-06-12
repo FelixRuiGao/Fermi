@@ -378,10 +378,7 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
   parseConfigOverridesOrExit(opts.config ?? []);
 
   // Apply staged update from a previous background download
-  const applyResult = (deps.applyStaged ?? applyStaged)(homeDir, { argv });
-  if (applyResult.kind === "handoff") {
-    return;
-  }
+  const applyResult = (deps.applyStaged ?? applyStaged)(homeDir);
   if (applyResult.kind === "applied") {
     if (deps.relaunchAfterUpdate) {
       deps.relaunchAfterUpdate(argv);

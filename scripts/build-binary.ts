@@ -36,7 +36,7 @@ const binaryPath = join(buildDir, binaryName);
 const entrypoint = join(root, "opentui-src", "main.tsx");
 const treeSitterWorkerEntrypoint = join(root, "opentui-src", "forked", "core", "lib", "tree-sitter", "parser.worker.ts");
 const treeSitterWorkerDir = join(buildDir, "tree-sitter");
-const assetDirs = ["agent_templates", "prompts", "skills", "updater"] as const;
+const assetDirs = ["agent_templates", "prompts", "skills"] as const;
 const releaseTarball = join(buildDir, `fermi-${host.platform}-${host.arch}.tar.gz`);
 const bunTarget = `bun-${host.platform}-${host.arch}` as const;
 

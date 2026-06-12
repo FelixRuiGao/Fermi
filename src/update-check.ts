@@ -7,12 +7,18 @@
  * Update flow:
  *   1. Background check finds a new version → downloads tarball to ~/.fermi/staged/
  *   2. TUI shows a hint: "v0.3.0 ready — restart to apply"
- *   3. On next startup, applyStaged() moves staged files into the install dir
+ *   3. On next startup, applyStaged() installs staged files into the install
+ *      dir in-process — on every platform. Windows refuses to delete or
+ *      overwrite a file whose image is in use (the running fermi.exe, a DLL
+ *      loaded by another instance) but allows RENAMING it, so locked files
+ *      are renamed aside to *.old.<timestamp> and the new file moved in;
+ *      leftovers are cleaned up best-effort on later launches. Same idiom as
+ *      Claude Code's native installer and rustup. If an install still fails
+ *      (transient lock), staged is kept and retried on the next launch.
  *
  * `fermi update` uses the same staging path and asks the user to restart.
  */
 
-import { spawn } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -36,8 +42,6 @@ import { getFermiHomeDir } from "./home-path.js";
 const GITHUB_REPO = "FelixRuiGao/Fermi";
 const CACHE_FILE = ".update-check.json";
 // No longer throttled — every launch checks for updates in the background.
-const WINDOWS_UPDATE_HELPER_RELATIVE_PATH = join("updater", "apply-staged.ps1");
-const WINDOWS_HANDOFF_MARKER = ".update-handoff-pending";
 
 interface UpdateCache {
   lastCheck: number;
@@ -49,27 +53,14 @@ interface GitHubRelease {
   assets?: { name?: string; browser_download_url?: string }[];
 }
 
-interface WindowsApplyHandoffRequest {
-  home: string;
-  installDir: string;
-  staged: string;
-  execPath: string;
-  parentPid: number;
-  relaunchArgs: string[];
-}
-
 interface ApplyStagedOptions {
   platform?: SupportedPlatform;
   execPath?: string;
-  pid?: number;
-  argv?: string[];
-  launchWindowsHandoff?: (request: WindowsApplyHandoffRequest) => void;
 }
 
 export type ApplyStagedResult =
   | { kind: "none" }
-  | { kind: "applied"; version: string | null }
-  | { kind: "handoff" };
+  | { kind: "applied"; version: string | null };
 
 function homeDir(override?: string): string {
   return override ?? getFermiHomeDir();
@@ -185,45 +176,47 @@ function isProductionInstall(
   return basename(execPath).toLowerCase() === expected.toLowerCase();
 }
 
-function relaunchArgsFromArgv(argv: string[], execPath: string): string[] {
-  if (argv.length > 0 && argv[0] === execPath) return argv.slice(1);
-  return argv.slice(2);
+// Pre-v0.3.10 Windows updates went through a detached PowerShell handoff;
+// these are its on-disk leftovers. Removed best-effort on every launch.
+const LEGACY_HANDOFF_FILES = [
+  ".update-handoff-pending",
+  "apply-staged-helper.ps1",
+  ".update-restart-args.json",
+];
+
+function cleanupLegacyHandoffArtifacts(home: string, installDir: string): void {
+  for (const name of LEGACY_HANDOFF_FILES) {
+    try {
+      rmSync(join(home, name), { force: true });
+    } catch { /* best-effort */ }
+  }
+  try {
+    rmSync(join(installDir, "updater"), { recursive: true, force: true });
+  } catch { /* best-effort */ }
 }
 
-function launchWindowsApplyHandoff(request: WindowsApplyHandoffRequest): void {
-  const helperSource = join(request.installDir, WINDOWS_UPDATE_HELPER_RELATIVE_PATH);
-  if (!existsSync(helperSource)) {
-    throw new Error("Windows update helper is missing from the install directory");
-  }
+const RENAMED_OLD_PATTERN = /\.old\.\d+$/;
 
-  mkdirSync(request.home, { recursive: true });
-  const helperRuntime = join(request.home, "apply-staged-helper.ps1");
-  const argsFile = join(request.home, ".update-restart-args.json");
-  cpSync(helperSource, helperRuntime);
-  writeFileSync(argsFile, JSON.stringify(request.relaunchArgs));
-
-  const child = spawn("powershell.exe", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    helperRuntime,
-    "-ParentPid",
-    String(request.parentPid),
-    "-InstallDir",
-    request.installDir,
-    "-StagedDir",
-    request.staged,
-    "-ExePath",
-    request.execPath,
-    "-ArgsFile",
-    argsFile,
-  ], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
+/**
+ * Delete *.old.<timestamp> files left behind by installFile's rename-away
+ * fallback. Deletion fails while the renamed image is still mapped by a
+ * running process — those are skipped and retried on a later launch.
+ * Depth 3 covers everywhere locked files live: the executable (root) and
+ * native libraries (native/<platform>/<lib>).
+ */
+function cleanupRenamedOldFiles(dir: string, depth = 3): void {
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (depth > 1) cleanupRenamedOldFiles(full, depth - 1);
+      } else if (RENAMED_OLD_PATTERN.test(entry.name)) {
+        try {
+          rmSync(full, { force: true });
+        } catch { /* still mapped by a running process; next launch */ }
+      }
+    }
+  } catch { /* best-effort */ }
 }
 
 async function fetchChecksumFile(downloadUrl: string): Promise<string | null> {
@@ -299,37 +292,98 @@ async function downloadAndStage(downloadUrl: string, home: string): Promise<void
 }
 
 /**
- * Install staged entries into the install directory.
- * Binary entries (fermi/fermi.exe) use atomic copy→tmp→rename.
- * Directory entries use cpSync (directories can't be atomically renamed across mounts).
+ * Install one file via copy→tmp→rename. On POSIX the rename atomically
+ * replaces dest even while it is executing (the old inode lives on unnamed).
+ * On Windows, replacing a file whose image is in use fails — but renaming
+ * that file is allowed, so the fallback moves dest aside to *.old.<ts>,
+ * moves the new file in, and rolls the rename back if that fails. The .old
+ * file is deleted immediately when possible, otherwise by
+ * cleanupRenamedOldFiles on a later launch.
+ */
+function installFile(src: string, dest: string, preserveDestMode: boolean): void {
+  const tmp = `${dest}.tmp`;
+  rmSync(tmp, { force: true });
+  cpSync(src, tmp);
+  if (preserveDestMode && osCapabilities.supportsPosixPermissions) {
+    try {
+      chmodSync(tmp, statSync(dest).mode);
+    } catch { /* dest might not exist yet */ }
+  }
+  try {
+    renameSync(tmp, dest);
+  } catch (err) {
+    if (!existsSync(dest)) throw err;
+    const old = `${dest}.old.${Date.now()}`;
+    renameSync(dest, old);
+    try {
+      renameSync(tmp, dest);
+    } catch (moveErr) {
+      try {
+        renameSync(old, dest); // roll back so the install keeps working
+      } catch { /* leave the renamed copy; nothing destructive happened */ }
+      throw moveErr;
+    }
+    try {
+      rmSync(old, { force: true });
+    } catch { /* image still mapped; cleaned up on a later launch */ }
+  }
+}
+
+/** Per-file merge of src dir into dest dir; replaces files, keeps strays. */
+function overlayEntry(src: string, dest: string): void {
+  if (statSync(src).isDirectory()) {
+    if (existsSync(dest) && !statSync(dest).isDirectory()) {
+      rmSync(dest, { force: true });
+    }
+    mkdirSync(dest, { recursive: true });
+    for (const child of readdirSync(src)) {
+      overlayEntry(join(src, child), join(dest, child));
+    }
+  } else {
+    installFile(src, dest, false);
+  }
+}
+
+/**
+ * Install staged entries into the install directory, binaries last: the
+ * executable swap is the commit point, so a failure partway through leaves
+ * the old binary launchable and the next launch retries from staged.
+ *
+ * Directories are replaced wholesale (clears files dropped by the new
+ * version); when that fails — e.g. a DLL inside is loaded by another
+ * running instance on Windows — they fall back to a per-file overlay with
+ * rename-away handling for the locked files.
  */
 function installStagedEntries(staged: string, installDir: string): void {
   const entries = readdirSync(staged);
-  for (const entry of entries) {
+  const ordered = [
+    ...entries.filter((e) => !BINARY_NAMES.has(e)),
+    ...entries.filter((e) => BINARY_NAMES.has(e)),
+  ];
+  for (const entry of ordered) {
     const src = join(staged, entry);
     const dest = join(installDir, entry);
 
     if (BINARY_NAMES.has(entry)) {
-      const tmp = `${dest}.tmp`;
-      rmSync(tmp, { force: true });
-      cpSync(src, tmp);
-      if (osCapabilities.supportsPosixPermissions) {
-        try {
-          const mode = statSync(dest).mode;
-          chmodSync(tmp, mode);
-        } catch { /* dest might not exist yet */ }
+      installFile(src, dest, true);
+    } else if (statSync(src).isDirectory()) {
+      try {
+        rmSync(dest, { recursive: true, force: true });
+        cpSync(src, dest, { recursive: true });
+      } catch {
+        overlayEntry(src, dest);
       }
-      renameSync(tmp, dest);
     } else {
-      rmSync(dest, { recursive: true, force: true });
-      cpSync(src, dest, { recursive: true });
+      installFile(src, dest, false);
     }
   }
 }
 
 /**
- * Apply a staged update on startup. Moves files from ~/.fermi/staged/ into
- * the install directory (~/.fermi/bin/).
+ * Apply a staged update on startup. Installs files from ~/.fermi/staged/
+ * into the install directory (~/.fermi/bin/) — same in-process path on every
+ * platform (see the module header for the Windows locked-file strategy).
+ * On failure, staged is kept and the apply retries on the next launch.
  */
 export function applyStaged(
   homeDirOverride?: string,
@@ -338,8 +392,11 @@ export function applyStaged(
   const home = homeDir(homeDirOverride);
   const platform = options.platform ?? currentPlatform();
   const execPath = options.execPath ?? process.execPath;
-  const launchHandoff = options.launchWindowsHandoff ?? launchWindowsApplyHandoff;
   if (!isProductionInstall(platform, execPath)) return { kind: "none" };
+
+  const installDir = dirname(execPath);
+  cleanupLegacyHandoffArtifacts(home, installDir);
+  cleanupRenamedOldFiles(installDir);
 
   const staged = stagedDir(home);
   if (!existsSync(staged)) return { kind: "none" };
@@ -356,7 +413,7 @@ export function applyStaged(
   // Disk version check: skip if another instance already applied
   if (version) {
     try {
-      const binaryPath = join(dirname(execPath), executableNameForPlatform(platform));
+      const binaryPath = join(installDir, executableNameForPlatform(platform));
       const result = Bun.spawnSync([binaryPath, "--version"], {
         stdout: "pipe",
         stderr: "ignore",
@@ -370,34 +427,16 @@ export function applyStaged(
     } catch { /* proceed with apply */ }
   }
 
-  const installDir = dirname(execPath);
-  if (platform === "win32") {
-    // Guard against infinite handoff loops: if a previous handoff left the
-    // marker file, the PS1 helper never ran (or failed). Clean up staged so
-    // the user isn't permanently locked out.
-    const marker = join(home, WINDOWS_HANDOFF_MARKER);
-    if (existsSync(marker)) {
-      rmSync(marker, { force: true });
-      rmSync(staged, { recursive: true, force: true });
-      return { kind: "none" };
-    }
-
-    try {
-      writeFileSync(marker, String(Date.now()));
-    } catch { /* non-fatal */ }
-
-    launchHandoff({
-      home,
-      installDir,
-      staged,
-      execPath,
-      parentPid: options.pid ?? process.pid,
-      relaunchArgs: relaunchArgsFromArgv(options.argv ?? process.argv, execPath),
-    });
-    return { kind: "handoff" };
+  try {
+    installStagedEntries(staged, installDir);
+  } catch (err) {
+    // Most likely a transient lock (another fermi instance still running).
+    // Keep staged so the next launch retries; this session runs the current
+    // binary.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`fermi: staged update not applied (${msg}); will retry on next launch.`);
+    return { kind: "none" };
   }
-
-  installStagedEntries(staged, installDir);
   rmSync(staged, { recursive: true, force: true });
   return { kind: "applied", version };
 }

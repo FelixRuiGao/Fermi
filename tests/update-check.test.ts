@@ -176,42 +176,66 @@ describe("applyStaged", () => {
     expect(existsSync(staged)).toBe(false);
   });
 
-  it("hands Windows staged updates off to the helper instead of replacing inline", () => {
+  it("applies staged updates inline on Windows too (no helper handoff)", () => {
     const execPath = join(tempInstallDir, "fermi.exe");
     const staged = join(tempFermiHome, "staged");
     writeFileSync(execPath, "old-binary");
-    mkdirSync(staged, { recursive: true });
+    mkdirSync(join(staged, "skills"), { recursive: true });
     writeFileSync(join(staged, "fermi.exe"), "new-binary");
-
-    let handoffRequest: {
-      execPath: string;
-      parentPid: number;
-      relaunchArgs: string[];
-      installDir: string;
-      staged: string;
-      home: string;
-    } | null = null;
+    writeFileSync(join(staged, "skills", "tool.txt"), "new-skill");
 
     const result = applyStaged(tempFermiHome, {
       platform: "win32",
       execPath,
-      pid: 4321,
-      argv: [execPath, "--verbose"],
-      launchWindowsHandoff: (request) => {
-        handoffRequest = request;
-      },
     });
 
-    expect(result).toEqual({ kind: "handoff" });
+    expect(result).toEqual({ kind: "applied", version: null });
+    expect(readFileSync(execPath, "utf-8")).toBe("new-binary");
+    expect(readFileSync(join(tempInstallDir, "skills", "tool.txt"), "utf-8")).toBe("new-skill");
+    expect(existsSync(staged)).toBe(false);
+  });
+
+  it("keeps staged for retry when the install fails partway", () => {
+    const execPath = join(tempInstallDir, "fermi");
+    const staged = join(tempFermiHome, "staged");
+    writeFileSync(execPath, "old-binary");
+    // A directory under the binary's name makes installFile's cpSync throw
+    // deterministically on every platform.
+    mkdirSync(join(staged, "fermi"), { recursive: true });
+    writeFileSync(join(staged, "fermi", "oops.txt"), "x");
+
+    const result = applyStaged(tempFermiHome, { platform: "linux", execPath });
+
+    expect(result).toEqual({ kind: "none" });
     expect(readFileSync(execPath, "utf-8")).toBe("old-binary");
-    expect(handoffRequest).toEqual({
-      home: tempFermiHome,
-      installDir: tempInstallDir,
-      staged,
-      execPath,
-      parentPid: 4321,
-      relaunchArgs: ["--verbose"],
-    });
+    expect(existsSync(staged)).toBe(true);
+  });
+
+  it("cleans up rename-away leftovers and legacy handoff artifacts", () => {
+    const execPath = join(tempInstallDir, "fermi");
+    writeFileSync(execPath, "binary");
+    // rename-away leftovers at root and one level deep (native libs)
+    writeFileSync(join(tempInstallDir, "fermi.old.1718000000000"), "stale");
+    mkdirSync(join(tempInstallDir, "native", "win32-x64"), { recursive: true });
+    writeFileSync(join(tempInstallDir, "native", "win32-x64", "opentui.dll.old.5"), "stale");
+    // legacy PowerShell-handoff artifacts
+    mkdirSync(tempFermiHome, { recursive: true });
+    writeFileSync(join(tempFermiHome, ".update-handoff-pending"), "1");
+    writeFileSync(join(tempFermiHome, "apply-staged-helper.ps1"), "x");
+    writeFileSync(join(tempFermiHome, ".update-restart-args.json"), "[]");
+    mkdirSync(join(tempInstallDir, "updater"), { recursive: true });
+    writeFileSync(join(tempInstallDir, "updater", "apply-staged.ps1"), "x");
+
+    const result = applyStaged(tempFermiHome, { platform: "linux", execPath });
+
+    expect(result).toEqual({ kind: "none" }); // no staged update present
+    expect(existsSync(join(tempInstallDir, "fermi.old.1718000000000"))).toBe(false);
+    expect(existsSync(join(tempInstallDir, "native", "win32-x64", "opentui.dll.old.5"))).toBe(false);
+    expect(existsSync(join(tempFermiHome, ".update-handoff-pending"))).toBe(false);
+    expect(existsSync(join(tempFermiHome, "apply-staged-helper.ps1"))).toBe(false);
+    expect(existsSync(join(tempFermiHome, ".update-restart-args.json"))).toBe(false);
+    expect(existsSync(join(tempInstallDir, "updater"))).toBe(false);
+    expect(readFileSync(execPath, "utf-8")).toBe("binary");
   });
 });
 

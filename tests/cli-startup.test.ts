@@ -130,30 +130,6 @@ describe("CLI startup", () => {
     ]);
   });
 
-  it("stops startup after handing off a Windows staged update", async () => {
-    writeSettings({
-      providers: {
-        openai: { api_key_env: "FERMI_TEST_KEY" },
-      },
-      auto_update: true,
-    });
-    stagedResult = { kind: "handoff" };
-
-    await main(["node", "fermi"], startupDeps({
-      relaunchAfterUpdate: () => {
-        events.push("relaunch");
-      },
-      launchTui: async () => {
-        events.push("launch");
-      },
-    }));
-
-    expect(events).toEqual([
-      "dotenv",
-      "applyStaged",
-    ]);
-  });
-
   it("runs the init wizard once before launch when no providers are configured", async () => {
     writeSettings({ auto_update: true });
 
