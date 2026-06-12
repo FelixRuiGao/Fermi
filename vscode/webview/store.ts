@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { rpcRequest, onEvent } from "./vscode-api.js";
 import type {
+  ConversationEntry,
   LogEntry,
   SessionMeta,
   SessionStatus,
@@ -18,9 +19,14 @@ interface StoreState {
   // Session
   meta: SessionMeta | null;
   status: SessionStatus | null;
+  /** Server-projected conversation (capability "projectedLog"). */
+  conversation: ConversationEntry[];
+  /** Raw log fallback for pre-Phase-3 binaries without projectedLog. */
   logEntries: LogEntry[];
   logRevision: number;
   activeLogEntryId: string | null;
+  /** Error message from the last failed turn (turn.ended status "error"). */
+  lastTurnError: string | null;
 
   // Ask
   pendingAsk: AskPayload | null;
@@ -30,6 +36,9 @@ interface StoreState {
 
   // Init wizard
   configStatus: ConfigStatus | null;
+
+  // Capability helpers
+  hasCapability(name: string): boolean;
 
   // Actions
   initialize(): void;
@@ -47,12 +56,18 @@ export const useStore = create<StoreState>((set, get) => ({
   errorMessage: null,
   meta: null,
   status: null,
+  conversation: [],
   logEntries: [],
   logRevision: -1,
   activeLogEntryId: null,
+  lastTurnError: null,
   pendingAsk: null,
   models: [],
   configStatus: null,
+
+  hasCapability(name: string): boolean {
+    return get().meta?.capabilities?.includes(name) ?? false;
+  },
 
   initialize() {
     // Server ready → session mode
@@ -138,14 +153,52 @@ export const useStore = create<StoreState>((set, get) => ({
       }
     });
 
-    // Turn events
+    // Turn events. The runtime emits these for every turn (incl. auto-resume
+    // on capable binaries). Status "waiting" = parked on a pending ask: the
+    // AskPanel takes over, so the working spinner clears like any other end.
     onEvent("turn.started", () => {
       const status = get().status;
-      if (status) set({ status: { ...status, currentTurnRunning: true } });
+      set({
+        lastTurnError: null,
+        ...(status ? { status: { ...status, currentTurnRunning: true } } : {}),
+      });
     });
-    onEvent("turn.ended", () => {
+    onEvent("turn.ended", (params) => {
+      const p = (params ?? {}) as { status?: string; error?: string };
       const status = get().status;
-      if (status) set({ status: { ...status, currentTurnRunning: false } });
+      set({
+        // Surface the error even when the (legacy) log has no entry for it.
+        lastTurnError: p.status === "error" ? (p.error ?? "Turn failed") : null,
+        ...(status
+          ? {
+              status: {
+                ...status,
+                currentTurnRunning: false,
+                lastTurnEndStatus: typeof p.status === "string" ? p.status : status.lastTurnEndStatus,
+              },
+            }
+          : {}),
+      });
+    });
+
+    // Fatal server failures. server.crashed arrives right before the process
+    // dies (capability "crashEvent"); server.exited comes from the extension
+    // watching the child process. Without these the UI froze silently.
+    onEvent("server.crashed", (params) => {
+      const p = (params ?? {}) as { error?: string; origin?: string };
+      set({
+        mode: "error",
+        errorMessage: `Fermi server crashed: ${p.error ?? "unknown error"}. Use "Fermi: New Session" to restart.`,
+      });
+    });
+    onEvent("server.exited", (params) => {
+      // A crash event may already have set a more specific message.
+      if (get().mode === "error") return;
+      const p = (params ?? {}) as { code?: number | null };
+      set({
+        mode: "error",
+        errorMessage: `Fermi server exited unexpectedly (code ${p.code ?? "unknown"}). Use "Fermi: New Session" to restart.`,
+      });
     });
 
     // Session reset (legacy, kept for compat)
@@ -179,6 +232,20 @@ export const useStore = create<StoreState>((set, get) => ({
 
   async refreshLog() {
     try {
+      if (get().hasCapability("projectedLog")) {
+        const snapshot = await rpcRequest<{
+          revision: number;
+          entries: ConversationEntry[];
+          activeLogEntryId: string | null;
+        }>("session.getProjectedLog");
+        set({
+          conversation: snapshot.entries,
+          logRevision: snapshot.revision,
+          activeLogEntryId: snapshot.activeLogEntryId,
+        });
+        return;
+      }
+      // Legacy binary: fall back to the raw log + webview-side pairing.
       const snapshot = await rpcRequest<{
         revision: number;
         entries: LogEntry[];

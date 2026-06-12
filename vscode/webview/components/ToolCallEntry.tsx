@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { rpcRequest } from "../vscode-api.js";
-import type { LogEntry } from "../../src/types.js";
+import type { ConversationEntry, LogEntry } from "../../src/types.js";
 
 const TOOL_ICONS: Record<string, string> = {
   bash: "$",
@@ -19,55 +19,85 @@ function getToolIcon(name: string): string {
   return TOOL_ICONS[name] ?? "⚙";
 }
 
-function getToolSummary(entry: LogEntry): string {
-  const content = entry.content as { name?: string; arguments?: Record<string, unknown> } | undefined;
-  if (!content?.arguments) return "";
+interface FileModifyData {
+  path: string;
+  before: string;
+  after: string;
+  added: number;
+  removed: number;
+}
 
-  const args = content.arguments;
-  if (content.name === "bash" && typeof args.command === "string") {
+/** Renderer-ready view of one tool call + its result. */
+export interface ToolCallView {
+  key: string;
+  toolName: string;
+  summary: string;
+  fileModify: FileModifyData | null;
+  resultText: string;
+  isError: boolean;
+}
+
+function summarizeArgs(toolName: string, args: Record<string, unknown> | undefined): string {
+  if (!args) return "";
+  if (toolName === "bash" && typeof args.command === "string") {
     return args.command.length > 80 ? args.command.slice(0, 80) + "..." : args.command;
   }
-  if ((content.name === "read_file" || content.name === "write_file" || content.name === "edit_file") && typeof args.file_path === "string") {
+  if ((toolName === "read_file" || toolName === "write_file" || toolName === "edit_file") && typeof args.file_path === "string") {
     return args.file_path;
   }
-  if (content.name === "web_search" && typeof args.query === "string") {
+  if (toolName === "web_search" && typeof args.query === "string") {
     return args.query;
   }
   return "";
 }
 
-function isFileModify(entry: LogEntry): boolean {
-  const content = entry.content as { name?: string } | undefined;
-  return content?.name === "write_file" || content?.name === "edit_file";
+function normalizeFileModify(raw: unknown): FileModifyData | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  return {
+    path: typeof d.path === "string" ? d.path : "",
+    before: typeof d.before === "string" ? d.before : "",
+    after: typeof d.after === "string" ? d.after : "",
+    added: typeof d.linesAdded === "number" ? d.linesAdded : 0,
+    removed: typeof d.linesRemoved === "number" ? d.linesRemoved : 0,
+  };
 }
 
-function getFileModifyData(result: LogEntry): { path: string; before: string; after: string; added: number; removed: number } | null {
-  const meta = result.meta;
-  if (meta?.fileModifyData) {
-    const d = meta.fileModifyData as any;
-    return {
-      path: d.path ?? "",
-      before: d.before ?? "",
-      after: d.after ?? "",
-      added: d.linesAdded ?? 0,
-      removed: d.linesRemoved ?? 0,
-    };
-  }
-  return null;
+/** Adapter: server-projected ConversationEntry pair → view. */
+export function toolViewFromProjection(call: ConversationEntry, result?: ConversationEntry): ToolCallView {
+  const meta = call.meta ?? {};
+  const toolName = typeof meta.toolName === "string" ? meta.toolName : "tool";
+  const args = (meta.toolArgs && typeof meta.toolArgs === "object")
+    ? meta.toolArgs as Record<string, unknown>
+    : undefined;
+  const fileModify = normalizeFileModify(meta.fileModifyData ?? result?.meta?.fileModifyData);
+  return {
+    key: call.id ?? `${toolName}-${call.startedAt ?? 0}`,
+    toolName,
+    summary: summarizeArgs(toolName, args) || call.text,
+    fileModify,
+    resultText: result?.fullText ?? result?.text ?? "",
+    isError: result?.meta?.isError === true,
+  };
 }
 
-export function ToolCallEntry({
-  callEntry,
-  resultEntry,
-}: {
-  callEntry: LogEntry;
-  resultEntry?: LogEntry;
-}) {
-  const [expanded, setExpanded] = useState(false);
+/** Adapter: raw LogEntry pair → view (legacy binaries without projectedLog). */
+export function toolViewFromRawEntries(callEntry: LogEntry, resultEntry?: LogEntry): ToolCallView {
   const content = callEntry.content as { name?: string; arguments?: Record<string, unknown> } | undefined;
   const toolName = content?.name ?? "tool";
-  const summary = getToolSummary(callEntry);
-  const fileModify = resultEntry ? getFileModifyData(resultEntry) : null;
+  return {
+    key: callEntry.id,
+    toolName,
+    summary: summarizeArgs(toolName, content?.arguments),
+    fileModify: normalizeFileModify(resultEntry?.meta?.fileModifyData),
+    resultText: resultEntry?.display ?? "",
+    isError: resultEntry?.meta?.isError === true,
+  };
+}
+
+export function ToolCallEntry({ view }: { view: ToolCallView }) {
+  const [expanded, setExpanded] = useState(false);
+  const { toolName, summary, fileModify } = view;
 
   const handleShowDiff = async () => {
     if (!fileModify) return;
@@ -84,6 +114,7 @@ export function ToolCallEntry({
         <span className="tool-icon">{expanded ? "▾" : "▸"}</span>
         <span className="tool-icon">{getToolIcon(toolName)}</span>
         <span className="tool-name">{toolName}</span>
+        {view.isError && <span className="tool-error-pill">failed</span>}
         {fileModify ? (
           <span className="tool-file-pill">
             {fileModify.path.split("/").pop()}
@@ -99,9 +130,9 @@ export function ToolCallEntry({
           </button>
         )}
       </div>
-      {expanded && resultEntry && (
+      {expanded && view.resultText && (
         <div className="tool-result">
-          {resultEntry.display || "(no output)"}
+          {view.resultText}
         </div>
       )}
     </div>

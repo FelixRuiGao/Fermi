@@ -25,6 +25,41 @@ export interface SessionMeta {
   thinkingLevel: string;
   accentColor?: string;
   turnCount: number;
+  /** Wire-protocol handshake (absent on pre-Phase-3 binaries). */
+  protocolVersion?: number;
+  capabilities?: string[];
+}
+
+/**
+ * Server-side conversation projection (session.getProjectedLog). Mirrors
+ * ConversationEntry in src/ui/contracts.ts — the canonical structure all
+ * Fermi UIs render. tool_call entries are immediately followed by their
+ * tool_result (matched via meta.toolCallId).
+ */
+export interface ConversationEntry {
+  kind:
+    | "user"
+    | "agent_result"
+    | "assistant"
+    | "interrupted_marker"
+    | "progress"
+    | "sub_agent_rollup"
+    | "sub_agent_done"
+    | "tool_call"
+    | "tool_result"
+    | "reasoning"
+    | "status"
+    | "error"
+    | "compact_mark";
+  text: string;
+  startedAt?: number;
+  elapsedMs?: number;
+  id?: string;
+  queued?: boolean;
+  dim?: boolean;
+  meta?: Record<string, unknown>;
+  /** Full untruncated result text for preview/detail entries. */
+  fullText?: string;
 }
 
 export interface SessionStatus {

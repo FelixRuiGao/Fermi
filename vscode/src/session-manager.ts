@@ -107,6 +107,10 @@ export class SessionManager {
       this.outputChannel.appendLine(`fermi server exited with code ${code}`);
       vscode.commands.executeCommand("setContext", "fermi.isConnected", false);
       vscode.commands.executeCommand("setContext", "fermi.isRunning", false);
+      // Tell the webview. Without this the UI silently froze at its last
+      // rendered state; a server.crashed event (if the server got one out)
+      // has already set a more specific message and wins in the store.
+      this.emit("server.exited", { code });
     });
   }
 

@@ -842,3 +842,27 @@ body {
 .model-picker-node:hover {
   background: var(--vscode-list-hoverBackground);
 }
+
+/* ── Phase-3 projection rendering ── */
+.message-queued {
+  opacity: 0.55;
+}
+
+.agent-status-dim {
+  opacity: 0.55;
+}
+
+.transcript-divider {
+  text-align: center;
+  opacity: 0.5;
+  font-size: 0.8em;
+  margin: 8px 0;
+}
+
+.tool-error-pill {
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 0.75em;
+  color: var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground));
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+}
