@@ -59,9 +59,17 @@ type XmlElement = {
   localName: string;
   textContent: string | null;
   getAttribute(name: string): string | null;
+  getAttributeNS(ns: string, localName: string): string | null;
   getElementsByTagNameNS(ns: string, name: string): ArrayLike<XmlElement>;
   childNodes: ArrayLike<{ nodeType: number }>;
 };
+
+const OOXML_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/** The r:id of an OOXML element, namespace-aware with a conventional-prefix fallback. */
+function relationshipId(el: XmlElement): string | null {
+  return el.getAttributeNS(OOXML_RELATIONSHIPS_NS, "id") || el.getAttribute("r:id");
+}
 
 function byLocalName(node: XmlElement, name: string): XmlElement[] {
   return Array.from(node.getElementsByTagNameNS("*", name));
@@ -133,9 +141,14 @@ function looksLikeDateFormat(formatCode: string): boolean {
   return /[ymdhs]/i.test(bare) && !/^general$/i.test(bare.trim());
 }
 
-function excelSerialToIso(serial: number): string {
-  // Excel 1900 epoch: serial 25569 == 1970-01-01.
-  const ms = Math.round((serial - 25569) * 86400 * 1000);
+// Serial-number offsets to 1970-01-01 for Excel's two date systems. The
+// workbook-level <workbookPr date1904="1"/> flag (legacy Mac Excel default,
+// sticky once set) selects the 1904 system; everything else uses 1900.
+const EXCEL_EPOCH_1900_OFFSET_DAYS = 25569;
+const EXCEL_EPOCH_1904_OFFSET_DAYS = 24107;
+
+function excelSerialToIso(serial: number, epochOffsetDays: number): string {
+  const ms = Math.round((serial - epochOffsetDays) * 86400 * 1000);
   const date = new Date(ms);
   if (Number.isNaN(date.getTime())) return String(serial);
   const iso = date.toISOString();
@@ -161,6 +174,11 @@ async function convertXlsx(filePath: string): Promise<string> {
 
   const workbook = await readXml("xl/workbook.xml");
   if (!workbook) throw new Error("Invalid XLSX: missing xl/workbook.xml");
+
+  const date1904 = byLocalName(workbook, "workbookPr")[0]?.getAttribute("date1904");
+  const epochOffsetDays = date1904 === "1" || date1904 === "true"
+    ? EXCEL_EPOCH_1904_OFFSET_DAYS
+    : EXCEL_EPOCH_1900_OFFSET_DAYS;
 
   const relTargets = new Map<string, string>();
   const rels = await readXml("xl/_rels/workbook.xml.rels");
@@ -214,7 +232,7 @@ async function convertXlsx(filePath: string): Promise<string> {
     const styleId = Number(cell.getAttribute("s") ?? -1);
     if (dateStyleIds.has(styleId)) {
       const serial = Number(value);
-      if (Number.isFinite(serial)) return excelSerialToIso(serial);
+      if (Number.isFinite(serial)) return excelSerialToIso(serial, epochOffsetDays);
     }
     return value;
   };
@@ -297,35 +315,85 @@ function walkSlideTree(el: XmlElement, out: string[]): void {
   }
 }
 
+/**
+ * Slide entries in presentation order. Part filenames (slideN.xml) fossilize
+ * creation order — PowerPoint does not rename parts when slides are
+ * rearranged. The displayed order is presentation.xml's sldIdLst sequence,
+ * resolved through presentation.xml.rels. Falls back to part-number order
+ * when those parts are missing or unparsable.
+ */
+async function orderedSlideEntries(
+  readXml: (entry: string) => Promise<XmlElement | null>,
+  entryNames: string[],
+): Promise<string[]> {
+  const byPartNumber = entryNames
+    .map((name) => /^ppt\/slides\/slide(\d+)\.xml$/.exec(name))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .sort((a, b) => Number(a[1]) - Number(b[1]))
+    .map((m) => m[0]);
+
+  const presentation = await readXml("ppt/presentation.xml");
+  const rels = await readXml("ppt/_rels/presentation.xml.rels");
+  const sldIdLst = presentation ? byLocalName(presentation, "sldIdLst")[0] : undefined;
+  if (!sldIdLst || !rels) return byPartNumber;
+
+  const targets = new Map<string, string>();
+  for (const rel of byLocalName(rels, "Relationship")) {
+    const id = rel.getAttribute("Id");
+    const target = rel.getAttribute("Target");
+    if (!id || !target) continue;
+    targets.set(
+      id,
+      target.startsWith("/") ? target.slice(1) : path.posix.normalize(path.posix.join("ppt", target)),
+    );
+  }
+
+  const known = new Set(entryNames);
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const sldId of byLocalName(sldIdLst, "sldId")) {
+    const rid = relationshipId(sldId);
+    const target = rid ? targets.get(rid) : undefined;
+    if (target && known.has(target) && !seen.has(target)) {
+      seen.add(target);
+      ordered.push(target);
+    }
+  }
+  if (ordered.length === 0) return byPartNumber;
+
+  // Defensive: physical slide parts absent from sldIdLst go last, in part order.
+  for (const entry of byPartNumber) {
+    if (!seen.has(entry)) ordered.push(entry);
+  }
+  return ordered;
+}
+
 async function convertPptx(filePath: string): Promise<string> {
   const { readXml, entryNames } = await loadZipXml(filePath);
-
-  const slideNumbers = entryNames
-    .map((name) => /^ppt\/slides\/slide(\d+)\.xml$/.exec(name)?.[1])
-    .filter((n): n is string => n !== undefined)
-    .map(Number)
-    .sort((a, b) => a - b);
+  const slideEntries = await orderedSlideEntries(readXml, entryNames);
 
   const sections: string[] = [];
-  for (const n of slideNumbers) {
-    const slide = await readXml(`ppt/slides/slide${n}.xml`);
+  for (let position = 0; position < slideEntries.length; position++) {
+    const entry = slideEntries[position]!;
+    const slide = await readXml(entry);
     if (!slide) continue;
 
     const blocks: string[] = [];
     walkSlideTree(slide, blocks);
 
     // Speaker notes, resolved through the slide's relationship file.
-    const slideRels = await readXml(`ppt/slides/_rels/slide${n}.xml.rels`);
+    const slideDir = path.posix.dirname(entry);
+    const slideRels = await readXml(`${slideDir}/_rels/${path.posix.basename(entry)}.rels`);
     if (slideRels) {
       const notesRel = byLocalName(slideRels, "Relationship").find((rel) =>
         (rel.getAttribute("Type") ?? "").endsWith("/notesSlide"),
       );
       const target = notesRel?.getAttribute("Target");
       if (target) {
-        const entry = target.startsWith("/")
+        const notesEntry = target.startsWith("/")
           ? target.slice(1)
-          : path.posix.normalize(path.posix.join("ppt/slides", target));
-        const notes = await readXml(entry);
+          : path.posix.normalize(path.posix.join(slideDir, target));
+        const notes = await readXml(notesEntry);
         if (notes) {
           const noteBlocks: string[] = [];
           walkSlideTree(notes, noteBlocks);
@@ -336,7 +404,8 @@ async function convertPptx(filePath: string): Promise<string> {
       }
     }
 
-    sections.push(`## Slide ${n}`);
+    // Position in the deck, not the part filename's fossilized number.
+    sections.push(`## Slide ${position + 1}`);
     if (blocks.length) sections.push(blocks.join("\n\n"));
   }
 

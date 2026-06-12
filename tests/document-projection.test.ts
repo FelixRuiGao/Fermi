@@ -50,6 +50,25 @@ describe("XLSX projection", () => {
     }
   });
 
+  it("respects the 1904 date system when workbookPr declares it", async () => {
+    const dir = tempDir("fermi-proj-xlsx-1904-");
+    try {
+      const filePath = join(dir, "mac.xlsx");
+      await writeZip(filePath, {
+        "xl/workbook.xml": `<workbook ${SPREADSHEET_NS}><workbookPr date1904="1"/><sheets><sheet name="S" sheetId="1"/></sheets></workbook>`,
+        "xl/styles.xml": `<styleSheet ${SPREADSHEET_NS}><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>`,
+        // Serial 24107 is 1970-01-01 in the 1904 system (1966-01-01 if the
+        // 1900 epoch were wrongly applied).
+        "xl/worksheets/sheet1.xml": `<worksheet ${SPREADSHEET_NS}><sheetData><row r="1"><c r="A1" s="1"><v>24107</v></c></row></sheetData></worksheet>`,
+      });
+
+      const view = await loadProjectedDocumentView(filePath);
+      expect(view.text).toContain("1970-01-01");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("aligns sparse rows by cell reference", async () => {
     const dir = tempDir("fermi-proj-xlsx-sparse-");
     try {
@@ -98,10 +117,47 @@ describe("PPTX projection", () => {
       expect(view.text).toContain("| cpu | 80% |");
       expect(view.text).toContain("**Notes:** Remember the demo");
       expect(view.text).not.toContain("**Notes:** Remember the demo 3");
+      // Headings are deck positions, not fossilized part numbers: without a
+      // presentation.xml the parts 1/2/10 surface as Slides 1/2/3.
+      expect(view.text).not.toContain("## Slide 10");
       const slide2 = view.text.indexOf("## Slide 2");
-      const slide10 = view.text.indexOf("## Slide 10");
+      const slide3 = view.text.indexOf("## Slide 3");
       expect(slide2).toBeGreaterThan(-1);
-      expect(slide10).toBeGreaterThan(slide2);
+      expect(slide3).toBeGreaterThan(slide2);
+      expect(view.text.indexOf("Last slide")).toBeGreaterThan(slide3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("follows presentation.xml order for rearranged decks", async () => {
+    const dir = tempDir("fermi-proj-pptx-order-");
+    try {
+      const filePath = join(dir, "rearranged.pptx");
+      const slide = (body: string) =>
+        `<p:sld ${DRAWING_NS} ${PRESENTATION_NS}><p:cSld><p:spTree>${body}</p:spTree></p:cSld></p:sld>`;
+      const textShape = (t: string) =>
+        `<p:sp><p:txBody><a:p><a:r><a:t>${t}</a:t></a:r></a:p></p:txBody></p:sp>`;
+
+      await writeZip(filePath, {
+        "ppt/slides/slide1.xml": slide(textShape("Alpha part one")),
+        "ppt/slides/slide2.xml": slide(textShape("Beta part two")),
+        "ppt/slides/slide3.xml": slide(textShape("Gamma part three")),
+        // Deck rearranged: displayed order is 3, 1, 2.
+        "ppt/presentation.xml": `<p:presentation ${PRESENTATION_NS} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="258" r:id="rId3"/><p:sldId id="256" r:id="rId1"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst></p:presentation>`,
+        "ppt/_rels/presentation.xml.rels": `<Relationships ${PACKAGE_RELS_NS}><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide3.xml"/></Relationships>`,
+      });
+
+      const view = await loadProjectedDocumentView(filePath);
+      const gamma = view.text.indexOf("Gamma part three");
+      const alpha = view.text.indexOf("Alpha part one");
+      const beta = view.text.indexOf("Beta part two");
+      expect(gamma).toBeGreaterThan(-1);
+      expect(alpha).toBeGreaterThan(gamma);
+      expect(beta).toBeGreaterThan(alpha);
+      // Slide 1 is the deck's first slide — physically slide3.xml.
+      expect(view.text.indexOf("## Slide 1")).toBeLessThan(gamma);
+      expect(view.text).not.toContain("## Slide 4");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
