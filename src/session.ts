@@ -150,7 +150,7 @@ import {
   createAskRequest,
   createAskResolution,
 } from "./log-entry.js";
-import { projectToApiMessages, projectToTuiEntries } from "./log-projection.js";
+import { invalidateTuiProjectionMemos, projectToApiMessages, projectToTuiEntries } from "./log-projection.js";
 import {
   archiveEntryContents,
   archiveWindow,
@@ -1918,9 +1918,10 @@ export class Session {
     const removedEntries = this._log.slice(cutoff);
     this._log.length = cutoff;
     // Truncation bypasses SessionLog's append/replace paths — drop its
-    // lookup indexes (entry ids can even be reused after the allocator
-    // re-bases below).
+    // lookup indexes and the per-array projection memos (entry ids can even
+    // be reused after the allocator re-bases below).
     this._logStore.invalidateIndexes();
+    invalidateTuiProjectionMemos(this._log);
     this._restoreArchivesRescindedBy(removedEntries);
     this._resetAfterRewind();
     return { removed };
