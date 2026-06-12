@@ -150,11 +150,17 @@ function InlineResultInner(
     return null;
   }, [data.text, data.dim, data.toolMetadata, data.noDiffBackground, contentWidth, colors]);
 
-  if (artifacts) {
-    const isDiff = artifacts.some((a) => !!a.rowBackgroundColor);
+  // Memoized: for a large diff this rebuilds a 1000+ element structure, and
+  // without the memo it ran on every re-render of the transcript.
+  const hunks = useMemo(
+    () => (artifacts && artifacts.some((a) => !!a.rowBackgroundColor)
+      ? splitIntoHunks(artifacts)
+      : null),
+    [artifacts],
+  );
 
-    if (isDiff) {
-      const hunks = splitIntoHunks(artifacts);
+  if (artifacts) {
+    if (hunks) {
       const elements: React.ReactNode[] = [];
       let elementKey = 0;
 
