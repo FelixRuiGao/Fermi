@@ -1907,6 +1907,10 @@ export class Session {
     const removed = this._log.length - cutoff;
     const removedEntries = this._log.slice(cutoff);
     this._log.length = cutoff;
+    // Truncation bypasses SessionLog's append/replace paths — drop its
+    // lookup indexes (entry ids can even be reused after the allocator
+    // re-bases below).
+    this._logStore.invalidateIndexes();
     this._restoreArchivesRescindedBy(removedEntries);
     this._resetAfterRewind();
     return { removed };
@@ -3654,14 +3658,10 @@ export class Session {
     toolCallId: string,
     state: "not_started" | "running" | "completed" | "failed",
   ): void {
-    for (const entry of this._log) {
-      if (entry.type !== "tool_call") continue;
-      const meta = entry.meta as Record<string, unknown>;
-      if (String(meta["toolCallId"] ?? "") !== toolCallId) continue;
-      meta["toolExecState"] = state;
-      this._touchLog();
-      return;
-    }
+    const entry = this._logStore.findToolCallByCallId(toolCallId);
+    if (!entry) return;
+    (entry.meta as Record<string, unknown>)["toolExecState"] = state;
+    this._touchLog();
   }
 
   private async _runTurnActivationLoop(
@@ -4764,7 +4764,7 @@ export class Session {
       displayKind?: LogEntry["displayKind"];
       meta?: Record<string, unknown>;
     }): void => {
-      const entry = this._log.find((e) => e.id === entryId);
+      const entry = this._logStore.findEntryById(entryId);
       if (!entry) return;
       if (patch.apiRole !== undefined) entry.apiRole = patch.apiRole;
       if (patch.content !== undefined) entry.content = patch.content;
@@ -4811,7 +4811,7 @@ export class Session {
 
     /** Mark a log entry as discarded (for cleanup on retry). */
     const discardEntryFn = (entryId: string): void => {
-      const entry = this._log.find((e) => e.id === entryId);
+      const entry = this._logStore.findEntryById(entryId);
       if (!entry) return;
       entry.discarded = true;
       entry.tuiVisible = false;

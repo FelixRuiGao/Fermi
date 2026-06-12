@@ -40,6 +40,20 @@ export class SessionLog {
   private _listeners = new Set<() => void>();
   private _idAllocator = new LogIdAllocator();
 
+  // ── Index layer ──
+  // Hot paths (tool exec-state updates, stream entry patches) used to scan
+  // the whole log per operation. These maps are extended lazily up to the
+  // `_indexedUpTo` watermark; appends are picked up on the next lookup.
+  //
+  // Invalidation contract: the backing array only changes structurally via
+  // append(), replace(), or rewind truncation — the latter two invalidate
+  // explicitly. Every indexed HIT is verified against the live entry and a
+  // mismatch triggers a rebuild, so stale positions can never serve wrong
+  // entries; a miss is trusted (ids are allocator-unique within a live log).
+  private _idIndex = new Map<string, number>();
+  private _toolCallIdIndex = new Map<string, number>();
+  private _indexedUpTo = 0;
+
   /** Live entry array. Callers may mutate entries in place (then touch()). */
   get entries(): LogEntry[] {
     return this._entries;
@@ -48,6 +62,72 @@ export class SessionLog {
   /** Swap in a different backing array (init, restore). */
   replace(entries: LogEntry[]): void {
     this._entries = entries;
+    this.invalidateIndexes();
+  }
+
+  /** Drop the lookup indexes. Must be called after out-of-band structural
+   * mutation of the entries array (rewind truncation). */
+  invalidateIndexes(): void {
+    this._idIndex.clear();
+    this._toolCallIdIndex.clear();
+    this._indexedUpTo = 0;
+  }
+
+  private _extendIndexes(): void {
+    if (this._indexedUpTo > this._entries.length) {
+      // The array shrank behind our back — rebuild from scratch.
+      this.invalidateIndexes();
+    }
+    for (let i = this._indexedUpTo; i < this._entries.length; i++) {
+      const e = this._entries[i];
+      if (!this._idIndex.has(e.id)) this._idIndex.set(e.id, i);
+      if (e.type === "tool_call") {
+        const callId = String((e.meta as Record<string, unknown>)["toolCallId"] ?? "");
+        // First occurrence wins — mirrors the front-to-back scans this replaces.
+        if (callId && !this._toolCallIdIndex.has(callId)) {
+          this._toolCallIdIndex.set(callId, i);
+        }
+      }
+    }
+    this._indexedUpTo = this._entries.length;
+  }
+
+  /** Indexed equivalent of `entries.find((e) => e.id === id)` (discarded included). */
+  findEntryById(id: string): LogEntry | undefined {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      this._extendIndexes();
+      const idx = this._idIndex.get(id);
+      if (idx === undefined) return undefined;
+      const e = this._entries[idx];
+      if (e && e.id === id) return e;
+      this.invalidateIndexes();
+    }
+    return this._entries.find((e) => e.id === id);
+  }
+
+  /**
+   * Indexed equivalent of scanning front-to-back for the first tool_call
+   * whose meta.toolCallId matches (discarded included).
+   */
+  findToolCallByCallId(callId: string): LogEntry | undefined {
+    if (!callId) return undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      this._extendIndexes();
+      const idx = this._toolCallIdIndex.get(callId);
+      if (idx === undefined) return undefined;
+      const e = this._entries[idx];
+      if (
+        e && e.type === "tool_call" &&
+        String((e.meta as Record<string, unknown>)["toolCallId"] ?? "") === callId
+      ) {
+        return e;
+      }
+      this.invalidateIndexes();
+    }
+    return this._entries.find(
+      (e) => e.type === "tool_call" &&
+        String((e.meta as Record<string, unknown>)["toolCallId"] ?? "") === callId,
+    );
   }
 
   get revision(): number {
