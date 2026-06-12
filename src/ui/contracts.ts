@@ -198,6 +198,17 @@ export interface Session {
   skills?: ReadonlyMap<string, unknown>;
   getPlanState?(): PlanCheckpoint[];
   subscribePlan?(listener: () => void): () => void;
+  /** Pending-ask change subscription (own + child-session asks). */
+  subscribeAsk?(listener: () => void): () => void;
+  /** Turn lifecycle subscription; see TurnLifecycleEvent in session.ts. */
+  subscribeTurnLifecycle?(
+    listener: (event: {
+      phase: "started" | "ended";
+      turnIndex: number;
+      status?: "completed" | "interrupted" | "error" | "waiting";
+      error?: string;
+    }) => void,
+  ): () => void;
 }
 
 export type ConversationEntryKind =

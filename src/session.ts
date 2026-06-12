@@ -222,6 +222,23 @@ export interface InlineImageInput {
 }
 
 // ------------------------------------------------------------------
+// TurnLifecycleEvent — runtime-emitted turn start/end notifications
+// ------------------------------------------------------------------
+
+/** Terminal status of a turn. `waiting` = parked on a pending ask (not done). */
+export type TurnLifecycleStatus = "completed" | "interrupted" | "error" | "waiting";
+
+/**
+ * Emitted by the Session around every activation-loop run — including
+ * auto-resume and post-approval resume turns that have no external caller.
+ * Subscribed by the RPC layer (forwarded as `turn.started` / `turn.ended`
+ * wire events) and available to in-process UIs.
+ */
+export type TurnLifecycleEvent =
+  | { phase: "started"; turnIndex: number }
+  | { phase: "ended"; turnIndex: number; status: TurnLifecycleStatus; error?: string };
+
+// ------------------------------------------------------------------
 // MessageEnvelope — typed message envelope (see session-tree-types.ts)
 // ------------------------------------------------------------------
 
@@ -484,10 +501,77 @@ export class Session {
   private _toolExecutors: Record<string, ToolExecutor>;
   private _toolExecutorOverrides: Record<string, ToolExecutor> = {};
 
-  // Ask state
-  private _activeAsk: AskRequest | null = null;
+  // Ask state. All reads/writes go through the `_activeAsk` accessor pair so
+  // every transition (suspend/resolve/restore/reset) notifies ask subscribers —
+  // including sites added in the future.
+  private _activeAskValue: AskRequest | null = null;
   private _askHistory: AskAuditRecord[] = [];
   private _pendingTurnState: PendingTurnState | null = null;
+
+  private get _activeAsk(): AskRequest | null {
+    return this._activeAskValue;
+  }
+
+  private set _activeAsk(value: AskRequest | null) {
+    if (this._activeAskValue === value) return;
+    this._activeAskValue = value;
+    this._notifyAskChanged();
+  }
+
+  // Ask / turn-lifecycle subscribers (UI + RPC layer). Log subscription alone
+  // cannot observe child-session asks (they live in the child's log), so ask
+  // state gets its own channel; child asks bubble to the root via the
+  // createChildSession wiring.
+  private _askListeners = new Set<() => void>();
+  private _turnLifecycleListeners = new Set<(event: TurnLifecycleEvent) => void>();
+
+  /**
+   * Subscribe to pending-ask changes (own asks and child-session asks).
+   * Listeners receive no payload; call `getPendingAsk()` for current state.
+   */
+  subscribeAsk(listener: () => void): () => void {
+    this._askListeners.add(listener);
+    return () => {
+      this._askListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Subscribe to turn lifecycle events. Fires for every activation-loop run,
+   * including auto-resume and post-approval resume turns that never pass
+   * through an external entry point. `status: "waiting"` means the turn parked
+   * on a pending ask — it has not completed.
+   */
+  subscribeTurnLifecycle(listener: (event: TurnLifecycleEvent) => void): () => void {
+    this._turnLifecycleListeners.add(listener);
+    return () => {
+      this._turnLifecycleListeners.delete(listener);
+    };
+  }
+
+  private _notifyAskChanged(): void {
+    // Prototype-based test doubles (Object.create(Session.prototype)) have no
+    // field initializers; tolerate a missing listener set.
+    if (!this._askListeners) return;
+    for (const listener of this._askListeners) {
+      try {
+        listener();
+      } catch {
+        // Subscriber errors must never break the turn loop.
+      }
+    }
+  }
+
+  private _emitTurnLifecycle(event: TurnLifecycleEvent): void {
+    if (!this._turnLifecycleListeners) return;
+    for (const listener of this._turnLifecycleListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Subscriber errors must never break the turn loop.
+      }
+    }
+  }
 
   /** Allocate a unique random hex context ID. */
   private _allocateContextId(): string {
@@ -1175,7 +1259,10 @@ export class Session {
     this._autoResumeScheduled = true;
     queueMicrotask(() => {
       this._autoResumeScheduled = false;
-      void this._autoResumeFromIdle().catch(() => { /* swallow — caller doesn't await */ });
+      // The rejection itself is intentionally dropped (no caller awaits), but
+      // the failure is NOT silent: _turnInner's catch already wrote the error
+      // log entry and the turn-lifecycle "ended" event carried the error.
+      void this._autoResumeFromIdle().catch(() => { /* rejection consumed; error already surfaced via log + lifecycle */ });
     });
   }
 
@@ -1446,6 +1533,7 @@ export class Session {
     await this.waitForTurnComplete();
     let release!: () => void;
     this._turnInFlight = new Promise<void>((r) => { release = r; });
+    this._turnErrorEntryWritten = false;
     try {
       return await fn();
     } finally {
@@ -2655,7 +2743,17 @@ export class Session {
 
     const textAccumulator = { text: "" };
     const reasoningAccumulator = { text: "" };
-    return this._runTurnActivationLoop(opts?.signal, textAccumulator, reasoningAccumulator);
+    try {
+      return await this._runTurnActivationLoop(opts?.signal, textAccumulator, reasoningAccumulator);
+    } catch (err) {
+      if (!this._activeAsk) {
+        this._recordTurnErrorEntry(err, opts?.signal);
+      }
+      if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
+        this._finishCurrentWork("error");
+      }
+      throw err;
+    }
   }
 
   async runInjectedCommand(
@@ -2663,14 +2761,19 @@ export class Session {
     content: string,
     options?: { signal?: AbortSignal },
   ): Promise<string> {
-    return this._withTurnLock(async () => {
-      this._ensureSessionStorageReady();
-      await this._ensureMcp();
-      return this._runInjectedTurn(displayText, content, {
-        signal: options?.signal,
-        turnKind: "user",
+    try {
+      return await this._withTurnLock(async () => {
+        this._ensureSessionStorageReady();
+        await this._ensureMcp();
+        return this._runInjectedTurn(displayText, content, {
+          signal: options?.signal,
+          turnKind: "user",
+        });
       });
-    });
+    } catch (err) {
+      this._recordTurnErrorEntry(err, options?.signal);
+      throw err;
+    }
   }
 
   /**
@@ -2772,6 +2875,21 @@ export class Session {
       focusPrompt?: string;
     },
   ): Promise<string> {
+    try {
+      return await this._runManualSummarizeLocked(options);
+    } catch (err) {
+      this._recordTurnErrorEntry(err, options?.signal);
+      throw err;
+    }
+  }
+
+  private async _runManualSummarizeLocked(
+    options?: {
+      signal?: AbortSignal;
+      targetContextIds?: string[];
+      focusPrompt?: string;
+    },
+  ): Promise<string> {
     return this._withTurnLock(async () => {
       this._ensureSessionStorageReady();
       await this._ensureMcp();
@@ -2842,6 +2960,15 @@ export class Session {
   }
 
   async runManualCompact(instruction?: string, options?: { signal?: AbortSignal }): Promise<void> {
+    try {
+      return await this._runManualCompactLocked(instruction, options);
+    } catch (err) {
+      this._recordTurnErrorEntry(err, options?.signal);
+      throw err;
+    }
+  }
+
+  private async _runManualCompactLocked(instruction?: string, options?: { signal?: AbortSignal }): Promise<void> {
     return this._withTurnLock(async () => {
       this._ensureSessionStorageReady();
 
@@ -2878,6 +3005,7 @@ export class Session {
         this._finishCurrentWork("completed");
       } catch (err) {
         if (!turnSignalState.signal.aborted) {
+          this._recordTurnErrorEntry(err, turnSignalState.signal);
           this._finishCurrentWork("error");
         }
         throw err;
@@ -3076,6 +3204,24 @@ export class Session {
    * Caller must hold the turn lock and have cleared _pendingTurnState.
    */
   private async _resumeActivationStage(options?: { signal?: AbortSignal }): Promise<string> {
+    // The suspended turn never closed its work, so the previous turn's end
+    // status is stale here; null it like every other turn entry point so the
+    // error path below can tell whether work still needs closing.
+    this._lastTurnEndStatus = null;
+    try {
+      return await this._resumeActivationStageInner(options);
+    } catch (err) {
+      if (!this._activeAsk) {
+        this._recordTurnErrorEntry(err, options?.signal);
+      }
+      if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
+        this._finishCurrentWork("error");
+      }
+      throw err;
+    }
+  }
+
+  private async _resumeActivationStageInner(options?: { signal?: AbortSignal }): Promise<string> {
     // Install the turn signal early so that _drainPendingToolCalls can
     // pass it to tool executors (e.g. client-side web_search).
     const turnSignalState = this._installCurrentTurnSignal(options?.signal);
@@ -3425,9 +3571,11 @@ export class Session {
   ): Promise<string> {
     let finalText = "";
     let turnEndStatus: "completed" | "interrupted" | "error" | null = null;
+    let loopError: string | null = null;
     const turnSignalState = this._installCurrentTurnSignal(signal);
     const activeSignal = turnSignalState.signal;
     this._beginWorkIfNeeded();
+    this._emitTurnLifecycle({ phase: "started", turnIndex: this._turnCount });
     try {
       let reachedLimit = true;
       for (let activationIdx = 0; activationIdx < MAX_ACTIVATIONS_PER_TURN; activationIdx++) {
@@ -3654,6 +3802,17 @@ export class Session {
         }
         turnEndStatus = "error";
       }
+    } catch (err) {
+      // Non-abort errors escaping the loop (provider failures, mid-turn
+      // compact, drain) end the turn as "error". The visible error log entry
+      // is written exactly once per escape path by the entry-point catches
+      // (_turnInner / _resumeActivationStage / manual summarize).
+      const aborted = (err as { name?: string })?.name === "AbortError" || activeSignal.aborted;
+      if (!aborted) {
+        loopError = err instanceof Error ? err.message : String(err);
+        turnEndStatus = "error";
+      }
+      throw err;
     } finally {
       this._restoreCurrentTurnSignal(turnSignalState);
       if (turnEndStatus === "interrupted" && this._hasActiveAgents()) {
@@ -3696,6 +3855,14 @@ export class Session {
       if (!this._activeAsk && this._hasUnprocessedUserMessage()) {
         this._scheduleAutoResume();
       }
+      this._emitTurnLifecycle({
+        phase: "ended",
+        turnIndex: this._turnCount,
+        status: this._activeAsk
+          ? "waiting"
+          : turnEndStatus ?? (activeSignal.aborted ? "interrupted" : "completed"),
+        ...(loopError !== null && !this._activeAsk ? { error: loopError } : {}),
+      });
     }
 
     return finalText;
@@ -3886,12 +4053,39 @@ export class Session {
       if (!this._activeAsk) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this._turnOutputTarget?.(`[Error] ${errorMsg}`);
+        this._recordTurnErrorEntry(err, options?.signal);
       }
       if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
         this._finishCurrentWork("error");
       }
       throw err;
     }
+  }
+
+  /** True when the error is a user interrupt rather than a real failure. */
+  private _isTurnAbortError(err: unknown, signal?: AbortSignal): boolean {
+    return (err as { name?: string })?.name === "AbortError" || signal?.aborted === true;
+  }
+
+  // Set while the current turn-lock execution has already written its error
+  // log entry; reset on every lock acquisition. Multiple catch layers
+  // (entry-point wrappers, resume stage, manual context commands) can then
+  // call _recordTurnErrorEntry without double-writing.
+  private _turnErrorEntryWritten = false;
+
+  /**
+   * Write the user-visible error log entry for a failed turn — at most once
+   * per turn-lock execution, and never for user interrupts. The runtime owns
+   * error visibility: all UIs see the entry via log projection. (Historically
+   * the TUI's catch wrote this entry, which left server-mode UIs blind to
+   * turn errors.)
+   */
+  private _recordTurnErrorEntry(err: unknown, signal?: AbortSignal): void {
+    if (this._turnErrorEntryWritten) return;
+    if (this._isTurnAbortError(err, signal)) return;
+    if (this._activeAsk) return;
+    this._turnErrorEntryWritten = true;
+    this.appendErrorMessage(err instanceof Error ? err.message : String(err), "turn");
   }
 
   /**
@@ -5573,6 +5767,11 @@ export class Session {
           hooks: this.config.subAgentInheritHooks ? this.hookRuntime.hooks : undefined,
         });
         childSession.onSaveRequest = o.onSaveRequest;
+        // Bubble child ask changes to this session (and transitively to the
+        // root): child asks live in the child's log, so without this hook
+        // out-of-process UIs (which only subscribe to the root) never learn
+        // that a sub-agent is waiting for approval.
+        childSession.subscribeAsk(() => this._notifyAskChanged());
         return childSession;
       },
     });

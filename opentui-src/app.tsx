@@ -702,8 +702,9 @@ export function OpenTuiApp({
       autoSave();
     } catch (err) {
       if (!controller.signal.aborted) {
+        // The error log entry is written by the runtime (Session); only UI
+        // state is handled here.
         setAskError(err instanceof Error ? err.message : String(err));
-        session.appendErrorMessage?.(err instanceof Error ? err.message : String(err), "resume_pending_turn");
       }
     } finally {
       abortControllerRef.current = null;
@@ -1732,11 +1733,9 @@ export function OpenTuiApp({
       updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
       setPendingAsk(session.getPendingAsk?.() ?? null);
       autoSave();
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        const message = err instanceof Error ? err.message : String(err);
-        session.appendErrorMessage?.(message, "turn");
-      }
+    } catch {
+      // The error log entry is written by the runtime (Session.turn); nothing
+      // to add at the UI layer.
     } finally {
       abortControllerRef.current = null;
       const suspended = Boolean(session.getPendingAsk?.());
@@ -1765,10 +1764,8 @@ export function OpenTuiApp({
         focusPrompt: opts.focusPrompt,
       });
       autoSave();
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        session.appendErrorMessage?.(err instanceof Error ? err.message : String(err), "manual_summarize");
-      }
+    } catch {
+      // Error log entry written by the runtime (runManualSummarize).
     } finally {
       abortControllerRef.current = null;
       setProcessing(false);
@@ -1788,10 +1785,8 @@ export function OpenTuiApp({
     try {
       await session.runManualCompact(instruction, { signal: controller.signal });
       autoSave();
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        session.appendErrorMessage?.(err instanceof Error ? err.message : String(err), "manual_compact");
-      }
+    } catch {
+      // Error log entry written by the runtime (runManualCompact).
     } finally {
       abortControllerRef.current = null;
       setProcessing(false);
@@ -1955,10 +1950,8 @@ export function OpenTuiApp({
       updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
       setPendingAsk(session.getPendingAsk?.() ?? null);
       autoSave();
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        session.appendErrorMessage?.(err instanceof Error ? err.message : String(err), "injected_command");
-      }
+    } catch {
+      // Error log entry written by the runtime (runInjectedCommand).
     } finally {
       abortControllerRef.current = null;
       const suspended = Boolean(session.getPendingAsk?.());

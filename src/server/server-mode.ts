@@ -263,6 +263,29 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
     displayName: session.getDisplayName(),
   });
 
+  // Last-resort crash guard. Without it, any escaped exception kills the
+  // process silently: the client sees a frozen UI with no explanation (the
+  // TUI entry point installs the equivalent handlers in opentui-src/main.tsx).
+  // Best-effort order: persist the session, tell the client why, then exit
+  // non-zero so the supervisor (GUI / VSCode extension) can react.
+  const crashGuard = (origin: "uncaughtException" | "unhandledRejection") => (err: unknown): void => {
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`[server] ${origin}: ${message}\n`);
+    try {
+      session.onSaveRequest?.();
+    } catch { /* saving is best-effort during a crash */ }
+    try {
+      rpc.emit("server.crashed", {
+        origin,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } catch { /* peer may already be gone */ }
+    // Give stdout a tick to flush the crash event before exiting.
+    setTimeout(() => process.exit(1), 100);
+  };
+  process.on("uncaughtException", crashGuard("uncaughtException"));
+  process.on("unhandledRejection", crashGuard("unhandledRejection"));
+
   // Keep process alive until stdin closes (peer disconnect) or shutdown.
   process.stdin.on("end", () => {
     void shutdown();
