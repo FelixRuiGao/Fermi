@@ -3386,37 +3386,32 @@ export class Session {
    * while the work was suspended, but its orphans still need completion.
    */
   /**
-   * Single-pass scan of the active window for the first tool_call without a
-   * matching tool_result anywhere in the window. Exactly equivalent to the
-   * old two-pass (collect-all-result-ids, then find-first-unresolved-call):
-   * `resolved` makes a result anywhere in the window — even one logged
-   * before a duplicate-id call — exclude every call with that id, and the
-   * insertion-ordered `pending` map yields the earliest surviving index.
+   * Scan the active window for the first tool_call without a matching
+   * tool_result anywhere in the window. Single implementation shared by the
+   * index- and object-shaped callers. Two-pass on purpose: a merged
+   * single-pass with a pending map measured ~2.8x slower in
+   * scripts/bench-log-hotpaths.ts (Map insert/delete churn beats the
+   * second pass's early exit).
    */
   private _firstPendingToolCall(): { index: number; entry: LogEntry } | null {
     const windowStart = this._activeWindowStartIdx();
-    const resolved = new Set<string>();
-    const pending = new Map<string, number>();
+    const resultIds = new Set<string>();
     for (let index = windowStart; index < this._log.length; index += 1) {
       const entry = this._log[index]!;
+      if (entry.type !== "tool_result") continue;
       if (entry.discarded) continue;
-      const meta = entry.meta as Record<string, unknown>;
-      if (entry.type === "tool_result") {
-        const id = String(meta["toolCallId"] ?? "");
-        if (id) {
-          resolved.add(id);
-          pending.delete(id);
-        }
-      } else if (entry.type === "tool_call") {
-        const id = String(meta["toolCallId"] ?? "");
-        if (id && !resolved.has(id) && !pending.has(id)) {
-          pending.set(id, index);
-        }
-      }
+      const id = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
+      if (id) resultIds.add(id);
     }
-    const first = pending.values().next();
-    if (first.done) return null;
-    return { index: first.value, entry: this._log[first.value]! };
+    for (let index = windowStart; index < this._log.length; index += 1) {
+      const entry = this._log[index]!;
+      if (entry.type !== "tool_call") continue;
+      if (entry.discarded) continue;
+      const toolCallId = String((entry.meta as Record<string, unknown>)["toolCallId"] ?? "");
+      if (!toolCallId || resultIds.has(toolCallId)) continue;
+      return { index, entry };
+    }
+    return null;
   }
 
   private _findEarliestPendingToolCallLogIndex(): number {
