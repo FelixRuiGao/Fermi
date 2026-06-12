@@ -2787,19 +2787,22 @@ export class Session {
     content: string,
     options?: { signal?: AbortSignal },
   ): Promise<string> {
-    try {
-      return await this._withTurnLock(async () => {
+    return this._withTurnLock(async () => {
+      // The catch must live INSIDE the lock: the failure flags are reset per
+      // lock acquisition, and a queued claimant resumes before an outside
+      // catch would run — double-writing or suppressing the entry.
+      try {
         this._ensureSessionStorageReady();
         await this._ensureMcp();
-        return this._runInjectedTurn(displayText, content, {
+        return await this._runInjectedTurn(displayText, content, {
           signal: options?.signal,
           turnKind: "user",
         });
-      });
-    } catch (err) {
-      this._recordTurnFailure(err, options?.signal);
-      throw err;
-    }
+      } catch (err) {
+        this._recordTurnFailure(err, options?.signal);
+        throw err;
+      }
+    });
   }
 
   /**
@@ -2901,22 +2904,26 @@ export class Session {
       focusPrompt?: string;
     },
   ): Promise<string> {
-    try {
-      return await this._runManualSummarizeLocked(options);
-    } catch (err) {
-      this._recordTurnFailure(err, options?.signal);
-      throw err;
-    }
+    return this._withTurnLock(async () => {
+      // In-lock catch — see runInjectedCommand for why it cannot sit outside.
+      try {
+        return await this._runManualSummarizeBody(options);
+      } catch (err) {
+        this._recordTurnFailure(err, options?.signal);
+        throw err;
+      }
+    });
   }
 
-  private async _runManualSummarizeLocked(
+  /** Body of runManualSummarize. Caller holds the turn lock. */
+  private async _runManualSummarizeBody(
     options?: {
       signal?: AbortSignal;
       targetContextIds?: string[];
       focusPrompt?: string;
     },
   ): Promise<string> {
-    return this._withTurnLock(async () => {
+    {
       this._ensureSessionStorageReady();
       await this._ensureMcp();
 
@@ -2982,20 +2989,24 @@ export class Session {
         this._summarizeToolWhitelist = null;
         this._manualSummarizeExactRange = null;
       }
-    });
-  }
-
-  async runManualCompact(instruction?: string, options?: { signal?: AbortSignal }): Promise<void> {
-    try {
-      return await this._runManualCompactLocked(instruction, options);
-    } catch (err) {
-      this._recordTurnFailure(err, options?.signal);
-      throw err;
     }
   }
 
-  private async _runManualCompactLocked(instruction?: string, options?: { signal?: AbortSignal }): Promise<void> {
+  async runManualCompact(instruction?: string, options?: { signal?: AbortSignal }): Promise<void> {
     return this._withTurnLock(async () => {
+      // In-lock catch — see runInjectedCommand for why it cannot sit outside.
+      try {
+        return await this._runManualCompactBody(instruction, options);
+      } catch (err) {
+        this._recordTurnFailure(err, options?.signal);
+        throw err;
+      }
+    });
+  }
+
+  /** Body of runManualCompact. Caller holds the turn lock. */
+  private async _runManualCompactBody(instruction?: string, options?: { signal?: AbortSignal }): Promise<void> {
+    {
       this._ensureSessionStorageReady();
 
       const blocker = this._getManualContextCommandBlocker("/compact");
@@ -3044,7 +3055,7 @@ export class Session {
       if (this._hasWakingInboxMessages()) {
         this._scheduleAutoResume();
       }
-    });
+    }
   }
 
   // ==================================================================

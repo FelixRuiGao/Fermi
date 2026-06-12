@@ -186,6 +186,33 @@ describe("turn lock", () => {
     }
   });
 
+  it("failed manual compact + queued turn: exactly one error entry, one ended(error)", async () => {
+    // Regression: the failure catch layers used to sit OUTSIDE the turn lock
+    // while the once-flags reset per lock acquisition — a queued claimant
+    // resumed before the outer catch ran, so the compact failure was written
+    // twice (or, for pre-try validation errors, swallowed entirely).
+    const h = makeScriptedSession({
+      rounds: [
+        { onCall: () => { throw new Error("compact provider failure"); } },
+        { text: "queued turn ok" },
+      ],
+    });
+    try {
+      const endedErrors: TurnLifecycleEvent[] = [];
+      h.session.subscribeTurnLifecycle((e) => {
+        if (e.phase === "ended" && e.status === "error") endedErrors.push(e);
+      });
+      const p1 = h.session.runManualCompact().catch(() => {});
+      const p2 = h.session.turn("queued input");
+      await Promise.all([p1, p2]);
+      const compactErrors = visibleErrors(h).filter((e) => e.display.includes("compact provider failure"));
+      expect(compactErrors.length).toBe(1);
+      expect(endedErrors.length).toBe(1);
+    } finally {
+      h.dispose();
+    }
+  });
+
   it("a failed turn does not suppress the next turn's error entry (per-execution once-flag)", async () => {
     const h = makeScriptedSession({
       rounds: [
