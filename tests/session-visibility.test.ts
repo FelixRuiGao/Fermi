@@ -98,6 +98,41 @@ describe("runtime-owned error entries", () => {
     }
   });
 
+  it("pre-activation failures (storage/MCP) write the entry AND emit ended(error)", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "never reached" }] });
+    try {
+      h.internals._ensureSessionStorageReady = () => {
+        throw new Error("storage unavailable");
+      };
+      const events: TurnLifecycleEvent[] = [];
+      h.session.subscribeTurnLifecycle((e) => events.push(e));
+      await expect(h.session.turn("hello")).rejects.toThrow("storage unavailable");
+      expect(visibleErrors(h).length).toBe(1);
+      expect(visibleErrors(h)[0]!.display).toContain("storage unavailable");
+      // The activation loop never ran, so the runtime emits a lone ended(error).
+      expect(events).toMatchObject([
+        { phase: "ended", status: "error", error: "storage unavailable" },
+      ]);
+      expect(h.provider.callCount).toBe(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("pre-activation failures in auto-resume turns are equally visible", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "never reached" }] });
+    try {
+      h.internals._ensureSessionStorageReady = () => {
+        throw new Error("storage gone mid-session");
+      };
+      h.session.deliverMessage("user", "background ping");
+      await waitFor(() => visibleErrors(h).length > 0);
+      expect(visibleErrors(h)[0]!.display).toContain("storage gone mid-session");
+    } finally {
+      h.dispose();
+    }
+  });
+
   it("manual summarize validation failures land in the log", async () => {
     const h = makeScriptedSession({ rounds: [] });
     try {

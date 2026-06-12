@@ -141,6 +141,32 @@ describe("turn lifecycle over RPC", () => {
     }
   });
 
+  it("a queued turn's pre-activation failure still reaches the wire (no dedup window loss)", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "first ok" }] });
+    const { rpc, dispose } = bind(h);
+    try {
+      // Turn A succeeds; turn B (queued same tick) dies before its activation
+      // loop. The old global-counter dedup suppressed B's turn.ended because
+      // A's ended had already advanced the counter.
+      let calls = 0;
+      const realEnsure = h.internals._ensureSessionStorageReady.bind(h.session);
+      h.internals._ensureSessionStorageReady = () => {
+        calls += 1;
+        if (calls >= 2) throw new Error("disk vanished");
+        realEnsure();
+      };
+      await rpc.call("session.submitTurn", { input: "one" });
+      await rpc.call("session.submitTurn", { input: "two" });
+      await waitFor(() => rpc.eventsOf("turn.ended").length >= 2);
+      const ended = rpc.eventsOf("turn.ended") as Array<{ status: string; error?: string }>;
+      expect(ended[0]).toMatchObject({ status: "completed" });
+      expect(ended[1]).toMatchObject({ status: "error", error: "disk vanished" });
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+
   it("auto-resume turns emit lifecycle events without any RPC caller", async () => {
     const h = makeScriptedSession({ rounds: [{ text: "processed" }] });
     const { rpc, dispose } = bind(h);

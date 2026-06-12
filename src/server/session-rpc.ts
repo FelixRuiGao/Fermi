@@ -496,11 +496,6 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   let sessionDir = opts.sessionDir;
   const disposers: Array<() => void> = [];
 
-  // Incremented by the turn-lifecycle subscription (bottom of this function)
-  // every time the runtime emits an "ended" event. Fire-and-forget handlers
-  // compare before/after to avoid emitting a duplicate turn.ended for errors
-  // the runtime already reported.
-  let lifecycleEndedCount = 0;
 
   const getCurrentSessionDir = (): string | null => {
     const liveDir = (session as unknown as SessionStoreAccess)._store?.sessionDir;
@@ -631,25 +626,13 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   // ── Turn submission ──
   // Fire-and-forget: do not block the RPC response on the turn completion.
   // turn.started / turn.ended come from the runtime's turn-lifecycle
-  // subscription (bottom of this function), which also covers turns with no
-  // RPC caller (auto-resume, post-approval resume). The catch here only
-  // covers errors thrown before the activation loop starts (storage / MCP /
-  // attachment failures) — `lifecycleEndedCount` dedups against the runtime.
+  // subscription (bottom of this function), which covers EVERY failure path
+  // inside the turn lock (pre-activation failures emit a lone ended(error))
+  // as well as turns with no RPC caller (auto-resume, post-approval resume).
+  // The catch only consumes the rejection so the server process never hits
+  // unhandledRejection.
   const fireAndForgetTurn = (run: () => Promise<unknown>): { ok: true } => {
-    void (async () => {
-      const endedBefore = lifecycleEndedCount;
-      try {
-        await run();
-      } catch (err) {
-        if (lifecycleEndedCount === endedBefore) {
-          server.emit("turn.ended", {
-            status: "error",
-            turnCount: session.turnCount,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    })();
+    void run().catch(() => { /* surfaced by the runtime via log + lifecycle */ });
     return { ok: true };
   };
 
@@ -1011,7 +994,6 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
       server.emit("turn.started", { turnCount: session.turnCount });
       return;
     }
-    lifecycleEndedCount += 1;
     server.emit("turn.ended", {
       status: event.status,
       turnCount: session.turnCount,

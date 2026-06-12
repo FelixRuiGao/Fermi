@@ -1278,7 +1278,14 @@ export class Session {
       // Skip if there's nothing to process: no inbox messages AND no recent
       // user_message entry awaiting a response.
       if (this._inbox.length === 0 && !this._hasUnprocessedUserMessage()) return;
-      await this._turnInner("", { skipUserInput: true });
+      try {
+        await this._turnInner("", { skipUserInput: true });
+      } catch (err) {
+        // Same catch-all as turn(): without it, pre-loop failures in an
+        // auto-resume turn would be fully invisible (no caller awaits this).
+        this._recordTurnFailure(err);
+        throw err;
+      }
     });
   }
 
@@ -2766,7 +2773,7 @@ export class Session {
       return await this._runTurnActivationLoop(opts?.signal, textAccumulator, reasoningAccumulator);
     } catch (err) {
       if (!this._activeAsk) {
-        this._recordTurnErrorEntry(err, opts?.signal);
+        this._recordTurnFailure(err, opts?.signal);
       }
       if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
         this._finishCurrentWork("error");
@@ -2790,7 +2797,7 @@ export class Session {
         });
       });
     } catch (err) {
-      this._recordTurnErrorEntry(err, options?.signal);
+      this._recordTurnFailure(err, options?.signal);
       throw err;
     }
   }
@@ -2897,7 +2904,7 @@ export class Session {
     try {
       return await this._runManualSummarizeLocked(options);
     } catch (err) {
-      this._recordTurnErrorEntry(err, options?.signal);
+      this._recordTurnFailure(err, options?.signal);
       throw err;
     }
   }
@@ -2982,7 +2989,7 @@ export class Session {
     try {
       return await this._runManualCompactLocked(instruction, options);
     } catch (err) {
-      this._recordTurnErrorEntry(err, options?.signal);
+      this._recordTurnFailure(err, options?.signal);
       throw err;
     }
   }
@@ -3024,7 +3031,7 @@ export class Session {
         this._finishCurrentWork("completed");
       } catch (err) {
         if (!turnSignalState.signal.aborted) {
-          this._recordTurnErrorEntry(err, turnSignalState.signal);
+          this._recordTurnFailure(err, turnSignalState.signal);
           this._finishCurrentWork("error");
         }
         throw err;
@@ -3231,7 +3238,7 @@ export class Session {
       return await this._resumeActivationStageInner(options);
     } catch (err) {
       if (!this._activeAsk) {
-        this._recordTurnErrorEntry(err, options?.signal);
+        this._recordTurnFailure(err, options?.signal);
       }
       if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
         this._finishCurrentWork("error");
@@ -3889,7 +3896,17 @@ export class Session {
   }
 
   async turn(userInput: string, options?: { signal?: AbortSignal; inlineImages?: InlineImageInput[]; skipUserInput?: boolean }): Promise<string> {
-    return this._withTurnLock(() => this._turnInner(userInput, options));
+    return this._withTurnLock(async () => {
+      try {
+        return await this._turnInner(userInput, options);
+      } catch (err) {
+        // Catch-all for failures _turnInner's own catch doesn't reach
+        // (storage/MCP/attachments/before-turn compact). Idempotent against
+        // the inner layers via the per-lock once-flags.
+        this._recordTurnFailure(err, options?.signal);
+        throw err;
+      }
+    });
   }
 
   /** Inner turn logic, called from within the turn lock. */
@@ -4073,7 +4090,7 @@ export class Session {
       if (!this._activeAsk) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this._turnOutputTarget?.(`[Error] ${errorMsg}`);
-        this._recordTurnErrorEntry(err, options?.signal);
+        this._recordTurnFailure(err, options?.signal);
       }
       if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
         this._finishCurrentWork("error");
@@ -4112,6 +4129,28 @@ export class Session {
     if (this._activeAsk) return;
     this._turnErrorEntryWritten = true;
     this.appendErrorMessage(err instanceof Error ? err.message : String(err), "turn");
+  }
+
+  /**
+   * Full failure surface for a turn that died anywhere inside (or just
+   * outside) the turn lock: error log entry + a lifecycle ended(error) event
+   * if the activation loop never got to emit one (pre-loop failures:
+   * storage, MCP, attachments, before-turn compact, manual-command
+   * validation). Both halves are idempotent per lock execution, so every
+   * catch layer can call this unconditionally.
+   */
+  private _recordTurnFailure(err: unknown, signal?: AbortSignal): void {
+    this._recordTurnErrorEntry(err, signal);
+    if (this._lifecycleEndedEmitted) return;
+    if (this._isTurnAbortError(err, signal)) return;
+    if (this._activeAsk) return;
+    this._lifecycleEndedEmitted = true;
+    this._emitTurnLifecycle({
+      phase: "ended",
+      turnIndex: this._turnCount,
+      status: "error",
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   /**
