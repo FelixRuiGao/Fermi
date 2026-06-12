@@ -494,7 +494,7 @@ function projectTuiWindow(entries: LogEntry[]): ConversationEntry[] {
  *  3. Map (displayKind, display) → ConversationEntry
  */
 export function projectToTuiEntries(
-  entries: LogEntry[],
+  entries: readonly LogEntry[],
   options?: TuiProjectionOptions,
 ): ConversationEntry[] {
   const threshold = options?.compactFoldThreshold ?? 3;

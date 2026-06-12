@@ -17,7 +17,8 @@ interface UsePresentationOptions {
 export function usePresentationEntries(
   { session, selectedChildId, childSessions, processing }: UsePresentationOptions,
 ): PresentationEntry[] {
-  const reconciledItems = useTranscriptModel({ session, selectedChildId, childSessions });
+  const active = processing || childSessions.some((c) => c.running);
+  const reconciledItems = useTranscriptModel({ session, selectedChildId, childSessions, active });
   const previousRef = useRef<PresentationEntry[]>([]);
   // Read activeEntryId from session — changes propagate via log revision bump
   const activeEntryId = session.activeLogEntryId ?? null;

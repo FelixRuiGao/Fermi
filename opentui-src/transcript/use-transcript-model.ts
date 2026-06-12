@@ -18,6 +18,8 @@ interface UseTranscriptModelOptions {
   session: TuiSession;
   selectedChildId: string | null;
   childSessions: readonly ChildSessionSnapshot[];
+  /** Whether the session is actively producing output (turn running or any child running). */
+  active: boolean;
 }
 
 export interface TranscriptSyncState {
@@ -51,7 +53,7 @@ export function getActiveTranscriptSource(
 }
 
 export function projectTranscriptEntries(log: readonly LogEntry[]): ReconciledConversationEntry[] {
-  return reconcileEntries([], projectToTuiEntries([...log] as LogEntry[]));
+  return reconcileEntries([], projectToTuiEntries(log));
 }
 
 export function shouldSyncTranscript(
@@ -67,7 +69,7 @@ export function shouldSyncTranscript(
 }
 
 export function useTranscriptModel(
-  { session, selectedChildId, childSessions }: UseTranscriptModelOptions,
+  { session, selectedChildId, childSessions, active }: UseTranscriptModelOptions,
 ): ReconciledConversationEntry[] {
   const selectedChildIdRef = useRef(selectedChildId);
   const childSessionsRef = useRef(childSessions);
@@ -95,7 +97,7 @@ export function useTranscriptModel(
       return;
     }
 
-    const nextEntries = projectToTuiEntries([...(source.log ?? [])] as LogEntry[]);
+    const nextEntries = projectToTuiEntries(source.log ?? []);
     setItems((current) => reconcileEntries(current, nextEntries));
     syncStateRef.current = {
       session,
@@ -112,12 +114,14 @@ export function useTranscriptModel(
     const unsubscribe = typeof session.subscribeLog === "function"
       ? session.subscribeLog(syncTranscript)
       : undefined;
-    const poller = setInterval(syncTranscript, 250);
+    // subscribeLog is the primary signal; the poller is a fallback for state
+    // that changes without a log bump. Idle sessions don't need it hot.
+    const poller = setInterval(syncTranscript, active ? 250 : 1000);
     return () => {
       if (unsubscribe) unsubscribe();
       clearInterval(poller);
     };
-  }, [session, syncTranscript]);
+  }, [session, syncTranscript, active]);
 
   return items;
 }

@@ -609,14 +609,14 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.getProjectedLog", () => ({
     revision: session.getLogRevision(),
     activeLogEntryId: session.activeLogEntryId,
-    entries: projectToTuiEntries([...session.log] as LogEntry[]),
+    entries: projectToTuiEntries(session.log),
   }));
 
   server.on("session.getProjectedChildLog", (params) => {
     const p = expectObject(params, "session.getProjectedChildLog");
     const childId = expectString(p, "childId", "session.getProjectedChildLog");
     const entries = session.getChildSessionLog(childId);
-    return entries ? projectToTuiEntries([...entries] as LogEntry[]) : null;
+    return entries ? projectToTuiEntries(entries) : null;
   });
 
   server.on("session.getChildSnapshots", () => session.getChildSessionSnapshots());
