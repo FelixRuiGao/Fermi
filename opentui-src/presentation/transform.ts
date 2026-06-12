@@ -364,9 +364,6 @@ function buildToolOperation(
     }
   }
 
-  const sourceEntries: ReconciledConversationEntry[] = [callEntry];
-  if (resultEntry) sourceEntries.push(resultEntry);
-
   // Spawn tool call: expose agent id for clickable arg rendering
   const toolAgentName = toolName === "spawn" && typeof toolArgs.id === "string"
     ? toolArgs.id as string
@@ -396,7 +393,6 @@ function buildToolOperation(
     toolStreamLanguage,
     toolStreamMode,
     fileModifyData,
-    sourceEntries,
   };
 }
 

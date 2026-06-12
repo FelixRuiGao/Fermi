@@ -1,4 +1,3 @@
-import type { ReconciledConversationEntry } from "../transcript/types.js";
 import type { FileModifyDisplayData } from "../../src/diff-hunk.js";
 
 export type PresentationKind =
@@ -100,7 +99,4 @@ export interface PresentationEntry {
 
   // Unified file-modify display data (replaces toolStreamSections for file-modify tools)
   fileModifyData?: FileModifyDisplayData;
-
-  // Original entries for detail tab rendering
-  sourceEntries?: ReconciledConversationEntry[];
 }
