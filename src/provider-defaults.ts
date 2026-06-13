@@ -1,39 +1,27 @@
 /**
  * Shared default base URLs for provider transports.
  *
- * Both Config resolution and provider subclasses use this table so transport
- * migration does not drift into duplicated fallback logic.
+ * Derived from the provider registry (FACTORY_PROVIDER_SPECS); the few valid
+ * provider ids that are not picker presets (openai-chat, the kimi-ai alias)
+ * keep explicit fallbacks here. Both Config resolution and provider subclasses
+ * read this so transport migration doesn't drift into duplicated fallbacks.
  */
 
-export const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
-  "anthropic": "https://api.anthropic.com",
-  "openai": "https://api.openai.com/v1",
+import { FACTORY_PROVIDER_SPECS } from "./model-registry.js";
+
+/** Base-url fallbacks for provider ids that are valid but not picker presets. */
+const EXTRA_BASE_URLS: Record<string, string> = {
   "openai-chat": "https://api.openai.com/v1",
-  "ollama": "http://localhost:11434/v1",
-  "omlx": "http://localhost:8000/v1",
-  "lmstudio": "http://localhost:1234/v1",
-  "openai-codex": "https://chatgpt.com/backend-api/codex",
-  // Qwen / DashScope — OpenAI-compatible Responses
-  "qwen": "https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
-  "qwen-intl": "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
-  "qwen-us": "https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
-  // Kimi / Moonshot — Anthropic protocol
-  "kimi": "https://api.moonshot.ai/anthropic",
-  "kimi-cn": "https://api.moonshot.cn/anthropic",
   "kimi-ai": "https://api.moonshot.ai/anthropic",
-  "kimi-code": "https://api.kimi.com/coding",
-  // GLM / Zhipu — OpenAI-compatible Chat
-  "glm": "https://open.bigmodel.cn/api/paas/v4",
-  "glm-intl": "https://api.z.ai/api/paas/v4",
-  "glm-code": "https://open.bigmodel.cn/api/coding/paas/v4",
-  "glm-intl-code": "https://api.z.ai/api/coding/paas/v4",
-  // MiniMax / DeepSeek / Xiaomi — Anthropic protocol
-  "minimax": "https://api.minimax.io/anthropic",
-  "minimax-cn": "https://api.minimaxi.com/anthropic",
-  "deepseek": "https://api.deepseek.com/anthropic",
-  "xiaomi": "https://api.xiaomimimo.com/anthropic",
-  "openrouter": "https://openrouter.ai/api/v1",
 };
+
+export const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = (() => {
+  const out: Record<string, string> = { ...EXTRA_BASE_URLS };
+  for (const spec of FACTORY_PROVIDER_SPECS) {
+    if (spec.defaultBaseUrl !== undefined) out[spec.id] = spec.defaultBaseUrl;
+  }
+  return out;
+})();
 
 export function getProviderDefaultBaseUrl(providerId: string): string | undefined {
   return PROVIDER_DEFAULT_BASE_URLS[providerId];

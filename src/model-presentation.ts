@@ -2,6 +2,11 @@ import {
   findProviderPreset,
   findProviderPresetModel,
 } from "./provider-presets.js";
+import {
+  FACTORY_MODEL_TABLES,
+  FACTORY_PROVIDER_SPECS,
+  OPENROUTER_VENDOR_BRAND,
+} from "./model-registry.js";
 
 function normalizeModelId(model: string): string {
   const idx = model.lastIndexOf("/");
@@ -28,114 +33,28 @@ function humanizePresetSubLabel(label: string): string {
   return label.replace(/-/g, " ").trim();
 }
 
-const BRAND_LABEL_OVERRIDES: Record<string, string> = {
-  "anthropic": "Anthropic",
-  "openai": "OpenAI",
-  "openai-codex": "OpenAI",
-  "copilot": "Copilot",
-  "openrouter": "OpenRouter",
-  "qwen": "Qwen",
-  "qwen-intl": "Qwen",
-  "qwen-us": "Qwen",
-  "kimi": "Kimi",
-  "kimi-cn": "Kimi",
-  "kimi-code": "Kimi",
-  "glm": "GLM",
-  "glm-intl": "GLM",
-  "glm-code": "GLM",
-  "glm-intl-code": "GLM",
-  "minimax": "MiniMax",
-  "minimax-cn": "MiniMax",
-  "deepseek": "DeepSeek",
-  "xiaomi": "MiMo",
-  "ollama": "Ollama",
-  "lmstudio": "LM Studio",
-  "omlx": "oMLX",
-};
+// Brand / provider / vendor label tables, derived from the provider registry.
+const BRAND_LABEL_OVERRIDES: Record<string, string> = Object.fromEntries(
+  FACTORY_PROVIDER_SPECS.map((s) => [s.id, s.brand]),
+);
 
-const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
-  "anthropic": "Anthropic",
-  "openai": "OpenAI",
-  "openai-codex": "OpenAI Codex",
-  "copilot": "Copilot",
-  "openrouter": "OpenRouter",
-  "deepseek": "DeepSeek",
-  "xiaomi": "Xiaomi (MiMo)",
-  "ollama": "Ollama",
-  "lmstudio": "LM Studio",
-  "omlx": "oMLX",
-};
+const PROVIDER_LABEL_OVERRIDES: Record<string, string> = Object.fromEntries(
+  FACTORY_PROVIDER_SPECS
+    .filter((s) => s.providerLabel !== undefined)
+    .map((s) => [s.id, s.providerLabel as string]),
+);
 
-const OPENROUTER_VENDOR_LABELS: Record<string, string> = {
-  "anthropic": "Anthropic",
-  "openai": "OpenAI",
-  "qwen": "Qwen",
-  "moonshotai": "Kimi",
-  "minimax": "MiniMax",
-  "z-ai": "GLM / Zhipu",
-  "deepseek": "DeepSeek",
-  "xiaomi": "MiMo",
-};
+const OPENROUTER_VENDOR_LABELS: Record<string, string> = OPENROUTER_VENDOR_BRAND;
 
-const MODEL_LABEL_OVERRIDES: Record<string, string> = {
-  "claude-haiku-4-5": "Claude Haiku 4.5",
-  "claude-sonnet-4-6": "Claude Sonnet 4.6",
-  "claude-opus-4-6": "Claude Opus 4.6",
-  "claude-opus-4-7": "Claude Opus 4.7",
-  "gpt-5-2": "GPT-5.2",
-  "gpt-5-2-codex": "GPT-5.2 Codex",
-  "gpt-5-3-codex": "GPT-5.3 Codex",
-  "gpt-5-4": "GPT-5.4",
-  "gpt-5-4-mini": "GPT-5.4 Mini",
-  "gpt-5-4-nano": "GPT-5.4 Nano",
-  "gpt-5-5": "GPT-5.5",
-  "qwen3-6-plus": "Qwen3.6 Plus",
-  "qwen3-7-max": "Qwen3.7 Max",
-  "kimi-k2-5": "Kimi K2.5",
-  "kimi-k2-instruct": "Kimi K2 Instruct",
-  "glm-5": "GLM-5",
-  "glm-5-turbo": "GLM-5 Turbo",
-  "glm-4-7": "GLM-4.7",
-  "glm-4-7-flash": "GLM-4.7 Flash",
-  "minimax-m2-5": "MiniMax M2.5",
-  "minimax-m2-5-highspeed": "MiniMax M2.5 Highspeed",
-  "minimax-m2-7": "MiniMax M2.7",
-  "minimax-m2-7-highspeed": "MiniMax M2.7 Highspeed",
-  "deepseek-v4-flash": "DeepSeek V4 Flash",
-  "deepseek-v4-pro": "DeepSeek V4 Pro",
-  "mimo-v2-5": "MiMo V2.5",
-  "mimo-v2-5-pro": "MiMo V2.5 Pro",
-};
-
-const SLUG_FRAGMENTS: Array<[RegExp, string]> = [
-  [/claude-opus-4-7/i, "Claude Opus 4.7"],
-  [/claude-opus-4-6/i, "Claude Opus 4.6"],
-  [/claude-sonnet-4-6/i, "Claude Sonnet 4.6"],
-  [/claude-haiku-4-5/i, "Claude Haiku 4.5"],
-  [/gpt-5\.5/i, "GPT-5.5"],
-  [/gpt-5\.4-mini/i, "GPT-5.4 Mini"],
-  [/gpt-5\.4-nano/i, "GPT-5.4 Nano"],
-  [/gpt-5\.4/i, "GPT-5.4"],
-  [/gpt-5\.3-codex/i, "GPT-5.3 Codex"],
-  [/gpt-5\.2-codex/i, "GPT-5.2 Codex"],
-  [/gpt-5\.2/i, "GPT-5.2"],
-  [/qwen3\.7-max/i, "Qwen3.7 Max"],
-  [/qwen3\.6-plus/i, "Qwen3.6 Plus"],
-  [/kimi-k2\.5/i, "Kimi K2.5"],
-  [/kimi-k2-instruct/i, "Kimi K2 Instruct"],
-  [/glm-5-turbo/i, "GLM-5 Turbo"],
-  [/glm-5\b/i, "GLM-5"],
-  [/glm-4\.7-flash/i, "GLM-4.7 Flash"],
-  [/glm-4\.7/i, "GLM-4.7"],
-  [/minimax-m2\.7-highspeed/i, "MiniMax M2.7 Highspeed"],
-  [/minimax-m2\.7/i, "MiniMax M2.7"],
-  [/minimax-m2\.5-highspeed/i, "MiniMax M2.5 Highspeed"],
-  [/minimax-m2\.5/i, "MiniMax M2.5"],
-  [/deepseek-v4-flash/i, "DeepSeek V4 Flash"],
-  [/deepseek-v4-pro/i, "DeepSeek V4 Pro"],
-  [/mimo-v2\.5-pro/i, "MiMo V2.5 Pro"],
-  [/mimo-v2\.5/i, "MiMo V2.5"],
-];
+/**
+ * canonicalized-id → displayName, derived from the model registry (single
+ * source of truth). Replaces the old hand-maintained MODEL_LABEL_OVERRIDES and
+ * the order-sensitive SLUG_FRAGMENTS regex fallback: every registered model
+ * (incl. alias spellings) now resolves by exact canonical lookup, so the regex
+ * table is gone. Unregistered ids fall through to humanizeUnknownModel's
+ * word-heuristic, same as before.
+ */
+const MODEL_LABEL_OVERRIDES: Record<string, string> = FACTORY_MODEL_TABLES.labelOverrides;
 
 export interface ModelPresentation {
   brandKey: string;
@@ -176,10 +95,6 @@ function humanizeUnknownModel(model: string): string {
   const canonical = canonicalizeModelKey(normalized);
   const override = MODEL_LABEL_OVERRIDES[canonical];
   if (override) return override;
-
-  for (const [pattern, label] of SLUG_FRAGMENTS) {
-    if (pattern.test(normalized)) return label;
-  }
 
   const words = normalized
     .replace(/^runtime-/i, "")

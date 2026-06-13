@@ -5,28 +5,25 @@
  * External shell env vars are treated only as import candidates during setup.
  */
 
+import { FACTORY_PROVIDER_SPECS } from "./model-registry.js";
+
 export interface ManagedProviderCredentialSpec {
   providerId: string;
   internalEnvVar: string;
   externalEnvVars: string[];
 }
 
-export const MANAGED_PROVIDER_CREDENTIAL_SPECS: ManagedProviderCredentialSpec[] = [
-  { providerId: "qwen", internalEnvVar: "FERMI_QWEN_API_KEY", externalEnvVars: ["DASHSCOPE_API_KEY", "QWEN_API_KEY"] },
-  { providerId: "qwen-intl", internalEnvVar: "FERMI_QWEN_INTL_API_KEY", externalEnvVars: ["DASHSCOPE_INTL_API_KEY", "QWEN_INTL_API_KEY"] },
-  { providerId: "qwen-us", internalEnvVar: "FERMI_QWEN_US_API_KEY", externalEnvVars: ["DASHSCOPE_US_API_KEY", "QWEN_US_API_KEY"] },
-  { providerId: "glm", internalEnvVar: "FERMI_GLM_API_KEY", externalEnvVars: ["GLM_API_KEY"] },
-  { providerId: "glm-intl", internalEnvVar: "FERMI_GLM_INTL_API_KEY", externalEnvVars: ["GLM_INTL_API_KEY"] },
-  { providerId: "glm-code", internalEnvVar: "FERMI_GLM_CODE_API_KEY", externalEnvVars: ["GLM_CODE_API_KEY"] },
-  { providerId: "glm-intl-code", internalEnvVar: "FERMI_GLM_INTL_CODE_API_KEY", externalEnvVars: ["GLM_INTL_CODE_API_KEY"] },
-  { providerId: "kimi", internalEnvVar: "FERMI_KIMI_API_KEY", externalEnvVars: ["MOONSHOT_API_KEY", "KIMI_API_KEY"] },
-  { providerId: "kimi-cn", internalEnvVar: "FERMI_KIMI_CN_API_KEY", externalEnvVars: ["MOONSHOT_API_KEY", "KIMI_CN_API_KEY"] },
-  { providerId: "kimi-code", internalEnvVar: "FERMI_KIMI_CODE_API_KEY", externalEnvVars: ["KIMI_CODE_API_KEY"] },
-  { providerId: "minimax", internalEnvVar: "FERMI_MINIMAX_API_KEY", externalEnvVars: ["MINIMAX_API_KEY"] },
-  { providerId: "minimax-cn", internalEnvVar: "FERMI_MINIMAX_CN_API_KEY", externalEnvVars: ["MINIMAX_CN_API_KEY"] },
-  { providerId: "deepseek", internalEnvVar: "FERMI_DEEPSEEK_API_KEY", externalEnvVars: ["DEEPSEEK_API_KEY"] },
-  { providerId: "xiaomi", internalEnvVar: "FERMI_XIAOMI_API_KEY", externalEnvVars: ["XIAOMI_API_KEY"] },
-];
+/** Derived from provider specs with a managed credential (single source: providers.json). */
+export const MANAGED_PROVIDER_CREDENTIAL_SPECS: ManagedProviderCredentialSpec[] =
+  FACTORY_PROVIDER_SPECS.flatMap((spec) =>
+    spec.credential.kind === "managed"
+      ? [{
+          providerId: spec.id,
+          internalEnvVar: spec.credential.internalEnvVar,
+          externalEnvVars: [...spec.credential.externalEnvVars],
+        }]
+      : [],
+  );
 
 const SPEC_BY_PROVIDER = new Map(
   MANAGED_PROVIDER_CREDENTIAL_SPECS.map((spec) => [spec.providerId, spec] as const),

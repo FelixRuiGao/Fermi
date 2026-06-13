@@ -1,8 +1,16 @@
 /**
  * Provider factory — maps provider identifiers to concrete provider classes.
+ *
+ * Dispatch is data-driven: provider id → providerClass (from the provider
+ * registry) → constructor. The few valid non-preset ids (openai-chat, the
+ * kimi-ai alias) keep explicit class mappings here.
  */
 
 import type { ModelConfig } from "../config.js";
+import {
+  FACTORY_PROVIDER_SPECS,
+  type ProviderClassKind,
+} from "../model-registry.js";
 import type { BaseProvider } from "./base.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAIResponsesProvider } from "./openai-responses.js";
@@ -22,63 +30,40 @@ import { XiaomiAnthropicProvider } from "./xiaomi-anthropic.js";
 // import { DeepSeekProvider } from "./deepseek.js";
 // import { XiaomiProvider } from "./xiaomi.js";
 
+type ProviderCtor = new (config: ModelConfig) => BaseProvider;
+
+const CTOR_BY_CLASS: Record<ProviderClassKind, ProviderCtor> = {
+  "anthropic": AnthropicProvider,
+  "openai-responses": OpenAIResponsesProvider,
+  "openai-chat": OpenAIChatProvider,
+  "qwen-responses": QwenResponsesProvider,
+  "glm": GLMProvider,
+  "openrouter": OpenRouterProvider,
+  "copilot": CopilotProvider,
+  "kimi-anthropic": KimiAnthropicProvider,
+  "deepseek-anthropic": DeepSeekAnthropicProvider,
+  "minimax-anthropic": MiniMaxAnthropicProvider,
+  "xiaomi-anthropic": XiaomiAnthropicProvider,
+};
+
+/** Provider-class mappings for valid ids that aren't picker presets. */
+const EXTRA_PROVIDER_CLASSES: Record<string, ProviderClassKind> = {
+  "openai-chat": "openai-chat",
+  "kimi-ai": "kimi-anthropic",
+};
+
+const PROVIDER_CLASS_BY_ID: Map<string, ProviderClassKind> = (() => {
+  const m = new Map<string, ProviderClassKind>(Object.entries(EXTRA_PROVIDER_CLASSES));
+  for (const spec of FACTORY_PROVIDER_SPECS) m.set(spec.id, spec.providerClass);
+  return m;
+})();
+
 export function createProvider(config: ModelConfig): BaseProvider {
   const provider = config.provider.toLowerCase();
-
-  if (provider === "anthropic") {
-    return new AnthropicProvider(config);
+  const providerClass = PROVIDER_CLASS_BY_ID.get(provider);
+  if (!providerClass) {
+    const supported = [...PROVIDER_CLASS_BY_ID.keys()].sort().join(", ");
+    throw new Error(`Unknown provider '${config.provider}'. Supported: ${supported}`);
   }
-
-  if (provider === "openai" || provider === "openai-codex") {
-    return new OpenAIResponsesProvider(config);
-  }
-
-  if (provider === "copilot") {
-    return new CopilotProvider(config);
-  }
-
-  if (provider === "openai-chat" || provider === "ollama" || provider === "omlx" || provider === "lmstudio") {
-    return new OpenAIChatProvider(config);
-  }
-
-  if (provider === "qwen" || provider === "qwen-intl" || provider === "qwen-us") {
-    return new QwenResponsesProvider(config);
-  }
-
-  // Kimi / Moonshot — migrated to Anthropic protocol (2026-05).
-  if (provider === "kimi-cn" || provider === "kimi-ai" || provider === "kimi" || provider === "kimi-code") {
-    return new KimiAnthropicProvider(config);
-  }
-
-  if (provider === "glm" || provider === "glm-intl" || provider === "glm-code" || provider === "glm-intl-code") {
-    return new GLMProvider(config);
-  }
-
-  // MiniMax — migrated to Anthropic protocol (2026-05).
-  if (provider === "minimax" || provider === "minimax-cn") {
-    return new MiniMaxAnthropicProvider(config);
-  }
-
-  // DeepSeek — migrated to Anthropic protocol (2026-05).
-  if (provider === "deepseek") {
-    return new DeepSeekAnthropicProvider(config);
-  }
-
-  // Xiaomi (MiMo) — migrated to Anthropic protocol (2026-05).
-  if (provider === "xiaomi") {
-    return new XiaomiAnthropicProvider(config);
-  }
-
-  if (provider === "openrouter") {
-    return new OpenRouterProvider(config);
-  }
-
-  throw new Error(
-    `Unknown provider '${config.provider}'. ` +
-      "Supported: anthropic, openai, openai-codex, copilot, openai-chat, ollama, omlx, lmstudio, " +
-      "qwen, qwen-intl, qwen-us, " +
-      "kimi, kimi-cn, kimi-ai, kimi-code, " +
-      "glm, glm-intl, glm-code, glm-intl-code, minimax, minimax-cn, " +
-      "deepseek, xiaomi, openrouter",
-  );
+  return new CTOR_BY_CLASS[providerClass](config);
 }
