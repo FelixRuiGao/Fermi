@@ -247,6 +247,13 @@ if (isFermiMarkdownPatchDisabled()) {
   };
 
   proto.buildRenderableTokens = function buildRenderableTokensPatched(tokens: MarkedToken[]): MarkedToken[] {
+    // 0.4.1: custom render-node path bypasses coalescing (unless it's a
+    // code-block-only renderer). Mirror the in-tree guard so the patched
+    // coalescer doesn't run for custom-rendered markdown.
+    if (this._renderNode && !this.isCodeBlockOnlyRenderer()) {
+      return tokens.filter((token) => token.type !== "space");
+    }
+
     const renderTokens: MarkedToken[] = [];
     let markdownRaw = "";
     let markdownMarginTop = 0;
@@ -302,26 +309,31 @@ if (isFermiMarkdownPatchDisabled()) {
     return renderTokens;
   };
 
-  proto.getDefaultForeground = function getDefaultForegroundPatched(): ColorInput | undefined {
-    return this.getStyle?.("default")?.fg;
-  };
-
   proto.createMarkdownCodeRenderable = function createMarkdownCodeRenderablePatched(
     content: string,
     id: string,
     marginBottom: number = 0,
+    onChunks: any = this._linkifyMarkdownChunks,
+    baseHighlight?: string,
+    initialStyledText?: any,
   ) {
     return new CodeRenderable(this.ctx, {
       id,
       content,
       filetype: "markdown",
       syntaxStyle: this._syntaxStyle as any,
+      fg: this._fg,
+      bg: this._bg,
       conceal: this._conceal,
-      drawUnstyledText: false,
+      // 0.4.1: draw raw text only while the precomputed styled text is present.
+      drawUnstyledText: initialStyledText !== undefined,
       streaming: true,
+      // Fermi: monotonic height floor while streaming (prevents viewport shrink).
       reserveHeightWhileStreaming: this._streaming,
+      initialStyledText,
+      baseHighlight,
       onHighlight: createMarkdownSyntheticBlockHighlighter(() => this._treeSitterClient),
-      onChunks: this._linkifyMarkdownChunks as any,
+      onChunks,
       treeSitterClient: this._treeSitterClient as any,
       width: "100%",
       marginBottom,
@@ -443,15 +455,22 @@ if (isFermiMarkdownPatchDisabled()) {
     renderable: InstanceType<typeof CodeRenderable>,
     content: string,
     marginBottom: number,
+    baseHighlight?: string,
+    initialStyledText?: any,
   ): void {
+    renderable.initialStyledText = initialStyledText;
     renderable.content = content;
     renderable.filetype = "markdown";
     renderable.syntaxStyle = this._syntaxStyle as any;
+    renderable.fg = this._fg;
+    renderable.bg = this._bg;
     renderable.conceal = this._conceal;
-    renderable.drawUnstyledText = false;
+    // 0.4.1: draw raw text only while the precomputed styled text is present.
+    renderable.drawUnstyledText = initialStyledText !== undefined;
+    // Fermi: monotonic height floor while streaming (prevents viewport shrink).
     renderable.reserveHeightWhileStreaming = this._streaming;
     renderable.streaming = true;
-    renderable.fg = undefined;
+    renderable.baseHighlight = baseHighlight;
     renderable.marginBottom = marginBottom;
   };
 
