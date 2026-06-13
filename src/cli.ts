@@ -25,6 +25,7 @@ import {
 } from "./persistence.js";
 import { loadDotenv } from "./dotenv.js";
 import { getFermiHomeDir } from "./home-path.js";
+import { startBackgroundRegistryRefresh } from "./registry-fetch.js";
 import { checkForUpdates, applyStaged, setUpdateStateGetter } from "./update-check.js";
 import { VERSION } from "./version.js";
 import { hasAnyManagedCredential } from "./managed-provider-credentials.js";
@@ -409,6 +410,10 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
 
   const globalSettings = await ensureProvidersConfigured(homeDir, deps);
   await warnIfCopilotCredentialsMissing(globalSettings, deps.hasGitHubTokens);
+
+  // Best-effort, non-blocking: refresh the remote model registry for NEXT
+  // startup. No-ops until a signing public key is embedded (registry-fetch.ts).
+  startBackgroundRegistryRefresh();
 
   await (deps.launchTui ?? launchTuiFromDefaultEntry)();
 }

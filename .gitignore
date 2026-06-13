@@ -53,3 +53,6 @@ vscode/*.vsix
 docs-site/.astro/
 docs-site/node_modules/
 docs-site/dist/
+
+# Remote model-registry signing private key — never commit
+fermi-registry-key*.pem
