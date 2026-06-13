@@ -97,7 +97,7 @@ export function useTranscriptModel(
       return;
     }
 
-    const nextEntries = projectToTuiEntries(source.log ?? [], { revision: source.logRevision });
+    const nextEntries = projectToTuiEntries(source.log ?? []);
     setItems((current) => reconcileEntries(current, nextEntries));
     syncStateRef.current = {
       session,

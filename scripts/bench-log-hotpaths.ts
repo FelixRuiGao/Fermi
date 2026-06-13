@@ -167,38 +167,15 @@ const entries = buildLog(N);
   console.log(`  → ${speedup(naive, fast)}\n`);
 }
 
-// ── 4. API projection: full recompute vs revision-keyed cache hit ──
+// ── 4. Projection cost per call (for the record — both projections run
+// per provider round / per poll; the memos that cached them were reverted
+// because they traded resident memory for marginal CPU). ──
 {
-  console.log("4. API projection (per provider call; retries hit the cache)");
+  console.log("4. projection cost per call (not memoized — measured for the record)");
   const options = { systemPrompt: "bench prompt", enforceToolCallProtocol: false };
-  const naive = time("projectToApiMessages full recompute", 20, () => {
-    projectToApiMessages(entries, options);
-  });
-  let cache: { revision: number; messages: Array<Record<string, unknown>> } | null = null;
-  const cachedCall = (revision: number): Array<Record<string, unknown>> => {
-    if (cache && cache.revision === revision) return [...cache.messages];
-    const messages = projectToApiMessages(entries, options);
-    cache = { revision, messages };
-    return [...messages];
-  };
-  cachedCall(1);
-  const fast = time("revision-keyed cache hit (copy-on-return)", 20, () => {
-    cachedCall(1);
-  });
-  console.log(`  → ${speedup(naive, fast)}\n`);
-}
-
-// ── 5. TUI projection: unmemoized vs same-revision memo hit + append step ──
-{
-  console.log("5. TUI projection");
-  const naive = time("unmemoized full projection", 20, () => {
-    projectToTuiEntries([...entries]);
-  });
-  projectToTuiEntries(entries, { revision: 1 });
-  const hit = time("same-revision memo hit", 20, () => {
-    projectToTuiEntries(entries, { revision: 1 });
-  });
-  console.log(`  → ${speedup(naive, hit)} (memo hit)\n`);
+  time("projectToApiMessages", 20, () => { projectToApiMessages(entries, options); });
+  time("projectToTuiEntries", 20, () => { projectToTuiEntries(entries); });
+  console.log();
 }
 
 // ── 6. B7 input bookkeeping scans (measured for the record; left naive) ──

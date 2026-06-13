@@ -127,13 +127,6 @@ describe("eager summary archival", () => {
       expect(contextId).toBeTruthy();
       const originalContent = JSON.parse(JSON.stringify(assistant.content));
 
-      // A live TUI projects on every log notification — this is what makes a
-      // strip-without-touch observable: the memo would capture pre-strip
-      // output at a revision that never gets bumped.
-      const unsubscribe = h.session.subscribeLog(() => {
-        projectToTuiEntries(h.session.log, { revision: h.session.getLogRevision() });
-      });
-
       h.provider.rounds.push(
         {
           toolCalls: [{
@@ -152,13 +145,6 @@ describe("eager summary archival", () => {
       // Covered entry content released to disk, scrollback display intact.
       expect(assistant.archived).toBe(true);
       expect(assistant.content).toBeNull();
-
-      // The strip is TUI-projection-visible (tool args / fullText read from
-      // content), so it must have bumped the revision: a projection memoized
-      // at the current revision must equal a from-scratch reference even if
-      // a live subscriber projected mid-turn before the strip.
-      expect(JSON.stringify(projectToTuiEntries(h.session.log, { revision: h.session.getLogRevision() })))
-        .toBe(JSON.stringify(projectToTuiEntries([...h.session.log])));
       const sessionDir = h.internals._store.sessionDir as string;
       expect(existsSync(join(sessionDir, "archive", `summary-${summary!.id}.json.gz`))).toBe(true);
       const tui = projectToTuiEntries(h.session.log);
@@ -176,7 +162,6 @@ describe("eager summary archival", () => {
       expect(assistant.content).toEqual(originalContent as never);
       const apiAfter = JSON.stringify(projectToApiMessages(h.session.log as LogEntry[]));
       expect(apiAfter).toContain("alpha findings worth summarizing");
-      unsubscribe();
     } finally {
       h.dispose();
     }

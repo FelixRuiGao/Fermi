@@ -37,16 +37,6 @@ const DISPLAY_KIND_TO_ENTRY_KIND: Record<TuiDisplayKind, ConversationEntryKind> 
 export interface TuiProjectionOptions {
   /** Override the compact fold threshold (default: 3). */
   compactFoldThreshold?: number;
-  /**
-   * The log revision matching the current state of `entries`. When provided
-   * (and the same live array is passed across calls, as the TUI and RPC
-   * layers do), the projection output and the tool-elapsed pairing are
-   * memoized per array — repeated same-revision projections become free and
-   * appends extend the pairing incrementally. Mutations are covered by the
-   * touch() contract (every mutation bumps the revision); out-of-band
-   * truncation must call invalidateTuiProjectionMemos().
-   */
-  revision?: number;
 }
 
 const INTERRUPTED_MARKER_TEXT = "[Interrupted here.]";
@@ -339,62 +329,31 @@ function buildSubAgentRollup(entries: LogEntry[]): ConversationEntry | null {
  * over the tool_call entry timestamp, which for parallel calls all share
  * roughly the same value (when they were logged, not when they ran).
  */
-interface ElapsedMemo {
-  upTo: number;
-  lastId: string | null;
-  callTimestamps: Map<string, number>;
-  elapsed: Map<string, number>;
-}
+function buildToolElapsedMap(entries: readonly LogEntry[]): Map<string, number> {
+  const callTimestamps = new Map<string, number>();
+  const elapsed = new Map<string, number>();
 
-const elapsedMemoByArray = new WeakMap<readonly LogEntry[], ElapsedMemo>();
-
-function foldElapsedEntry(memo: ElapsedMemo, entry: LogEntry): void {
-  if (entry.type === "tool_call") {
-    const id = entry.meta["toolCallId"];
-    if (typeof id === "string") {
-      memo.callTimestamps.set(id, entry.timestamp);
-    }
-  } else if (entry.type === "tool_result") {
-    const id = entry.meta["toolCallId"];
-    if (typeof id === "string") {
-      const execStart = entry.meta["execStartMs"];
-      const startMs = typeof execStart === "number"
-        ? execStart
-        : memo.callTimestamps.get(id);
-      if (startMs !== undefined) {
-        memo.elapsed.set(id, entry.timestamp - startMs);
+  for (const entry of entries) {
+    if (entry.type === "tool_call") {
+      const id = entry.meta["toolCallId"];
+      if (typeof id === "string") {
+        callTimestamps.set(id, entry.timestamp);
+      }
+    } else if (entry.type === "tool_result") {
+      const id = entry.meta["toolCallId"];
+      if (typeof id === "string") {
+        const execStart = entry.meta["execStartMs"];
+        const startMs = typeof execStart === "number"
+          ? execStart
+          : callTimestamps.get(id);
+        if (startMs !== undefined) {
+          elapsed.set(id, entry.timestamp - startMs);
+        }
       }
     }
   }
-}
 
-/**
- * toolCallId → elapsed-ms pairing over the whole log. Incrementally extended
- * per backing array when `memoize` is set: timestamps and execStartMs are
- * fixed at append time, so folding only the new tail is equivalent to a full
- * rebuild. A shrunken array or a changed entry at the watermark (rewind
- * truncation + re-append) triggers a rebuild.
- */
-function buildToolElapsedMap(entries: readonly LogEntry[], memoize: boolean): Map<string, number> {
-  if (!memoize) {
-    const memo: ElapsedMemo = { upTo: 0, lastId: null, callTimestamps: new Map(), elapsed: new Map() };
-    for (const entry of entries) foldElapsedEntry(memo, entry);
-    return memo.elapsed;
-  }
-  let memo = elapsedMemoByArray.get(entries);
-  const stale = !memo
-    || memo.upTo > entries.length
-    || (memo.upTo > 0 && entries[memo.upTo - 1]?.id !== memo.lastId);
-  if (!memo || stale) {
-    memo = { upTo: 0, lastId: null, callTimestamps: new Map(), elapsed: new Map() };
-    elapsedMemoByArray.set(entries, memo);
-  }
-  for (let i = memo.upTo; i < entries.length; i++) {
-    foldElapsedEntry(memo, entries[i]);
-  }
-  memo.upTo = entries.length;
-  memo.lastId = entries.length > 0 ? entries[entries.length - 1].id : null;
-  return memo.elapsed;
+  return elapsed;
 }
 
 function projectTuiWindow(entries: LogEntry[], toolElapsedMap: Map<string, number>): ConversationEntry[] {
@@ -533,37 +492,11 @@ function projectTuiWindow(entries: LogEntry[], toolElapsedMap: Map<string, numbe
  *  2. Skip: folded entries, tuiVisible===false, discarded, summary entries
  *  3. Map (displayKind, display) → ConversationEntry
  */
-interface TuiProjectionMemo {
-  revision: number;
-  threshold: number;
-  output: ConversationEntry[];
-}
-
-const tuiProjectionMemoByArray = new WeakMap<readonly LogEntry[], TuiProjectionMemo>();
-
-/**
- * Drop the per-array projection memos. Must be called after out-of-band
- * structural mutation of a live log array (rewind truncation); replace-style
- * swaps get fresh array identities and need nothing.
- */
-export function invalidateTuiProjectionMemos(entries: readonly LogEntry[]): void {
-  tuiProjectionMemoByArray.delete(entries);
-  elapsedMemoByArray.delete(entries);
-}
-
 export function projectToTuiEntries(
   entries: readonly LogEntry[],
   options?: TuiProjectionOptions,
 ): ConversationEntry[] {
   const threshold = options?.compactFoldThreshold ?? 3;
-  const revision = options?.revision;
-  const memoize = revision !== undefined;
-  if (memoize) {
-    const memo = tuiProjectionMemoByArray.get(entries);
-    if (memo && memo.revision === revision && memo.threshold === threshold) {
-      return memo.output;
-    }
-  }
   // TUI shows the full append-only history, including entries that have been
   // covered by a later summary. Only the API projection hides them. This
   // gives the user the ability to scroll back and verify what the summary
@@ -582,7 +515,7 @@ export function projectToTuiEntries(
   // always follow their calls, so a window never renders a call whose result
   // lives in an earlier window, and extra pairs for unrendered entries are
   // simply unused.
-  const toolElapsedMap = buildToolElapsedMap(entries, memoize);
+  const toolElapsedMap = buildToolElapsedMap(entries);
 
   // Determine fold boundary: if N >= threshold, fold entries before the (N - threshold + 1)th marker
   let foldEndIdx = -1; // entries at index <= foldEndIdx are folded
@@ -607,9 +540,6 @@ export function projectToTuiEntries(
 
   result.push(...projectTuiWindow(entries.slice(foldEndIdx + 1), toolElapsedMap));
 
-  if (memoize) {
-    tuiProjectionMemoByArray.set(entries, { revision, threshold, output: result });
-  }
   return result;
 }
 

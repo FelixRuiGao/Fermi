@@ -609,7 +609,7 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.getProjectedLog", () => ({
     revision: session.getLogRevision(),
     activeLogEntryId: session.activeLogEntryId,
-    entries: projectToTuiEntries(session.log, { revision: session.getLogRevision() }),
+    entries: projectToTuiEntries(session.log),
   }));
 
   server.on("session.getProjectedChildLog", (params) => {
