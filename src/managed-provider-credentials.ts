@@ -5,7 +5,7 @@
  * External shell env vars are treated only as import candidates during setup.
  */
 
-import { FACTORY_PROVIDER_SPECS } from "./model-registry.js";
+import { EFFECTIVE_PROVIDER_SPECS } from "./registry-effective.js";
 
 export interface ManagedProviderCredentialSpec {
   providerId: string;
@@ -15,7 +15,7 @@ export interface ManagedProviderCredentialSpec {
 
 /** Derived from provider specs with a managed credential (single source: providers.json). */
 export const MANAGED_PROVIDER_CREDENTIAL_SPECS: ManagedProviderCredentialSpec[] =
-  FACTORY_PROVIDER_SPECS.flatMap((spec) =>
+  EFFECTIVE_PROVIDER_SPECS.flatMap((spec) =>
     spec.credential.kind === "managed"
       ? [{
           providerId: spec.id,

@@ -8,14 +8,16 @@
  */
 
 import {
-  FACTORY_MODEL_SPECS,
-  FACTORY_PROVIDER_SPECS,
   type ProviderSpec,
   credentialEnvVar,
   modelSpecIds,
   providerModelEffectiveId,
   providerModelKey,
 } from "./model-registry.js";
+import {
+  EFFECTIVE_MODEL_SPECS,
+  EFFECTIVE_PROVIDER_SPECS,
+} from "./registry-effective.js";
 
 export interface ProviderPresetModel {
   /** Stable selector used by `/model` and init choices. */
@@ -51,7 +53,7 @@ export interface ProviderPreset {
 
 /** model id (incl. alias spellings) → displayName, for inheriting labels on spec refs. */
 const DISPLAY_NAME_BY_ID: ReadonlyMap<string, string> = new Map(
-  FACTORY_MODEL_SPECS.flatMap((s) => modelSpecIds(s).map((id) => [id, s.displayName] as const)),
+  EFFECTIVE_MODEL_SPECS.flatMap((s) => modelSpecIds(s).map((id) => [id, s.displayName] as const)),
 );
 
 /**
@@ -91,7 +93,7 @@ export function deriveProviderPresets(specs: readonly ProviderSpec[]): ProviderP
   });
 }
 
-export const PROVIDER_PRESETS: ProviderPreset[] = deriveProviderPresets(FACTORY_PROVIDER_SPECS);
+export const PROVIDER_PRESETS: ProviderPreset[] = deriveProviderPresets(EFFECTIVE_PROVIDER_SPECS);
 
 export function findProviderPreset(providerId: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((preset) => preset.id === providerId);

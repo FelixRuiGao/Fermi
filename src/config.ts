@@ -29,10 +29,8 @@ import {
   resolveThinkingEncryption,
   resolveTransportProtocol,
 } from "./thinking-artifact.js";
-import {
-  FACTORY_MODEL_TABLES,
-  LEGACY_EXTENDED_CACHE_IDS,
-} from "./model-registry.js";
+import { LEGACY_EXTENDED_CACHE_IDS } from "./model-registry.js";
+import { EFFECTIVE_MODEL_TABLES } from "./registry-effective.js";
 
 export { FERMI_HOME_DIR } from "./home-path.js";
 
@@ -87,7 +85,7 @@ export interface MCPServerConfig {
 // Known model lookup tables
 // ------------------------------------------------------------------
 
-const _MODEL_TABLES = FACTORY_MODEL_TABLES;
+const _MODEL_TABLES = EFFECTIVE_MODEL_TABLES;
 
 export const KNOWN_CONTEXT_LENGTHS: Record<string, number> = _MODEL_TABLES.contextLengths;
 

@@ -2,11 +2,11 @@ import {
   findProviderPreset,
   findProviderPresetModel,
 } from "./provider-presets.js";
+import { OPENROUTER_VENDOR_BRAND } from "./model-registry.js";
 import {
-  FACTORY_MODEL_TABLES,
-  FACTORY_PROVIDER_SPECS,
-  OPENROUTER_VENDOR_BRAND,
-} from "./model-registry.js";
+  EFFECTIVE_MODEL_TABLES,
+  EFFECTIVE_PROVIDER_SPECS,
+} from "./registry-effective.js";
 
 function normalizeModelId(model: string): string {
   const idx = model.lastIndexOf("/");
@@ -35,11 +35,11 @@ function humanizePresetSubLabel(label: string): string {
 
 // Brand / provider / vendor label tables, derived from the provider registry.
 const BRAND_LABEL_OVERRIDES: Record<string, string> = Object.fromEntries(
-  FACTORY_PROVIDER_SPECS.map((s) => [s.id, s.brand]),
+  EFFECTIVE_PROVIDER_SPECS.map((s) => [s.id, s.brand]),
 );
 
 const PROVIDER_LABEL_OVERRIDES: Record<string, string> = Object.fromEntries(
-  FACTORY_PROVIDER_SPECS
+  EFFECTIVE_PROVIDER_SPECS
     .filter((s) => s.providerLabel !== undefined)
     .map((s) => [s.id, s.providerLabel as string]),
 );
@@ -54,7 +54,7 @@ const OPENROUTER_VENDOR_LABELS: Record<string, string> = OPENROUTER_VENDOR_BRAND
  * table is gone. Unregistered ids fall through to humanizeUnknownModel's
  * word-heuristic, same as before.
  */
-const MODEL_LABEL_OVERRIDES: Record<string, string> = FACTORY_MODEL_TABLES.labelOverrides;
+const MODEL_LABEL_OVERRIDES: Record<string, string> = EFFECTIVE_MODEL_TABLES.labelOverrides;
 
 export interface ModelPresentation {
   brandKey: string;

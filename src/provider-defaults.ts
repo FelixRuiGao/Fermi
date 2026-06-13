@@ -7,7 +7,7 @@
  * read this so transport migration doesn't drift into duplicated fallbacks.
  */
 
-import { FACTORY_PROVIDER_SPECS } from "./model-registry.js";
+import { EFFECTIVE_PROVIDER_SPECS } from "./registry-effective.js";
 
 /** Base-url fallbacks for provider ids that are valid but not picker presets. */
 const EXTRA_BASE_URLS: Record<string, string> = {
@@ -17,7 +17,7 @@ const EXTRA_BASE_URLS: Record<string, string> = {
 
 export const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = (() => {
   const out: Record<string, string> = { ...EXTRA_BASE_URLS };
-  for (const spec of FACTORY_PROVIDER_SPECS) {
+  for (const spec of EFFECTIVE_PROVIDER_SPECS) {
     if (spec.defaultBaseUrl !== undefined) out[spec.id] = spec.defaultBaseUrl;
   }
   return out;
