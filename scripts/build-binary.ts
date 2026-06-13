@@ -29,6 +29,18 @@ function detectHost(): SupportedHost {
 
 const host = detectHost();
 
+// Build-time gate: importing the registry runs loadModelSpecs / loadProviderSpecs,
+// which throw on any invalid models.json / providers.json. Fail fast before the
+// expensive compile so bad registry data can never ship.
+try {
+  await import("../src/model-registry.js");
+  console.log("model/provider registry: valid");
+} catch (err) {
+  console.error("model/provider registry INVALID — aborting build:");
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
+
 const root = resolve(import.meta.dir, "..");
 const buildDir = join(root, "build");
 const binaryName = host.platform === "win32" ? "fermi.exe" : "fermi";
