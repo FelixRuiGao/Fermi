@@ -19,6 +19,7 @@
     { "id": "claude-opus-4.8", "displayName": "Claude Opus 4.8", "contextLength": 1000000, "maxOutputTokens": 128000, "multimodal": true, "thinkingLevels": ["off", "low", "medium", "high", "xhigh", "max"], "webSearch": true },
 
     { "id": "qwen3.6-plus", "displayName": "Qwen3.6 Plus", "contextLength": 1000000, "maxOutputTokens": 65536, "multimodal": true, "thinkingLevels": ["off", "on"], "webSearch": true },
+    { "id": "qwen3.7-plus", "displayName": "Qwen3.7 Plus", "contextLength": 1000000, "maxOutputTokens": 65536, "multimodal": true, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "qwen3.7-max", "displayName": "Qwen3.7 Max", "contextLength": 1000000, "maxOutputTokens": 65536, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
 
     { "id": "kimi-k2.7-code", "displayName": "Kimi K2.7 Code", "contextLength": 262144, "maxOutputTokens": 32768, "multimodal": true, "thinkingLevels": ["on"], "webSearch": true },

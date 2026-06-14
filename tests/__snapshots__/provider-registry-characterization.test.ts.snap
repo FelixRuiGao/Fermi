@@ -236,6 +236,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "label": "Qwen3.6 Plus",
       },
       {
+        "id": "qwen3.7-plus",
+        "key": "qwen3.7-plus",
+        "label": "Qwen3.7 Plus",
+      },
+      {
         "id": "qwen3.7-max",
         "key": "qwen3.7-max",
         "label": "Qwen3.7 Max",
@@ -256,6 +261,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "label": "Qwen3.6 Plus",
       },
       {
+        "id": "qwen3.7-plus",
+        "key": "qwen3.7-plus",
+        "label": "Qwen3.7 Plus",
+      },
+      {
         "id": "qwen3.7-max",
         "key": "qwen3.7-max",
         "label": "Qwen3.7 Max",
@@ -274,6 +284,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "id": "qwen3.6-plus",
         "key": "qwen3.6-plus",
         "label": "Qwen3.6 Plus",
+      },
+      {
+        "id": "qwen3.7-plus",
+        "key": "qwen3.7-plus",
+        "label": "Qwen3.7 Plus",
       },
       {
         "id": "qwen3.7-max",
@@ -726,6 +741,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "id": "qwen/qwen3.6-plus",
         "key": "qwen/qwen3.6-plus",
         "label": "Qwen3.6 Plus",
+      },
+      {
+        "id": "qwen/qwen3.7-plus",
+        "key": "qwen/qwen3.7-plus",
+        "label": "Qwen3.7 Plus",
       },
       {
         "id": "qwen/qwen3.7-max",
