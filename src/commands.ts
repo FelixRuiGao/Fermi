@@ -1159,10 +1159,11 @@ async function cmdModelLocalDiscover(ctx: CommandContext, providerId: string): P
 }
 
 /**
- * "Add provider..." sub-flow for /model and /tier pickers.
- * Prompts user to select a provider type, configure credentials,
- * and registers the provider in settings.json + runtime config.
- * Returns true if a provider was successfully added.
+ * DEPRECATED — the preset "Add provider..." flow was replaced by the custom
+ * provider wizard (cmdAddCustomProvider) and is no longer wired to any entry
+ * point. Preset providers are configured by selecting their model in the picker
+ * (ensureModelSelectionReady auto-prompts for credentials). Kept for reference /
+ * rollback; safe to delete.
  */
 async function cmdAddProvider(ctx: CommandContext): Promise<boolean> {
   if (!ctx.promptSelect) {
