@@ -970,7 +970,6 @@ exports[`model/provider derivation characterization (Phase 0 baseline) freezes p
     "sealedSchema": null,
     "thinking": true,
     "thinkingLevels": [
-      "off",
       "high",
       "max",
     ],
@@ -1230,7 +1229,6 @@ exports[`model/provider derivation characterization (Phase 0 baseline) freezes p
     "sealedSchema": null,
     "thinking": true,
     "thinkingLevels": [
-      "off",
       "high",
       "max",
     ],
