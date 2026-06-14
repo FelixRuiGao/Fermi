@@ -31,7 +31,7 @@ import { loadRemoteRegistry, remoteCacheDir, type RawRegistryBundle } from "./re
  * Replace with the output of `bun run scripts/gen-registry-key.ts`. Empty =
  * verification fails closed (remote never trusted).
  */
-export const REGISTRY_PUBLIC_KEY_PEM = "";
+export const REGISTRY_PUBLIC_KEY_PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApdQv3GlgMKD7y7DDdejGK3sxDMWHCJFvOO/PvaqitKY=\n-----END PUBLIC KEY-----\n";
 
 const DEFAULT_BASE_URL =
   "https://raw.githubusercontent.com/felixruigao/fermi/main/assets/model-registry";
