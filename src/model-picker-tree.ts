@@ -438,6 +438,21 @@ export function buildModelPickerTree(ctx: ModelPickerTreeContext): ModelPickerTr
       modelId: currentProvider === providerId ? currentModel : providerId,
     });
     const children = buildModelChildren(providerId);
+    if (!preset) {
+      // Custom (non-preset) provider — offer management.
+      children.push({
+        kind: "action",
+        id: `${providerId}:__manage__`,
+        value: `manage:${providerId}`,
+        label: "⚙ Manage / remove...",
+        isCurrent: false,
+        credentialState: "not_required",
+        keyMissing: false,
+        brandKey: descriptor.brandKey,
+        brandLabel: descriptor.brandLabel,
+        providerId,
+      });
+    }
     nodes.push({
       kind: "provider",
       id: providerId,

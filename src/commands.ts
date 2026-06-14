@@ -944,6 +944,12 @@ async function pickResolvedModelSelection(
       continue;
     }
 
+    if (target.startsWith("manage:")) {
+      await cmdManageCustomProvider(ctx, target.slice("manage:".length));
+      target = "";
+      continue;
+    }
+
     if (target.endsWith(":__discover__")) {
       await cmdModelLocalDiscover(ctx, target.split(":")[0]);
       target = "";
@@ -1418,6 +1424,80 @@ async function promptTokenCount(
   return parseInt(c, 10);
 }
 
+/**
+ * Discover (/v1/models) + multi-model add loop. Returns the models added, or
+ * null if the user cancelled. Shared by the add-provider wizard and the
+ * "add a model" management action. Doesn't close after each model.
+ */
+async function addModelsInteractive(
+  ctx: CommandContext,
+  opts: { label: string; baseUrl: string; protocol: string; apiKey?: string; existingIds?: Set<string> },
+): Promise<CustomModelEntry[] | null> {
+  const { label, baseUrl, protocol, apiKey } = opts;
+  let discovered: Array<{ id: string; contextLength?: number }> = [];
+  if (protocol === "openai-chat") {
+    ctx.showMessage(`Scanning ${baseUrl} for models...`);
+    discovered = await fetchModelsFromServer(baseUrl, 6000, apiKey || "local");
+  }
+  const added: CustomModelEntry[] = [];
+  const addedIds = new Set<string>(opts.existingIds ?? []);
+  while (true) {
+    const remaining = discovered.filter((d) => !addedIds.has(d.id));
+    const choices: CommandOption[] = [];
+    for (const d of remaining) {
+      choices.push({ label: d.contextLength ? `${d.id}  (${fmtTokens(d.contextLength)} ctx)` : d.id, value: `pick:${d.id}` });
+    }
+    choices.push({ label: "+ Enter a model id manually", value: "__manual__" });
+    if (added.length > 0) choices.push({ label: `✓ Done — save ${added.length} model${added.length > 1 ? "s" : ""}`, value: "__done__" });
+    choices.push({ label: added.length > 0 ? "Cancel (discard)" : "Cancel", value: "__cancel__" });
+    const choice = await ctx.promptSelect!({
+      message: discovered.length ? `${label} — pick a model to add (${remaining.length} available)` : `${label} — add a model`,
+      options: choices,
+    });
+    if (!choice || choice === "__cancel__") return null;
+    if (choice === "__done__") return added;
+    const modelId = choice === "__manual__"
+      ? ((await ctx.promptSecret!({ message: `${label} — model id` }))?.trim() ?? "")
+      : choice.slice("pick:".length);
+    if (!modelId || addedIds.has(modelId)) continue;
+    const sug = await fetchModelSpecSuggestion(modelId, { homeDir: ctx.fermiHomeDir });
+    const reportedCtx = discovered.find((d) => d.id === modelId)?.contextLength;
+    const ctxLen = await promptTokenCount(ctx, `${label} / ${modelId} — context length (required)`, sug?.contextLength ?? reportedCtx, { allowSkip: false });
+    if (!ctxLen) { ctx.showMessage("Context length is required — model not added."); continue; }
+    const mmChoice = await ctx.promptSelect!({
+      message: `${label} / ${modelId} — multimodal (image input)?`,
+      options: [
+        { label: `No${sug?.multimodal ? "" : "  (default)"}`, value: "no" },
+        { label: `Yes${sug?.multimodal ? "  (models.dev says yes)" : ""}`, value: "yes" },
+      ],
+    });
+    if (mmChoice === undefined) continue;
+    const maxOut = await promptTokenCount(ctx, `${label} / ${modelId} — max output tokens (optional)`, sug?.maxOutputTokens, { allowSkip: true });
+    const entry: CustomModelEntry = { id: modelId, context_length: ctxLen };
+    if (mmChoice === "yes") entry.multimodal = true;
+    if (maxOut) entry.max_output_tokens = maxOut;
+    if (sug?.thinkingLevels?.length) entry.thinking_levels = sug.thinkingLevels;
+    added.push(entry);
+    addedIds.add(modelId);
+    ctx.showMessage(`Added ${modelId}${sug ? " (specs from models.dev)" : ""}. Pick another or choose Done.`);
+  }
+}
+
+/** Register one custom model into the live runtime config. */
+function registerCustomModel(config: any, providerId: string, baseUrl: string, protocol: string, apiKeyRef: string, m: CustomModelEntry): void {
+  config.upsertModelRaw(`${providerId}:${m.id}`, {
+    provider: providerId,
+    model: m.id,
+    api_key: apiKeyRef,
+    base_url: baseUrl,
+    context_length: m.context_length,
+    transport_protocol: protocol === "anthropic" ? "anthropic" : "chat",
+    supports_multimodal: m.multimodal ?? false,
+    supports_web_search: false,
+    ...(m.max_output_tokens ? { max_tokens: m.max_output_tokens } : {}),
+  });
+}
+
 async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
   if (!ctx.promptSecret || !ctx.promptSelect) {
     ctx.showMessage("Interactive provider setup is not available in this UI.");
@@ -1452,71 +1532,9 @@ async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
   // 4. API key (optional)
   const apiKey = (await ctx.promptSecret({ message: `${label} — API key (Enter to skip if none required)`, allowEmpty: true }))?.trim();
 
-  // 5. Discover models via /v1/models (OpenAI-compatible only)
-  let discovered: Array<{ id: string; contextLength?: number }> = [];
-  if (protocol === "openai-chat") {
-    ctx.showMessage(`Scanning ${baseUrl} for models...`);
-    discovered = await fetchModelsFromServer(baseUrl, 6000, apiKey || "local");
-  }
-
-  // 6. Add models — loop; does NOT close after each (keep adding)
-  const added: CustomModelEntry[] = [];
-  const addedIds = new Set<string>();
-  while (true) {
-    const remaining = discovered.filter((d) => !addedIds.has(d.id));
-    const choices: CommandOption[] = [];
-    for (const d of remaining) {
-      choices.push({ label: d.contextLength ? `${d.id}  (${fmtTokens(d.contextLength)} ctx)` : d.id, value: `pick:${d.id}` });
-    }
-    choices.push({ label: "+ Enter a model id manually", value: "__manual__" });
-    if (added.length > 0) choices.push({ label: `✓ Done — save ${added.length} model${added.length > 1 ? "s" : ""}`, value: "__done__" });
-    choices.push({ label: added.length > 0 ? "Cancel (discard all)" : "Cancel", value: "__cancel__" });
-
-    const choice = await ctx.promptSelect({
-      message: discovered.length
-        ? `${label} — pick a model to add (${remaining.length} discovered)`
-        : `${label} — add a model`,
-      options: choices,
-    });
-    if (!choice || choice === "__cancel__") return false;
-    if (choice === "__done__") break;
-
-    const modelId = choice === "__manual__"
-      ? ((await ctx.promptSecret({ message: `${label} — model id` }))?.trim() ?? "")
-      : choice.slice("pick:".length);
-    if (!modelId || addedIds.has(modelId)) continue;
-
-    // best-effort spec suggestion (models.dev) + context the server reported
-    const sug = await fetchModelSpecSuggestion(modelId, { homeDir: ctx.fermiHomeDir });
-    const reportedCtx = discovered.find((d) => d.id === modelId)?.contextLength;
-
-    // context length — REQUIRED (can't skip)
-    const ctxLen = await promptTokenCount(ctx, `${label} / ${modelId} — context length (required)`, sug?.contextLength ?? reportedCtx, { allowSkip: false });
-    if (!ctxLen) { ctx.showMessage("Context length is required — model not added."); continue; }
-
-    // multimodal — skippable (default off), pre-filled from models.dev
-    const mmChoice = await ctx.promptSelect({
-      message: `${label} / ${modelId} — multimodal (image input)?`,
-      options: [
-        { label: `No${sug?.multimodal ? "" : "  (default)"}`, value: "no" },
-        { label: `Yes${sug?.multimodal ? "  (models.dev says yes)" : ""}`, value: "yes" },
-      ],
-    });
-    if (mmChoice === undefined) continue;
-
-    // max output — skippable (default), pre-filled
-    const maxOut = await promptTokenCount(ctx, `${label} / ${modelId} — max output tokens (optional)`, sug?.maxOutputTokens, { allowSkip: true });
-
-    const entry: CustomModelEntry = { id: modelId, context_length: ctxLen };
-    if (mmChoice === "yes") entry.multimodal = true;
-    if (maxOut) entry.max_output_tokens = maxOut;
-    if (sug?.thinkingLevels?.length) entry.thinking_levels = sug.thinkingLevels;
-    added.push(entry);
-    addedIds.add(modelId);
-    ctx.showMessage(`Added ${modelId}${sug ? " (specs from models.dev)" : ""}. Pick another or choose Done.`);
-  }
-
-  if (added.length === 0) return false;
+  // 5-6. Discover + add models (multi-model loop, doesn't close after each).
+  const added = await addModelsInteractive(ctx, { label, baseUrl, protocol, apiKey });
+  if (!added || added.length === 0) return false;
 
   // 7. Persist to settings.json + register in runtime config
   const entry: ProviderEntry = { custom: true, label, base_url: baseUrl, protocol: protocol as ProviderEntry["protocol"], models: added };
@@ -1531,21 +1549,82 @@ async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
   const cur = loadGlobalSettings(ctx.fermiHomeDir);
   persistSettingsPatch({ providers: { ...(cur.providers ?? {}), [providerId]: entry } }, ctx.fermiHomeDir);
 
-  for (const m of added) {
-    config.upsertModelRaw(`${providerId}:${m.id}`, {
-      provider: providerId,
-      model: m.id,
-      api_key: apiKeyRef,
-      base_url: baseUrl,
-      context_length: m.context_length,
-      transport_protocol: protocol === "anthropic" ? "anthropic" : "chat",
-      supports_multimodal: m.multimodal ?? false,
-      supports_web_search: false,
-      ...(m.max_output_tokens ? { max_tokens: m.max_output_tokens } : {}),
-    });
-  }
+  for (const m of added) registerCustomModel(config, providerId, baseUrl, protocol, apiKeyRef, m);
   ctx.showMessage(`✓ Added custom provider "${label}" with ${added.length} model${added.length > 1 ? "s" : ""}.`);
   return true;
+}
+
+/** Manage an existing custom provider: add/remove models, delete the provider. */
+async function cmdManageCustomProvider(ctx: CommandContext, providerId: string): Promise<void> {
+  if (!ctx.promptSelect) { ctx.showMessage("Not available in this UI."); return; }
+  const config = ctx.session.config;
+  const settings = loadGlobalSettings(ctx.fermiHomeDir);
+  const entry = settings.providers?.[providerId];
+  if (!entry?.custom) { ctx.showMessage(`"${providerId}" is not a custom provider.`); return; }
+  const label = entry.label ?? providerId;
+  const models = entry.models ?? [];
+
+  const action = await ctx.promptSelect({
+    message: `Manage "${label}" (${models.length} model${models.length === 1 ? "" : "s"})`,
+    options: [
+      { label: "Add model(s)", value: "add" },
+      { label: "Remove a model", value: "rm" },
+      { label: "Delete this provider", value: "del" },
+      { label: "Cancel", value: "cancel" },
+    ],
+  });
+  if (!action || action === "cancel") return;
+
+  const protocol = entry.protocol ?? "openai-chat";
+  const apiKeyRef = entry.api_key ?? "local";
+  const apiKeyForDiscover = apiKeyRef.startsWith("${") ? process.env[apiKeyRef.slice(2, -1)] : apiKeyRef;
+  const saveProviders = (next: Record<string, ProviderEntry>) =>
+    persistSettingsPatch({ providers: next }, ctx.fermiHomeDir);
+
+  if (action === "add") {
+    const existingIds = new Set(models.map((m) => m.id));
+    const newModels = await addModelsInteractive(ctx, {
+      label, baseUrl: entry.base_url ?? "", protocol, apiKey: apiKeyForDiscover, existingIds,
+    });
+    if (!newModels || newModels.length === 0) return;
+    const merged = [...models, ...newModels];
+    saveProviders({ ...settings.providers, [providerId]: { ...entry, models: merged } });
+    for (const m of newModels) registerCustomModel(config, providerId, entry.base_url ?? "", protocol, apiKeyRef, m);
+    ctx.showMessage(`Added ${newModels.length} model${newModels.length > 1 ? "s" : ""} to "${label}".`);
+    return;
+  }
+
+  if (action === "rm") {
+    if (models.length === 0) { ctx.showMessage("No models to remove."); return; }
+    const pick = await ctx.promptSelect({
+      message: `Remove which model from "${label}"?`,
+      options: models.map((m) => ({ label: m.id, value: m.id })),
+    });
+    if (!pick) return;
+    const kept = models.filter((m) => m.id !== pick);
+    if (kept.length === 0) {
+      // removing the last model deletes the provider
+      const next = { ...settings.providers }; delete next[providerId];
+      saveProviders(next);
+    } else {
+      saveProviders({ ...settings.providers, [providerId]: { ...entry, models: kept } });
+    }
+    config.removeModel?.(`${providerId}:${pick}`);
+    ctx.showMessage(`Removed model ${pick}${kept.length === 0 ? ` and deleted empty provider "${label}"` : ""}.`);
+    return;
+  }
+
+  if (action === "del") {
+    const confirm = await ctx.promptSelect({
+      message: `Delete custom provider "${label}" and its ${models.length} model(s)?`,
+      options: [{ label: "Yes, delete", value: "yes" }, { label: "No, keep it", value: "no" }],
+    });
+    if (confirm !== "yes") return;
+    const next = { ...settings.providers }; delete next[providerId];
+    saveProviders(next);
+    for (const m of models) config.removeModel?.(`${providerId}:${m.id}`);
+    ctx.showMessage(`Deleted custom provider "${label}".`);
+  }
 }
 
 // ------------------------------------------------------------------

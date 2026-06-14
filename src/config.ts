@@ -815,6 +815,12 @@ export class Config {
     this._models.delete(name);
   }
 
+  /** Remove a model from the runtime config (custom-provider management). */
+  removeModel(name: string): void {
+    delete this._rawModels[name];
+    this._models.delete(name);
+  }
+
   /**
    * Return the best default model name.
    * Priority: first with resolvable API key > first model.
