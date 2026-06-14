@@ -21,10 +21,12 @@
     { "id": "qwen3.6-plus", "displayName": "Qwen3.6 Plus", "contextLength": 1000000, "maxOutputTokens": 65536, "multimodal": true, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "qwen3.7-max", "displayName": "Qwen3.7 Max", "contextLength": 1000000, "maxOutputTokens": 65536, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
 
+    { "id": "kimi-k2.7-code", "displayName": "Kimi K2.7 Code", "contextLength": 262144, "maxOutputTokens": 32768, "multimodal": true, "thinkingLevels": ["on"], "webSearch": true },
     { "id": "kimi-k2.6", "displayName": "Kimi K2.6", "contextLength": 256000, "maxOutputTokens": 65536, "multimodal": true, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "kimi-k2.5", "displayName": "Kimi K2.5", "contextLength": 256000, "maxOutputTokens": 65536, "multimodal": true, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "kimi-k2-instruct", "displayName": "Kimi K2 Instruct", "contextLength": 128000, "maxOutputTokens": 65536, "multimodal": false, "thinkingLevels": [], "webSearch": true },
 
+    { "id": "glm-5.2", "displayName": "GLM-5.2", "contextLength": 1000000, "maxOutputTokens": 131072, "multimodal": false, "thinkingLevels": ["off", "high", "max"], "webSearch": true },
     { "id": "glm-5.1", "displayName": "GLM-5.1", "contextLength": 204800, "maxOutputTokens": 131072, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "glm-5", "displayName": "GLM-5", "contextLength": 200000, "maxOutputTokens": 128000, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "glm-5-turbo", "displayName": "GLM-5 Turbo", "contextLength": 200000, "maxOutputTokens": 128000, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
@@ -32,6 +34,7 @@
     { "id": "glm-4.7", "displayName": "GLM-4.7", "contextLength": 200000, "maxOutputTokens": 128000, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
     { "id": "glm-4.7-flash", "displayName": "GLM-4.7 Flash", "contextLength": 200000, "maxOutputTokens": 128000, "multimodal": false, "thinkingLevels": ["off", "on"], "webSearch": true },
 
+    { "id": "MiniMax-M3", "aliases": ["minimax-m3"], "displayName": "MiniMax M3", "contextLength": 1000000, "maxOutputTokens": 512000, "multimodal": true, "thinkingLevels": ["off", "on"], "webSearch": false },
     { "id": "MiniMax-M2.5", "aliases": ["minimax-m2.5"], "displayName": "MiniMax M2.5", "contextLength": 204800, "maxOutputTokens": 196608, "multimodal": false, "thinkingLevels": ["on"], "webSearch": false },
     { "id": "MiniMax-M2.5-highspeed", "displayName": "MiniMax M2.5 Highspeed", "contextLength": 204800, "maxOutputTokens": 196608, "multimodal": false, "thinkingLevels": ["on"], "webSearch": false },
     { "id": "MiniMax-M2.7", "aliases": ["minimax-m2.7"], "displayName": "MiniMax M2.7", "contextLength": 204800, "maxOutputTokens": 131072, "multimodal": false, "thinkingLevels": ["on"], "webSearch": false },

@@ -291,6 +291,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "kimi",
     "models": [
       {
+        "id": "kimi-k2.7-code",
+        "key": "kimi-k2.7-code",
+        "label": "Kimi K2.7 Code",
+      },
+      {
         "id": "kimi-k2.6",
         "key": "kimi-k2.6",
         "label": "Kimi K2.6",
@@ -315,6 +320,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "Moonshot (Kimi)",
     "id": "kimi-cn",
     "models": [
+      {
+        "id": "kimi-k2.7-code",
+        "key": "kimi-k2.7-code",
+        "label": "Kimi K2.7 Code",
+      },
       {
         "id": "kimi-k2.6",
         "key": "kimi-k2.6",
@@ -341,6 +351,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "kimi-code",
     "models": [
       {
+        "id": "kimi-k2.7-code",
+        "key": "kimi-k2.7-code",
+        "label": "Kimi K2.7 Code",
+      },
+      {
         "id": "kimi-k2.6",
         "key": "kimi-k2.6",
         "label": "Kimi K2.6",
@@ -365,6 +380,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "MiniMax",
     "id": "minimax",
     "models": [
+      {
+        "id": "MiniMax-M3",
+        "key": "MiniMax-M3",
+        "label": "MiniMax M3",
+      },
       {
         "id": "MiniMax-M2.5",
         "key": "MiniMax-M2.5",
@@ -395,6 +415,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "MiniMax",
     "id": "minimax-cn",
     "models": [
+      {
+        "id": "MiniMax-M3",
+        "key": "MiniMax-M3",
+        "label": "MiniMax M3",
+      },
       {
         "id": "MiniMax-M2.5",
         "key": "MiniMax-M2.5",
@@ -496,6 +521,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "glm-code",
     "models": [
       {
+        "id": "glm-5.2",
+        "key": "glm-5.2",
+        "label": "GLM-5.2",
+      },
+      {
         "id": "glm-5.1",
         "key": "glm-5.1",
         "label": "GLM-5.1",
@@ -530,6 +560,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "z.ai (GLM/Zhipu)",
     "id": "glm-intl-code",
     "models": [
+      {
+        "id": "glm-5.2",
+        "key": "glm-5.2",
+        "label": "GLM-5.2",
+      },
       {
         "id": "glm-5.1",
         "key": "glm-5.1",
@@ -721,6 +756,11 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "id": "moonshotai/kimi-k2.5",
         "key": "moonshotai/kimi-k2.5",
         "label": "Kimi K2.5",
+      },
+      {
+        "id": "minimax/minimax-m3",
+        "key": "minimax/minimax-m3",
+        "label": "MiniMax M3",
       },
       {
         "id": "minimax/minimax-m2.5",

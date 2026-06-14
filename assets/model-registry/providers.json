@@ -116,7 +116,7 @@
       "providerClass": "kimi-anthropic",
       "wire": { "transportProtocol": "anthropic", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "kimi", "label": "Moonshot (Kimi)", "subLabel": "Kimi-Global" },
-      "models": [{ "spec": "kimi-k2.6" }, { "spec": "kimi-k2.5" }, { "spec": "kimi-k2-instruct" }]
+      "models": [{ "spec": "kimi-k2.7-code" }, { "spec": "kimi-k2.6" }, { "spec": "kimi-k2.5" }, { "spec": "kimi-k2-instruct" }]
     },
     {
       "id": "kimi-cn",
@@ -127,7 +127,7 @@
       "providerClass": "kimi-anthropic",
       "wire": { "transportProtocol": "anthropic", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "kimi", "label": "Moonshot (Kimi)", "subLabel": "Kimi-China" },
-      "models": [{ "spec": "kimi-k2.6" }, { "spec": "kimi-k2.5" }, { "spec": "kimi-k2-instruct" }]
+      "models": [{ "spec": "kimi-k2.7-code" }, { "spec": "kimi-k2.6" }, { "spec": "kimi-k2.5" }, { "spec": "kimi-k2-instruct" }]
     },
     {
       "id": "kimi-code",
@@ -138,7 +138,7 @@
       "providerClass": "kimi-anthropic",
       "wire": { "transportProtocol": "anthropic", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "kimi", "label": "Moonshot (Kimi)", "subLabel": "Kimi-Code" },
-      "models": [{ "spec": "kimi-k2.6" }, { "spec": "kimi-k2.5" }, { "spec": "kimi-k2-instruct" }]
+      "models": [{ "spec": "kimi-k2.7-code" }, { "spec": "kimi-k2.6" }, { "spec": "kimi-k2.5" }, { "spec": "kimi-k2-instruct" }]
     },
     {
       "id": "minimax",
@@ -149,7 +149,7 @@
       "providerClass": "minimax-anthropic",
       "wire": { "transportProtocol": "anthropic", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "minimax", "label": "MiniMax", "subLabel": "MiniMax-Global" },
-      "models": [{ "spec": "MiniMax-M2.5" }, { "spec": "MiniMax-M2.5-highspeed" }, { "spec": "MiniMax-M2.7" }, { "spec": "MiniMax-M2.7-highspeed" }]
+      "models": [{ "spec": "MiniMax-M3" }, { "spec": "MiniMax-M2.5" }, { "spec": "MiniMax-M2.5-highspeed" }, { "spec": "MiniMax-M2.7" }, { "spec": "MiniMax-M2.7-highspeed" }]
     },
     {
       "id": "minimax-cn",
@@ -160,7 +160,7 @@
       "providerClass": "minimax-anthropic",
       "wire": { "transportProtocol": "anthropic", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "minimax", "label": "MiniMax", "subLabel": "MiniMax-China" },
-      "models": [{ "spec": "MiniMax-M2.5" }, { "spec": "MiniMax-M2.5-highspeed" }, { "spec": "MiniMax-M2.7" }, { "spec": "MiniMax-M2.7-highspeed" }]
+      "models": [{ "spec": "MiniMax-M3" }, { "spec": "MiniMax-M2.5" }, { "spec": "MiniMax-M2.5-highspeed" }, { "spec": "MiniMax-M2.7" }, { "spec": "MiniMax-M2.7-highspeed" }]
     },
     {
       "id": "glm",
@@ -193,7 +193,7 @@
       "providerClass": "glm",
       "wire": { "transportProtocol": "chat", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "glm", "label": "z.ai (GLM/Zhipu)", "subLabel": "GLM-China-Code" },
-      "models": [{ "spec": "glm-5.1" }, { "spec": "glm-5" }, { "spec": "glm-5-turbo" }, { "spec": "glm-5v-turbo" }, { "spec": "glm-4.7" }]
+      "models": [{ "spec": "glm-5.2" }, { "spec": "glm-5.1" }, { "spec": "glm-5" }, { "spec": "glm-5-turbo" }, { "spec": "glm-5v-turbo" }, { "spec": "glm-4.7" }]
     },
     {
       "id": "glm-intl-code",
@@ -204,7 +204,7 @@
       "providerClass": "glm",
       "wire": { "transportProtocol": "chat", "thinkingEncryption": "none", "sealedSchema": null },
       "group": { "id": "glm", "label": "z.ai (GLM/Zhipu)", "subLabel": "GLM-Global-Code" },
-      "models": [{ "spec": "glm-5.1" }, { "spec": "glm-5" }, { "spec": "glm-5-turbo" }, { "spec": "glm-5v-turbo" }, { "spec": "glm-4.7" }]
+      "models": [{ "spec": "glm-5.2" }, { "spec": "glm-5.1" }, { "spec": "glm-5" }, { "spec": "glm-5-turbo" }, { "spec": "glm-5v-turbo" }, { "spec": "glm-4.7" }]
     },
     {
       "id": "deepseek",
@@ -290,6 +290,7 @@
         { "id": "xiaomi/mimo-v2.5", "spec": "mimo-v2.5" },
         { "id": "xiaomi/mimo-v2.5-pro", "spec": "mimo-v2.5-pro" },
         { "id": "moonshotai/kimi-k2.5", "spec": "kimi-k2.5" },
+        { "id": "minimax/minimax-m3", "spec": "MiniMax-M3" },
         { "id": "minimax/minimax-m2.5", "spec": "MiniMax-M2.5" },
         { "id": "minimax/minimax-m2.7", "spec": "MiniMax-M2.7" },
         { "id": "z-ai/glm-5", "spec": "glm-5" },
