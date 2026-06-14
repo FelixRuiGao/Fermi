@@ -14,7 +14,8 @@ import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs
 import { basename, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CommandPickerResult } from "./ui/command-picker.js";
-import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, ModelTierEntry } from "./persistence.js";
+import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, CustomModelEntry, ModelTierEntry } from "./persistence.js";
+import { fetchModelSpecSuggestion } from "./models-dev-lookup.js";
 import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch, loadGlobalSettings } from "./persistence.js";
 import { validateSummarizeHintLevels } from "./settings.js";
 import { applySessionRestore, findSessionById } from "./session-resume.js";
@@ -938,7 +939,7 @@ async function pickResolvedModelSelection(
     }
 
     if (target === "__add_provider__") {
-      await cmdAddProvider(ctx);
+      await cmdAddCustomProvider(ctx);
       target = "";
       continue;
     }
@@ -1376,6 +1377,174 @@ async function cmdAddProvider(ctx: CommandContext): Promise<boolean> {
     });
   }
 
+  return true;
+}
+
+// ------------------------------------------------------------------
+// "Add custom provider..." — multi-page wizard for arbitrary
+// OpenAI-/Anthropic-compatible endpoints with one or more models.
+// ------------------------------------------------------------------
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return n % 1_000_000 === 0 ? `${n / 1_000_000}M` : `${(n / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(n / 1000)}K`;
+}
+
+function slugifyProviderId(label: string): string {
+  return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "custom";
+}
+
+/** Prompt for a token count: suggested value (if any) + common presets + custom; optional skip. */
+async function promptTokenCount(
+  ctx: CommandContext,
+  message: string,
+  suggested: number | undefined,
+  opts: { allowSkip?: boolean },
+): Promise<number | undefined> {
+  const choices: CommandOption[] = [];
+  if (suggested && suggested > 0) choices.push({ label: `${fmtTokens(suggested)}  (from models.dev)`, value: String(suggested) });
+  if (opts.allowSkip) choices.push({ label: "Use default (skip)", value: "__skip__" });
+  for (const v of [8192, 32768, 65536, 131072, 200000, 1_000_000]) {
+    if (v !== suggested) choices.push({ label: fmtTokens(v), value: String(v) });
+  }
+  choices.push({ label: "Enter custom...", value: "__custom__" });
+  const c = await ctx.promptSelect!({ message, options: choices });
+  if (!c || c === "__skip__") return undefined;
+  if (c === "__custom__") {
+    const inp = (await ctx.promptSecret!({ message: "Enter number of tokens" }))?.trim();
+    const n = parseInt(inp ?? "", 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  return parseInt(c, 10);
+}
+
+async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
+  if (!ctx.promptSecret || !ctx.promptSelect) {
+    ctx.showMessage("Interactive provider setup is not available in this UI.");
+    return false;
+  }
+  const config = ctx.session.config;
+
+  // 1. Display name → unique provider id
+  const label = (await ctx.promptSecret({ message: "Custom provider — display name (e.g. My LLM)" }))?.trim();
+  if (!label) return false;
+  const existingProviders = loadGlobalSettings(ctx.fermiHomeDir).providers ?? {};
+  const baseId = slugifyProviderId(label);
+  let providerId = baseId;
+  for (let i = 2; existingProviders[providerId] || config.modelNames.some((m: string) => m.startsWith(providerId + ":")); i++) {
+    providerId = `${baseId}-${i}`;
+  }
+
+  // 2. Endpoint URL
+  const baseUrl = (await ctx.promptSecret({ message: `${label} — endpoint base URL (e.g. https://api.example.com/v1)` }))?.trim();
+  if (!baseUrl) return false;
+
+  // 3. Protocol
+  const protocol = await ctx.promptSelect({
+    message: `${label} — API protocol`,
+    options: [
+      { label: "OpenAI-compatible  (most endpoints)", value: "openai-chat" },
+      { label: "Anthropic-compatible", value: "anthropic" },
+    ],
+  });
+  if (!protocol) return false;
+
+  // 4. API key (optional)
+  const apiKey = (await ctx.promptSecret({ message: `${label} — API key (Enter to skip if none required)`, allowEmpty: true }))?.trim();
+
+  // 5. Discover models via /v1/models (OpenAI-compatible only)
+  let discovered: Array<{ id: string; contextLength?: number }> = [];
+  if (protocol === "openai-chat") {
+    ctx.showMessage(`Scanning ${baseUrl} for models...`);
+    discovered = await fetchModelsFromServer(baseUrl, 6000, apiKey || "local");
+  }
+
+  // 6. Add models — loop; does NOT close after each (keep adding)
+  const added: CustomModelEntry[] = [];
+  const addedIds = new Set<string>();
+  while (true) {
+    const remaining = discovered.filter((d) => !addedIds.has(d.id));
+    const choices: CommandOption[] = [];
+    for (const d of remaining) {
+      choices.push({ label: d.contextLength ? `${d.id}  (${fmtTokens(d.contextLength)} ctx)` : d.id, value: `pick:${d.id}` });
+    }
+    choices.push({ label: "+ Enter a model id manually", value: "__manual__" });
+    if (added.length > 0) choices.push({ label: `✓ Done — save ${added.length} model${added.length > 1 ? "s" : ""}`, value: "__done__" });
+    choices.push({ label: added.length > 0 ? "Cancel (discard all)" : "Cancel", value: "__cancel__" });
+
+    const choice = await ctx.promptSelect({
+      message: discovered.length
+        ? `${label} — pick a model to add (${remaining.length} discovered)`
+        : `${label} — add a model`,
+      options: choices,
+    });
+    if (!choice || choice === "__cancel__") return false;
+    if (choice === "__done__") break;
+
+    const modelId = choice === "__manual__"
+      ? ((await ctx.promptSecret({ message: `${label} — model id` }))?.trim() ?? "")
+      : choice.slice("pick:".length);
+    if (!modelId || addedIds.has(modelId)) continue;
+
+    // best-effort spec suggestion (models.dev) + context the server reported
+    const sug = await fetchModelSpecSuggestion(modelId, { homeDir: ctx.fermiHomeDir });
+    const reportedCtx = discovered.find((d) => d.id === modelId)?.contextLength;
+
+    // context length — REQUIRED (can't skip)
+    const ctxLen = await promptTokenCount(ctx, `${label} / ${modelId} — context length (required)`, sug?.contextLength ?? reportedCtx, { allowSkip: false });
+    if (!ctxLen) { ctx.showMessage("Context length is required — model not added."); continue; }
+
+    // multimodal — skippable (default off), pre-filled from models.dev
+    const mmChoice = await ctx.promptSelect({
+      message: `${label} / ${modelId} — multimodal (image input)?`,
+      options: [
+        { label: `No${sug?.multimodal ? "" : "  (default)"}`, value: "no" },
+        { label: `Yes${sug?.multimodal ? "  (models.dev says yes)" : ""}`, value: "yes" },
+      ],
+    });
+    if (mmChoice === undefined) continue;
+
+    // max output — skippable (default), pre-filled
+    const maxOut = await promptTokenCount(ctx, `${label} / ${modelId} — max output tokens (optional)`, sug?.maxOutputTokens, { allowSkip: true });
+
+    const entry: CustomModelEntry = { id: modelId, context_length: ctxLen };
+    if (mmChoice === "yes") entry.multimodal = true;
+    if (maxOut) entry.max_output_tokens = maxOut;
+    if (sug?.thinkingLevels?.length) entry.thinking_levels = sug.thinkingLevels;
+    added.push(entry);
+    addedIds.add(modelId);
+    ctx.showMessage(`Added ${modelId}${sug ? " (specs from models.dev)" : ""}. Pick another or choose Done.`);
+  }
+
+  if (added.length === 0) return false;
+
+  // 7. Persist to settings.json + register in runtime config
+  const entry: ProviderEntry = { custom: true, label, base_url: baseUrl, protocol: protocol as ProviderEntry["protocol"], models: added };
+  let apiKeyRef = "local";
+  if (apiKey) {
+    const envVar = `FERMI_CUSTOM_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_KEY`;
+    setDotenvKey(envVar, apiKey, ctx.fermiHomeDir);
+    process.env[envVar] = apiKey;
+    entry.api_key = `\${${envVar}}`;
+    apiKeyRef = `\${${envVar}}`;
+  }
+  const cur = loadGlobalSettings(ctx.fermiHomeDir);
+  persistSettingsPatch({ providers: { ...(cur.providers ?? {}), [providerId]: entry } }, ctx.fermiHomeDir);
+
+  for (const m of added) {
+    config.upsertModelRaw(`${providerId}:${m.id}`, {
+      provider: providerId,
+      model: m.id,
+      api_key: apiKeyRef,
+      base_url: baseUrl,
+      context_length: m.context_length,
+      transport_protocol: protocol === "anthropic" ? "anthropic" : "chat",
+      supports_multimodal: m.multimodal ?? false,
+      supports_web_search: false,
+      ...(m.max_output_tokens ? { max_tokens: m.max_output_tokens } : {}),
+    });
+  }
+  ctx.showMessage(`✓ Added custom provider "${label}" with ${added.length} model${added.length > 1 ? "s" : ""}.`);
   return true;
 }
 

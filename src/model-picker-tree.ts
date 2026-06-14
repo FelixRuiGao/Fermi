@@ -495,7 +495,7 @@ export function buildModelPickerTree(ctx: ModelPickerTreeContext): ModelPickerTr
       kind: "action",
       id: "__add_provider__",
       value: "__add_provider__",
-      label: "Add provider...",
+      label: "Add custom provider...",
       isCurrent: false,
       credentialState: "not_required",
       keyMissing: false,
