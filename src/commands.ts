@@ -1172,6 +1172,40 @@ function slugifyProviderId(label: string): string {
   return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "custom";
 }
 
+/**
+ * Normalize a user-pasted endpoint into the base URL its SDK expects, and
+ * infer the wire protocol from a recognized suffix.
+ *
+ * Provider docs almost always show the *full* endpoint (e.g.
+ * `https://openrouter.ai/api/v1/chat/completions`), but both SDKs append their
+ * own path to `baseURL` — OpenAI adds `/chat/completions`, Anthropic adds
+ * `/v1/messages`. Pasting the full endpoint therefore double-appends and 404s.
+ * We strip the recognized tail so the base is what the SDK wants:
+ *   - `.../v1/chat/completions` → base `.../v1`         protocol `openai-chat`
+ *   - `.../v1/messages`         → base `...` (no /v1)    protocol `anthropic`
+ * `changed` reports whether we rewrote the input (so the caller can tell the
+ * user). `protocol` is null when no suffix matched — caller still asks.
+ */
+export function normalizeEndpointUrl(raw: string): {
+  baseUrl: string;
+  protocol: "openai-chat" | "anthropic" | null;
+  changed: boolean;
+} {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  // Anthropic Messages API: the SDK appends `/v1/messages`, so the base must
+  // drop it entirely (including the `/v1`).
+  if (/\/messages$/i.test(trimmed)) {
+    const baseUrl = trimmed.replace(/\/(?:v\d+\/)?messages$/i, "");
+    return { baseUrl, protocol: "anthropic", changed: baseUrl !== trimmed };
+  }
+  // OpenAI Chat Completions: the SDK appends `/chat/completions`; keep the `/v1`.
+  if (/\/chat\/completions$/i.test(trimmed)) {
+    const baseUrl = trimmed.replace(/\/chat\/completions$/i, "");
+    return { baseUrl, protocol: "openai-chat", changed: baseUrl !== trimmed };
+  }
+  return { baseUrl: trimmed, protocol: null, changed: trimmed !== raw.trim() };
+}
+
 /** Best-effort reachability probe for a custom endpoint. */
 async function testEndpoint(baseUrl: string, apiKey: string | undefined, protocol: string): Promise<{ ok: boolean; detail: string }> {
   if (protocol === "anthropic") return { ok: true, detail: "skipped (Anthropic endpoints have no /v1/models)" };
@@ -1305,18 +1339,27 @@ async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
     providerId = `${baseId}-${i}`;
   }
 
-  // 2. Endpoint URL
-  const baseUrl = (await ctx.promptSecret({ message: `${label} — endpoint base URL (e.g. https://api.example.com/v1)` }))?.trim();
-  if (!baseUrl) return false;
+  // 2. Endpoint URL — accept the full endpoint from provider docs and normalize.
+  const rawUrl = (await ctx.promptSecret({ message: `${label} — endpoint URL (paste the full URL from the docs, e.g. https://api.example.com/v1/chat/completions)` }))?.trim();
+  if (!rawUrl) return false;
+  const norm = normalizeEndpointUrl(rawUrl);
+  const baseUrl = norm.baseUrl;
+  if (norm.changed) ctx.showMessage(`ℹ Using base URL ${baseUrl}`);
 
-  // 3. Protocol
-  const protocol = await ctx.promptSelect({
-    message: `${label} — API protocol`,
-    options: [
-      { label: "OpenAI-compatible  (most endpoints)", value: "openai-chat" },
-      { label: "Anthropic-compatible", value: "anthropic" },
-    ],
-  });
+  // 3. Protocol — inferred from the URL suffix when recognized, else asked.
+  let protocol: string | undefined;
+  if (norm.protocol) {
+    protocol = norm.protocol;
+    ctx.showMessage(`ℹ Detected ${norm.protocol === "anthropic" ? "Anthropic" : "OpenAI"}-compatible endpoint — protocol set to "${norm.protocol}".`);
+  } else {
+    protocol = await ctx.promptSelect({
+      message: `${label} — API protocol`,
+      options: [
+        { label: "OpenAI-compatible  (most endpoints)", value: "openai-chat" },
+        { label: "Anthropic-compatible", value: "anthropic" },
+      ],
+    });
+  }
   if (!protocol) return false;
 
   // 4. API key (optional)
@@ -1379,7 +1422,12 @@ async function cmdManageCustomProvider(ctx: CommandContext, providerId: string):
   if (action === "edit") {
     const newUrl = (await ctx.promptSecret!({ message: `${label} — new endpoint URL (Enter to keep "${entry.base_url}")`, allowEmpty: true }))?.trim();
     const newKey = (await ctx.promptSecret!({ message: `${label} — new API key (Enter to keep current)`, allowEmpty: true }))?.trim();
-    const newBaseUrl = newUrl || entry.base_url || "";
+    let newBaseUrl = entry.base_url || "";
+    if (newUrl) {
+      const norm = normalizeEndpointUrl(newUrl);
+      newBaseUrl = norm.baseUrl;
+      if (norm.changed) ctx.showMessage(`ℹ Using base URL ${newBaseUrl}`);
+    }
     let apiKeyField = entry.api_key;
     if (newKey) {
       const envVar = `FERMI_CUSTOM_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_KEY`;
