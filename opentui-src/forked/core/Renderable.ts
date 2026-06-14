@@ -21,7 +21,7 @@ import {
 } from "./lib/yoga.options.js"
 import { maybeMakeRenderable, type VNode } from "./renderables/composition/vnode.js"
 import type { MouseEvent } from "./renderer.js"
-import type { RenderContext } from "./types.js"
+import type { MousePointerStyle, RenderContext } from "./types.js"
 import {
   validateOptions,
   isPositionType,
@@ -129,6 +129,8 @@ export interface RenderableOptions<T extends BaseRenderable = BaseRenderable> ex
   onKeyDown?: (key: KeyEvent) => void
 
   onSizeChange?: (this: T) => void
+
+  cursor?: MousePointerStyle
 }
 
 export function isRenderable(obj: any): obj is Renderable {
@@ -260,6 +262,7 @@ export abstract class Renderable extends BaseRenderable {
   private _mouseListeners: Partial<Record<MouseEventType, (event: MouseEvent) => void>> = {}
   private _pasteListener: ((event: PasteEvent) => void) | undefined = undefined
   private _keyListeners: Partial<Record<"down", (key: KeyEvent) => void>> = {}
+  public cursor: MousePointerStyle | undefined = undefined
 
   protected yogaNode: YogaNode
   protected _positionType: PositionTypeString = "relative"
@@ -1606,6 +1609,16 @@ export abstract class Renderable extends BaseRenderable {
     // Override this method to provide custom cleanup
   }
 
+  public static resolveMouseCursor(renderable: Renderable): MousePointerStyle | undefined {
+    if (renderable._mouseListeners["down"]) return "pointer"
+    let current: Renderable | null = renderable
+    while (current) {
+      if (current.cursor) return current.cursor
+      current = current.parent
+    }
+    return undefined
+  }
+
   public processMouseEvent(event: MouseEvent): void {
     this._mouseListener?.call(this, event)
     this._mouseListeners[event.type]?.call(this, event)
@@ -1707,6 +1720,7 @@ export abstract class Renderable extends BaseRenderable {
     this.onPaste = options.onPaste
     this.onKeyDown = options.onKeyDown
     this.onSizeChange = options.onSizeChange
+    this.cursor = options.cursor
   }
 }
 

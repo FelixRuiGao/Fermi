@@ -20,6 +20,7 @@ export function SelectableRow({
   return (
     <box
       width={width}
+      cursor={onPress ? "pointer" : undefined}
       backgroundColor={hovered && onPress ? hoverBackgroundColor : undefined}
       onMouseOver={onPress ? () => setHovered(true) : undefined}
       onMouseOut={onPress ? () => setHovered(false) : undefined}

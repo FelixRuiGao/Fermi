@@ -3741,6 +3741,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.lastOverRenderable.processMouseEvent(event)
       }
       this.lastOverRenderable = maybeRenderable
+      this.updateMousePointerForRenderable(maybeRenderable)
       if (maybeRenderable) {
         const event = new MouseEvent(maybeRenderable, {
           ...mouseEvent,
@@ -3835,6 +3836,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.lastOverRenderable = hitRenderable
     this.lastOverRenderableNum = hitId
+    this.updateMousePointerForRenderable(hitRenderable)
 
     // Fire over on new element
     if (hitRenderable) {
@@ -3848,6 +3850,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public setMousePointer(style: MousePointerStyle): void {
     this._currentMousePointerStyle = style
     this.lib.setCursorStyleOptions(this.rendererPtr, { cursor: style })
+  }
+
+  private updateMousePointerForRenderable(renderable: Renderable | undefined): void {
+    const style = (renderable && Renderable.resolveMouseCursor(renderable)) || "default"
+    if (style !== this._currentMousePointerStyle) {
+      this.setMousePointer(style)
+    }
   }
 
   public hitTest(x: number, y: number): number {

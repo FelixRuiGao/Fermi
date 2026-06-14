@@ -191,6 +191,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           <box
             flexDirection="row"
             flexShrink={0}
+            cursor="pointer"
             backgroundColor={agentsPanelOpen ? "#3a3058" : "#2a2640"}
             onMouseDown={(e: any) => { e.stopPropagation(); e.preventDefault(); onAgentsPanelClick?.(); }}
           >
@@ -212,6 +213,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           <box
             flexDirection="row"
             flexShrink={0}
+            cursor="pointer"
             backgroundColor="#1a3325"
             onMouseDown={(e: any) => { e.stopPropagation(); e.preventDefault(); onShellsClick?.(); }}
           >
@@ -227,6 +229,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           <box
             flexDirection="row"
             flexShrink={0}
+            cursor="pointer"
             backgroundColor={todoPanelOpen ? "#1a3838" : "#1a2a2e"}
             onMouseDown={(e: any) => { e.stopPropagation(); e.preventDefault(); onTodoClick?.(); }}
           >
@@ -244,6 +247,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
         <box
           flexDirection="row"
           flexShrink={0}
+          cursor="pointer"
           onMouseDown={(e: any) => { e.stopPropagation(); e.preventDefault(); onModelClick(); }}
         >
           <text fg={modelColor} content={modelName} />
@@ -295,6 +299,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           <box
             flexShrink={1}
             flexGrow={0}
+            cursor={!hint && onPermissionClick ? "pointer" : undefined}
             onMouseDown={!hint && onPermissionClick ? (e: any) => { e.stopPropagation(); e.preventDefault(); onPermissionClick(); } : undefined}
           >
             {hint ? (
