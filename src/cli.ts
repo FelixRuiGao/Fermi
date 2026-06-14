@@ -26,7 +26,7 @@ import {
 import { loadDotenv } from "./dotenv.js";
 import { getFermiHomeDir } from "./home-path.js";
 import { startBackgroundRegistryRefresh } from "./registry-fetch.js";
-import { checkForUpdates, applyStaged, setUpdateStateGetter } from "./update-check.js";
+import { checkForUpdates, applyStaged, setUpdateStateGetter, setRelaunchCallback } from "./update-check.js";
 import { VERSION } from "./version.js";
 import { hasAnyManagedCredential } from "./managed-provider-credentials.js";
 import { findSessionById } from "./session-resume.js";
@@ -401,6 +401,13 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
     const getter = (deps.checkForUpdates ?? checkForUpdates)(effectiveVersion, homeDir, autoUpdateSetting);
     setUpdateStateGetter(getter);
   }
+  setRelaunchCallback(() => {
+    if (deps.relaunchAfterUpdate) {
+      deps.relaunchAfterUpdate(argv);
+    } else {
+      relaunchCurrentBinary(argv);
+    }
+  });
 
   // Logging
   if (opts.verbose) {

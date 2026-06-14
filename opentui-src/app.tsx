@@ -20,7 +20,7 @@ import { scanCandidates } from "../src/file-attach.js";
 import { classifyPastedText, TurnPasteCounter } from "../src/ui/input/paste.js";
 import { readClipboardImage } from "../src/clipboard-image.js";
 import { processImage, type ProcessedImage } from "../src/image-compress.js";
-import { getUpdateState } from "../src/update-check.js";
+import { getUpdateState, triggerRelaunch } from "../src/update-check.js";
 import type { InlineImageInput } from "../src/ui/contracts.js";
 import type {
   PendingAskUi,
@@ -525,6 +525,7 @@ export function OpenTuiApp({
   }, [selectedChildId, session, openShellDetailTab]);
 
   const [hint, setHint] = useState<string | null>(null);
+  const [updateToast, setUpdateToast] = useState<{ phase: "downloading" | "staged" | "available"; version: string } | null>(null);
   const [markdownMode, setMarkdownMode] = useState<"rendered" | "raw">("rendered");
   const [permissionModeState, setPermissionModeState] = useState<string>(session.permissionMode ?? "reversible");
   const [pendingAsk, setPendingAsk] = useState<PendingAskUi | null>(
@@ -1307,7 +1308,7 @@ export function OpenTuiApp({
     } catch { /* not on Windows or import unavailable */ }
   }, [showHint]);
 
-  // Poll for background update state and show hint when actionable.
+  // Poll for background update state and show toast when actionable.
   useEffect(() => {
     let stopped = false;
     const tick = () => {
@@ -1315,15 +1316,15 @@ export function OpenTuiApp({
       const state = getUpdateState();
       switch (state.phase) {
         case "downloading":
-          showHint(`Downloading v${state.latestVersion}...`, 3000);
+          setUpdateToast({ phase: "downloading", version: state.latestVersion! });
           break;
         case "staged":
-          showHint(`✓ v${state.latestVersion} ready (restart to apply)`, 6000);
+          setUpdateToast({ phase: "staged", version: state.latestVersion! });
           stopped = true;
           clearInterval(poll);
           break;
         case "available":
-          showHint(`v${state.latestVersion} available — run \`fermi update\``, 6000);
+          setUpdateToast({ phase: "available", version: state.latestVersion! });
           stopped = true;
           clearInterval(poll);
           break;
@@ -1336,7 +1337,7 @@ export function OpenTuiApp({
     };
     const poll = setInterval(tick, 2000);
     return () => { stopped = true; clearInterval(poll); };
-  }, [showHint]);
+  }, []);
 
   const performExit = useCallback(async () => {
     autoSave();
@@ -2760,6 +2761,14 @@ export function OpenTuiApp({
       return;
     }
 
+    // Ctrl+L: dismiss update toast
+    if (event.name === "l" && event.ctrl) {
+      setUpdateToast(null);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (event.name === "pagedown") {
       const sb = getActiveScrollBox();
       sb?.scrollBy(sb.height / 2);
@@ -3328,6 +3337,13 @@ export function OpenTuiApp({
         />
       }
       sidebarCodexSection={usageSnapshot ? <CodexUsageCard snapshot={usageSnapshot} theme={theme} /> : undefined}
+      updateToast={updateToast}
+      onUpdateRestart={() => {
+        triggerRelaunch();
+      }}
+      onUpdateDismiss={() => {
+        setUpdateToast(null);
+      }}
       onBackgroundMouseDown={() => {
         if (commandOverlay.visible) setCommandOverlay(EMPTY_COMMAND_OVERLAY);
         if (commandPicker) setCommandPicker(null);

@@ -587,6 +587,16 @@ export function getUpdateState(): UpdateState {
   return _updateStateGetter?.() ?? IDLE_STATE;
 }
 
+let _relaunchCallback: (() => void) | null = null;
+
+export function setRelaunchCallback(cb: () => void): void {
+  _relaunchCallback = cb;
+}
+
+export function triggerRelaunch(): void {
+  _relaunchCallback?.();
+}
+
 export function getUpdateNotice(): string | null {
   const state = getUpdateState();
   switch (state.phase) {

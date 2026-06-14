@@ -45,6 +45,7 @@ import { RightSidebar, type SidebarMode } from "../../sidebar/right-sidebar.js";
 import { computePickerMaxVisible, getSidebarWidth } from "./metrics.js";
 import { HorizontalTabBar } from "./horizontal-tab-bar.js";
 import { shortenPath } from "../utils/format.js";
+import { UpdateToast } from "../overlays/update-toast.js";
 
 export interface OpenTuiScreenProps {
   theme: DisplayTheme;
@@ -143,6 +144,12 @@ export interface OpenTuiScreenProps {
   activeShellDetail?: import("../../components/entry/detail-shell-tab.js").ShellDetailData | null;
   /** Stop a background shell from the detail tab. */
   onStopShell?: (shellId: string) => void;
+  /** Update toast state — null means hidden. */
+  updateToast?: { phase: import("../overlays/update-toast.js").UpdateToastPhase; version: string } | null;
+  /** Called when user clicks "Restart" in the update toast. */
+  onUpdateRestart?: () => void;
+  /** Called when user dismisses the update toast. */
+  onUpdateDismiss?: () => void;
 }
 
 export function OpenTuiScreen({
@@ -230,6 +237,9 @@ export function OpenTuiScreen({
   onShellsClick,
   activeShellDetail,
   onStopShell,
+  updateToast,
+  onUpdateRestart,
+  onUpdateDismiss,
 }: OpenTuiScreenProps): React.ReactNode {
   const conversationColumnWidth = terminal.width - 1;
   const conversationContentWidth = Math.max(20, conversationColumnWidth - 6);
@@ -509,6 +519,17 @@ export function OpenTuiScreen({
       {statusPanel}
       {inputAreaElement}
       {overlaysBlock}
+
+      {updateToast && onUpdateRestart && onUpdateDismiss ? (
+        <UpdateToast
+          phase={updateToast.phase}
+          version={updateToast.version}
+          theme={theme}
+          terminalWidth={terminal.width}
+          onRestart={onUpdateRestart}
+          onDismiss={onUpdateDismiss}
+        />
+      ) : null}
 
       {/*
         Welcome wordmark — absolutely positioned against terminal height,

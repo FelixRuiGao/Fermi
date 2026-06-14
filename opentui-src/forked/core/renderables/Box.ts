@@ -35,6 +35,7 @@ export interface BoxOptions<TRenderable extends Renderable = BoxRenderable> exte
   dividerTitleColor?: ColorInput
   focusedBorderColor?: ColorInput
   focusable?: boolean
+  fillTransparentBackground?: boolean
   gap?: number | `${number}%`
   rowGap?: number | `${number}%`
   columnGap?: number | `${number}%`
@@ -60,6 +61,7 @@ export class BoxRenderable extends Renderable {
   protected _customBorderChars?: Uint32Array
   protected borderSides: BorderSidesConfig
   public shouldFill: boolean
+  public fillTransparentBackground: boolean
   protected _title?: string
   protected _titleAlignment: "left" | "center" | "right"
   protected _bottomTitle?: string
@@ -102,6 +104,7 @@ export class BoxRenderable extends Renderable {
     this._customBorderChars = this._customBorderCharsObj ? borderCharsToArray(this._customBorderCharsObj) : undefined
     this.borderSides = getBorderSides(this._border)
     this.shouldFill = options.shouldFill ?? this._defaultOptions.shouldFill
+    this.fillTransparentBackground = options.fillTransparentBackground ?? false
     this._title = options.title
     this._titleAlignment = options.titleAlignment || this._defaultOptions.titleAlignment
     this._bottomTitle = options.bottomTitle
@@ -302,16 +305,34 @@ export class BoxRenderable extends Renderable {
   protected renderSelf(buffer: OptimizedBuffer): void {
     const hasBorder = this.borderSides.top || this.borderSides.right || this.borderSides.bottom || this.borderSides.left
     const hasVisibleFill = this.shouldFill && this._backgroundColor.a > 0
+    const hasTransparentFill =
+      this.shouldFill &&
+      this.fillTransparentBackground &&
+      this._backgroundColor.a === 0
     // Many boxes are used only for layout. Skip drawBox entirely when a box
     // would not draw pixels so wrapper nodes do not pay the FFI/native cost.
-    if (!hasBorder && !hasVisibleFill) {
+    if (!hasBorder && !hasVisibleFill && !hasTransparentFill) {
       return
+    }
+
+    const screenX = this._screenX
+    const screenY = this._screenY
+
+    if (hasTransparentFill) {
+      const transparent = RGBA.fromValues(0, 0, 0, 0)
+      const x0 = Math.max(0, screenX)
+      const y0 = Math.max(0, screenY)
+      const x1 = Math.min(buffer.width, screenX + this.width)
+      const y1 = Math.min(buffer.height, screenY + this.height)
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          buffer.setCell(x, y, " ", transparent, transparent)
+        }
+      }
     }
 
     const hasFocusWithin = this._focusable && (this._focused || this._hasFocusedDescendant)
     const currentBorderColor = hasFocusWithin ? this._focusedBorderColor : this._borderColor
-    const screenX = this._screenX
-    const screenY = this._screenY
 
     buffer.drawBox({
       x: screenX,

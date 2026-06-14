@@ -476,3 +476,148 @@ describe("BoxRenderable - no-op rendering", () => {
     expect(getCellForeground(2, 0)).toEqual([0, 0, 255, 255])
   })
 })
+
+describe("BoxRenderable - fillTransparentBackground", () => {
+  test("occludes lower-layer content with transparent background", async () => {
+    const bg = new BoxRenderable(testRenderer, {
+      id: "bg",
+      width: 20,
+      height: 5,
+      backgroundColor: "#222222",
+    })
+    testRenderer.root.add(bg)
+
+    const { TextRenderable } = await import("./Text.js")
+    for (let i = 0; i < 5; i++) {
+      bg.add(new TextRenderable(testRenderer, {
+        id: `line-${i}`,
+        content: "XXXXXXXXXXXXXXXXXXXX",
+        fg: RGBA.fromHex("#ffffff"),
+      }))
+    }
+
+    const toast = new BoxRenderable(testRenderer, {
+      id: "toast",
+      position: "absolute",
+      left: 3,
+      top: 1,
+      width: 10,
+      height: 3,
+      border: true,
+      borderStyle: "rounded",
+      fillTransparentBackground: true,
+      zIndex: 50,
+    })
+    testRenderer.root.add(toast)
+    await renderOnce()
+
+    const lines = captureFrame().split("\n")
+    expect(lines[2].slice(4, 12)).toBe("        ")
+    expect(getCellChar(7, 2)).toBe(" ")
+  })
+
+  test("does not occlude when fillTransparentBackground is false", async () => {
+    const bg = new BoxRenderable(testRenderer, {
+      id: "bg",
+      width: 20,
+      height: 5,
+      backgroundColor: "#222222",
+    })
+    testRenderer.root.add(bg)
+
+    const { TextRenderable } = await import("./Text.js")
+    for (let i = 0; i < 5; i++) {
+      bg.add(new TextRenderable(testRenderer, {
+        id: `line-${i}`,
+        content: "XXXXXXXXXXXXXXXXXXXX",
+        fg: RGBA.fromHex("#ffffff"),
+      }))
+    }
+
+    const toast = new BoxRenderable(testRenderer, {
+      id: "toast",
+      position: "absolute",
+      left: 3,
+      top: 1,
+      width: 10,
+      height: 3,
+      border: true,
+      borderStyle: "rounded",
+      zIndex: 50,
+    })
+    testRenderer.root.add(toast)
+    await renderOnce()
+
+    expect(getCellChar(7, 2)).toBe("X")
+  })
+
+  test("does not occlude when shouldFill is false", async () => {
+    const bg = new BoxRenderable(testRenderer, {
+      id: "bg",
+      width: 20,
+      height: 5,
+      backgroundColor: "#222222",
+    })
+    testRenderer.root.add(bg)
+
+    const { TextRenderable } = await import("./Text.js")
+    for (let i = 0; i < 5; i++) {
+      bg.add(new TextRenderable(testRenderer, {
+        id: `line-${i}`,
+        content: "XXXXXXXXXXXXXXXXXXXX",
+        fg: RGBA.fromHex("#ffffff"),
+      }))
+    }
+
+    const toast = new BoxRenderable(testRenderer, {
+      id: "toast",
+      position: "absolute",
+      left: 3,
+      top: 1,
+      width: 10,
+      height: 3,
+      border: true,
+      shouldFill: false,
+      fillTransparentBackground: true,
+      zIndex: 50,
+    })
+    testRenderer.root.add(toast)
+    await renderOnce()
+
+    expect(getCellChar(7, 2)).toBe("X")
+  })
+
+  test("works on borderless box", async () => {
+    const bg = new BoxRenderable(testRenderer, {
+      id: "bg",
+      width: 20,
+      height: 5,
+      backgroundColor: "#222222",
+    })
+    testRenderer.root.add(bg)
+
+    const { TextRenderable } = await import("./Text.js")
+    for (let i = 0; i < 5; i++) {
+      bg.add(new TextRenderable(testRenderer, {
+        id: `line-${i}`,
+        content: "XXXXXXXXXXXXXXXXXXXX",
+        fg: RGBA.fromHex("#ffffff"),
+      }))
+    }
+
+    const overlay = new BoxRenderable(testRenderer, {
+      id: "overlay",
+      position: "absolute",
+      left: 3,
+      top: 1,
+      width: 10,
+      height: 3,
+      fillTransparentBackground: true,
+      zIndex: 50,
+    })
+    testRenderer.root.add(overlay)
+    await renderOnce()
+
+    expect(getCellChar(7, 2)).toBe(" ")
+  })
+})
