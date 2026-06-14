@@ -59,9 +59,17 @@ const PROVIDER_CLASS_BY_ID: Map<string, ProviderClassKind> = (() => {
 export function createProvider(config: ModelConfig): BaseProvider {
   const provider = config.provider.toLowerCase();
   const providerClass = PROVIDER_CLASS_BY_ID.get(provider);
-  if (!providerClass) {
-    const supported = [...PROVIDER_CLASS_BY_ID.keys()].sort().join(", ");
-    throw new Error(`Unknown provider '${config.provider}'. Supported: ${supported}`);
+  if (providerClass) {
+    return new CTOR_BY_CLASS[providerClass](config);
   }
-  return new CTOR_BY_CLASS[providerClass](config);
+  // Custom provider (arbitrary name + base_url): dispatch by wire protocol
+  // instead of by a known id. Anthropic-compatible endpoints use the Anthropic
+  // class; everything else is treated as OpenAI-compatible chat.
+  if (config.baseUrl) {
+    return config.transportProtocol === "anthropic"
+      ? new AnthropicProvider(config)
+      : new OpenAIChatProvider(config);
+  }
+  const supported = [...PROVIDER_CLASS_BY_ID.keys()].sort().join(", ");
+  throw new Error(`Unknown provider '${config.provider}'. Supported: ${supported}`);
 }

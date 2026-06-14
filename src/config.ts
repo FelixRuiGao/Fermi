@@ -612,17 +612,23 @@ export class Config {
       }
     }
 
-    // Local inference servers
+    // Custom / local providers: one endpoint, one or more models.
     for (const [providerId, local] of Object.entries(localProviders)) {
-      const name = `${providerId}:${local.model}`;
-      this._rawModels[name] = {
-        provider: providerId,
-        model: local.model,
-        api_key: local.apiKey ?? "local",
-        base_url: local.baseUrl,
-        context_length: local.contextLength,
-        supports_web_search: false,
-      };
+      for (const m of local.models) {
+        const name = `${providerId}:${m.id}`;
+        this._rawModels[name] = {
+          provider: providerId,
+          model: m.id,
+          api_key: local.apiKey ?? "local",
+          base_url: local.baseUrl,
+          context_length: m.contextLength,
+          transport_protocol: local.protocol === "anthropic" ? "anthropic" : "chat",
+          supports_multimodal: m.multimodal ?? false,
+          supports_web_search: m.webSearch ?? false,
+          ...(m.maxOutputTokens ? { max_tokens: m.maxOutputTokens } : {}),
+          ...(m.thinkingLevels?.length ? { supports_thinking: true } : {}),
+        };
+      }
     }
   }
 

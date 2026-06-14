@@ -480,12 +480,30 @@ export interface LogSessionMeta {
 }
 
 /** Local inference server config (oMLX, LM Studio, etc.) */
+/** One model under a custom/local provider (resolved runtime shape). */
+export interface LocalModelEntry {
+  id: string;
+  contextLength: number;
+  maxOutputTokens?: number;
+  multimodal?: boolean;
+  thinkingLevels?: string[];
+  webSearch?: boolean;
+}
+
+/**
+ * A custom / local provider: one endpoint, one or more models. Covers both
+ * user-defined custom providers and the legacy single-model local servers
+ * (which resolve to a one-element `models`).
+ */
 export interface LocalProviderConfig {
   baseUrl: string;
-  model: string;
-  contextLength: number;
-  /** API key for servers that require authentication (e.g. oMLX). Defaults to "local" if omitted. */
+  /** Wire protocol. Default "openai-chat". */
+  protocol?: "openai-chat" | "anthropic";
+  /** API key for endpoints that require auth. Defaults to "local" if omitted. */
   apiKey?: string;
+  /** Display name shown in the picker. */
+  label?: string;
+  models: LocalModelEntry[];
 }
 
 // ------------------------------------------------------------------
@@ -583,12 +601,36 @@ export interface ProviderEntry {
   api_key_env?: string;
   /** Base URL (local providers / custom endpoints). */
   base_url?: string;
-  /** Model identifier (local providers). */
+  /** Model identifier (legacy single-model local providers). */
   model?: string;
-  /** Context window size (local providers). */
+  /** Context window size (legacy single-model local providers). */
   context_length?: number;
-  /** Optional API key for local servers that need auth. */
+  /** Optional API key for local servers / custom endpoints that need auth. */
   api_key?: string;
+  /** Marks a user-defined custom provider (arbitrary name + endpoint). */
+  custom?: boolean;
+  /** Display name shown in the picker (custom providers). */
+  label?: string;
+  /** Wire protocol for a custom endpoint. Default "openai-chat". */
+  protocol?: "openai-chat" | "anthropic";
+  /** Multiple models under one custom provider (preferred over single `model`). */
+  models?: CustomModelEntry[];
+}
+
+/** One model under a custom provider (settings.json shape). */
+export interface CustomModelEntry {
+  /** API model id sent to the endpoint. */
+  id: string;
+  /** Context window. Required — the UI won't save without it. */
+  context_length: number;
+  /** Max output tokens (used as the request max_tokens cap). */
+  max_output_tokens?: number;
+  /** Image / multimodal input. Default false. */
+  multimodal?: boolean;
+  /** Thinking levels, e.g. ["off","on"]. Default none (not a thinking model). */
+  thinking_levels?: string[];
+  /** Native web search. Default false. */
+  web_search?: boolean;
 }
 
 /** MCP server entry in settings.json. Same shape as the old mcp.json values. */
@@ -1538,13 +1580,24 @@ export function settingsToConfigInputs(settings: FermiSettings): {
       if (entry.api_key_env) {
         // Cloud provider
         providerEnvVars[id] = entry.api_key_env;
-      } else if (entry.base_url && entry.model) {
-        // Local provider
+      } else if (entry.base_url && (entry.models?.length || entry.model)) {
+        // Custom / local provider: prefer models[]; fall back to legacy single model.
+        const models: LocalModelEntry[] = entry.models?.length
+          ? entry.models.map((m) => ({
+              id: m.id,
+              contextLength: m.context_length,
+              maxOutputTokens: m.max_output_tokens,
+              multimodal: m.multimodal,
+              thinkingLevels: m.thinking_levels,
+              webSearch: m.web_search,
+            }))
+          : [{ id: entry.model!, contextLength: entry.context_length ?? 128_000 }];
         localProviders[id] = {
           baseUrl: entry.base_url,
-          model: entry.model,
-          contextLength: entry.context_length ?? 128_000,
+          protocol: entry.protocol ?? "openai-chat",
           apiKey: entry.api_key,
+          label: entry.label,
+          models,
         };
       }
     }
