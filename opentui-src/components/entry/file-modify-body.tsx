@@ -9,13 +9,21 @@
  *   replace — DiffHunk[]: contextBefore + red lines + green lines + contextAfter, with ⋮
  *   append  — DiffHunk[]: ⋮ top + green lines (no ⋮ bottom)
  *   write   — writeLines: syntax-highlighted code lines with line numbers (no ⋮)
+ *
+ * Two-pass rendering (perf): a cheap structural pass turns the data into
+ * `LineDescriptor[]` (line numbers, signs, ellipsis, raw payload text — NO
+ * syntax highlighting), and an expensive `materializeDescriptor` pass builds
+ * the highlighted `StyledText` only for the lines actually displayed. The
+ * detail tab drives a scroll-window so a 400-line streaming write only
+ * highlights + reconciles the ~viewport rows instead of the whole file on
+ * every streamed delta. Inline previews materialize only the trailing window.
  */
 
 import React, { useMemo } from "react";
 
 import { RGBA, StyledText, type TextChunk } from "@opentui/core";
 import { highlightToChunks } from "../../forked/patch-opentui-markdown.js";
-import type { FileModifyDisplayData, DiffHunk } from "../../../src/diff-hunk.js";
+import type { FileModifyDisplayData } from "../../../src/diff-hunk.js";
 import type { ConversationPalette } from "../conversation-types.js";
 import { SelectableRow } from "../../display/primitives/selectable-row.js";
 import {
@@ -37,6 +45,28 @@ const DELETION_BG = "#6a3232";
 const DEFAULT_MAX_VISIBLE = 25;
 
 // ------------------------------------------------------------------
+// Line descriptor — cheap structural representation (no highlighting)
+// ------------------------------------------------------------------
+
+/**
+ * One rendered row, before syntax highlighting. The `prefixChunks` (line
+ * number + sign / ellipsis glyph) are cheap to build for every row; the
+ * `payloadText` is highlighted lazily in `materializeDescriptor` only when the
+ * row is actually shown. Each descriptor renders to exactly one terminal row
+ * (callers use `wrapMode="none"`), so descriptor index == row index — the
+ * scroll-window math relies on this.
+ */
+export interface LineDescriptor {
+  prefixChunks: TextChunk[];
+  /** Highlightable line content, or null for structural rows (ellipsis). */
+  payloadText: string | null;
+  payloadFallbackFg?: RGBA;
+  payloadBrightness?: number;
+  language?: string;
+  rowBackgroundColor?: string;
+}
+
+// ------------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------------
 
@@ -51,13 +81,6 @@ function highlightLine(
     return cloneChunksWithBaseStyle(highlighted, { fallbackFg, brightness });
   }
   return [createChunk(text || " ", { fg: fallbackFg })];
-}
-
-function buildLine(
-  content: StyledText,
-  rowBackgroundColor?: string,
-): ToolResultLineArtifact {
-  return { content, rowBackgroundColor };
 }
 
 function lineNumStr(num: number, width: number): string {
@@ -111,24 +134,27 @@ function truncateChunks(
 }
 
 // ------------------------------------------------------------------
-// Ellipsis line builder
+// Ellipsis descriptor builder
 // ------------------------------------------------------------------
 
-function buildEllipsis(numW: number, dimFg: RGBA): ToolResultLineArtifact {
-  return buildLine(new StyledText([
-    createChunk(numW ? `${lineNumBlank(numW)} ` : "", { fg: dimFg }),
-    createChunk("⋮", { fg: dimFg }),
-  ]));
+function ellipsisDescriptor(numW: number, dimFg: RGBA): LineDescriptor {
+  return {
+    prefixChunks: [
+      createChunk(numW ? `${lineNumBlank(numW)} ` : "", { fg: dimFg }),
+      createChunk("⋮", { fg: dimFg }),
+    ],
+    payloadText: null,
+  };
 }
 
 // ------------------------------------------------------------------
-// Artifact builders
+// Descriptor builders (cheap — no syntax highlighting)
 // ------------------------------------------------------------------
 
-function buildReplaceArtifacts(
+function buildReplaceDescriptors(
   data: FileModifyDisplayData,
   colors: ConversationPalette,
-): ToolResultLineArtifact[] {
+): LineDescriptor[] {
   const dimFg = RGBA.fromHex(colors.dim);
   const redFg = RGBA.fromHex(colors.red);
   const greenFg = RGBA.fromHex(colors.green);
@@ -146,7 +172,7 @@ function buildReplaceArtifacts(
   }
   const numW = maxLineNo > 0 ? Math.max(String(maxLineNo).length, 2) : 0;
 
-  const artifacts: ToolResultLineArtifact[] = [];
+  const descriptors: LineDescriptor[] = [];
 
   for (let i = 0; i < data.hunks.length; i++) {
     const hunk = data.hunks[i];
@@ -157,7 +183,7 @@ function buildReplaceArtifacts(
     if (isFirst) {
       const firstDisplayLine = hunk.startLine - hunk.contextBefore.length;
       if (firstDisplayLine > 1) {
-        artifacts.push(buildEllipsis(numW, dimFg));
+        descriptors.push(ellipsisDescriptor(numW, dimFg));
       }
     } else {
       // Between hunks: only show ⋮ if there are hidden lines between them
@@ -165,7 +191,7 @@ function buildReplaceArtifacts(
       const prevHunkEnd = prevHunk.startLine + prevHunk.deletions.length + prevHunk.contextAfter.length;
       const currHunkStart = hunk.startLine - hunk.contextBefore.length;
       if (currHunkStart > prevHunkEnd) {
-        artifacts.push(buildEllipsis(numW, dimFg));
+        descriptors.push(ellipsisDescriptor(numW, dimFg));
       }
     }
 
@@ -173,70 +199,82 @@ function buildReplaceArtifacts(
     const ctxBeforeStartLine = hunk.startLine - hunk.contextBefore.length;
     for (let j = 0; j < hunk.contextBefore.length; j++) {
       const lineNo = ctxBeforeStartLine + j;
-      const chunks = highlightLine(hunk.contextBefore[j], language, dimFg, DIFF_BRIGHTNESS_CONTEXT);
-      artifacts.push(buildLine(new StyledText([
-        createChunk(numW ? `${lineNumStr(lineNo, numW)} ` : "", { fg: dimFg }),
-        createChunk(" ", { fg: dimFg }),
-        ...chunks,
-      ])));
+      descriptors.push({
+        prefixChunks: [
+          createChunk(numW ? `${lineNumStr(lineNo, numW)} ` : "", { fg: dimFg }),
+          createChunk(" ", { fg: dimFg }),
+        ],
+        payloadText: hunk.contextBefore[j],
+        payloadFallbackFg: dimFg,
+        payloadBrightness: DIFF_BRIGHTNESS_CONTEXT,
+        language,
+      });
     }
 
     // Deletions (red)
     for (let j = 0; j < hunk.deletions.length; j++) {
       const lineNo = hunk.startLine + j;
-      const chunks = highlightLine(hunk.deletions[j], language, redFg, DIFF_BRIGHTNESS_DELETION);
-      artifacts.push(buildLine(
-        new StyledText([
+      descriptors.push({
+        prefixChunks: [
           createChunk(numW ? `${lineNumStr(lineNo, numW)} ` : "", { fg: dimFg }),
           createChunk("-", { fg: redFg }),
-          ...chunks,
-        ]),
-        DELETION_BG,
-      ));
+        ],
+        payloadText: hunk.deletions[j],
+        payloadFallbackFg: redFg,
+        payloadBrightness: DIFF_BRIGHTNESS_DELETION,
+        language,
+        rowBackgroundColor: DELETION_BG,
+      });
     }
 
     // Additions (green)
     for (let j = 0; j < hunk.additions.length; j++) {
       const lineNo = hunk.startLine + j;
-      const chunks = highlightLine(hunk.additions[j], language, greenFg, DIFF_BRIGHTNESS_ADDITION);
-      artifacts.push(buildLine(
-        new StyledText([
+      descriptors.push({
+        prefixChunks: [
           createChunk(numW ? `${lineNumStr(lineNo, numW)} ` : "", { fg: dimFg }),
           createChunk("+", { fg: greenFg }),
-          ...chunks,
-        ]),
-        ADDITION_BG,
-      ));
+        ],
+        payloadText: hunk.additions[j],
+        payloadFallbackFg: greenFg,
+        payloadBrightness: DIFF_BRIGHTNESS_ADDITION,
+        language,
+        rowBackgroundColor: ADDITION_BG,
+      });
     }
 
     // Context after
     const afterStartLine = hunk.startLine + hunk.deletions.length;
     for (let j = 0; j < hunk.contextAfter.length; j++) {
       const lineNo = afterStartLine + j;
-      const chunks = highlightLine(hunk.contextAfter[j], language, dimFg, DIFF_BRIGHTNESS_CONTEXT);
-      artifacts.push(buildLine(new StyledText([
-        createChunk(numW ? `${lineNumStr(lineNo, numW)} ` : "", { fg: dimFg }),
-        createChunk(" ", { fg: dimFg }),
-        ...chunks,
-      ])));
+      descriptors.push({
+        prefixChunks: [
+          createChunk(numW ? `${lineNumStr(lineNo, numW)} ` : "", { fg: dimFg }),
+          createChunk(" ", { fg: dimFg }),
+        ],
+        payloadText: hunk.contextAfter[j],
+        payloadFallbackFg: dimFg,
+        payloadBrightness: DIFF_BRIGHTNESS_CONTEXT,
+        language,
+      });
     }
 
     // ⋮ bottom: only if there are hidden lines below
     if (isLast) {
       const lastDisplayLine = afterStartLine + hunk.contextAfter.length - 1;
       if (data.totalLineCount > 0 && lastDisplayLine < data.totalLineCount) {
-        artifacts.push(buildEllipsis(numW, dimFg));
+        descriptors.push(ellipsisDescriptor(numW, dimFg));
       }
     }
   }
 
-  return artifacts;
+  return descriptors;
 }
 
-function buildAppendArtifacts(
+function buildAppendDescriptors(
   data: FileModifyDisplayData,
   colors: ConversationPalette,
-): ToolResultLineArtifact[] {
+): LineDescriptor[] {
   const dimFg = RGBA.fromHex(colors.dim);
   const greenFg = RGBA.fromHex(colors.green);
   const language = data.language;
@@ -249,33 +287,35 @@ function buildAppendArtifacts(
   const maxLineNo = startLine + lines.length - 1;
   const numW = startLine > 0 ? Math.max(String(maxLineNo).length, 2) : 0;
 
-  const artifacts: ToolResultLineArtifact[] = [];
+  const descriptors: LineDescriptor[] = [];
 
   // ⋮ top: always (there's existing file content above)
-  artifacts.push(buildEllipsis(numW, dimFg));
+  descriptors.push(ellipsisDescriptor(numW, dimFg));
 
   for (let idx = 0; idx < lines.length; idx++) {
-    const chunks = highlightLine(lines[idx], language, greenFg, DIFF_BRIGHTNESS_ADDITION);
     const ln = startLine && numW ? `${lineNumStr(startLine + idx, numW)} ` : "";
-    artifacts.push(buildLine(
-      new StyledText([
+    descriptors.push({
+      prefixChunks: [
         createChunk(ln, { fg: dimFg }),
         createChunk("+", { fg: greenFg }),
-        ...chunks,
-      ]),
-      ADDITION_BG,
-    ));
+      ],
+      payloadText: lines[idx],
+      payloadFallbackFg: greenFg,
+      payloadBrightness: DIFF_BRIGHTNESS_ADDITION,
+      language,
+      rowBackgroundColor: ADDITION_BG,
+    });
   }
 
   // No ⋮ bottom — append content IS the end of the file
 
-  return artifacts;
+  return descriptors;
 }
 
-function buildWriteArtifacts(
+function buildWriteDescriptors(
   data: FileModifyDisplayData,
   colors: ConversationPalette,
-): ToolResultLineArtifact[] {
+): LineDescriptor[] {
   const textFg = RGBA.fromHex(colors.text);
   const dimFg = RGBA.fromHex(colors.dim);
   const language = data.language;
@@ -287,13 +327,60 @@ function buildWriteArtifacts(
 
   // No ⋮ — write shows the full file content
   // No brightness boost — this is neutral file content, not a diff addition
-  return lines.map((line, idx) => {
-    const chunks = highlightLine(line, language, textFg);
-    return buildLine(new StyledText([
-      createChunk(`${lineNumStr(idx + 1, numW)} `, { fg: dimFg }),
-      ...chunks,
-    ]));
-  });
+  return lines.map((line, idx) => ({
+    prefixChunks: [createChunk(`${lineNumStr(idx + 1, numW)} `, { fg: dimFg })],
+    payloadText: line,
+    payloadFallbackFg: textFg,
+    language,
+  }));
+}
+
+/** Cheap structural pass — turns display data into row descriptors (no highlighting). */
+export function buildLineDescriptors(
+  data: FileModifyDisplayData,
+  colors: ConversationPalette,
+): LineDescriptor[] {
+  switch (data.mode) {
+    case "replace": return buildReplaceDescriptors(data, colors);
+    case "append": return buildAppendDescriptors(data, colors);
+    case "write": return buildWriteDescriptors(data, colors);
+  }
+}
+
+/** Expensive pass — highlights one descriptor and builds its final StyledText row. */
+export function materializeDescriptor(
+  desc: LineDescriptor,
+  contentWidth: number,
+  dimFg: RGBA,
+): ToolResultLineArtifact {
+  const payload = desc.payloadText != null
+    ? highlightLine(desc.payloadText, desc.language, desc.payloadFallbackFg ?? dimFg, desc.payloadBrightness)
+    : [];
+  let chunks = payload.length > 0 ? desc.prefixChunks.concat(payload) : desc.prefixChunks;
+  if (contentWidth > 0) chunks = truncateChunks(chunks, contentWidth, dimFg);
+  return { content: new StyledText(chunks), rowBackgroundColor: desc.rowBackgroundColor };
+}
+
+/**
+ * Full materialize (all rows) — used by tests as the equivalence oracle for
+ * the windowed render: `materializeRange(descs, a, b)` must byte-match
+ * `materializeAll(descs).slice(a, b)`.
+ */
+export function materializeDescriptors(
+  descriptors: LineDescriptor[],
+  colors: ConversationPalette,
+  contentWidth: number,
+  start = 0,
+  end = descriptors.length,
+): ToolResultLineArtifact[] {
+  const dimFg = RGBA.fromHex(colors.dim);
+  const lo = Math.max(0, Math.min(start, descriptors.length));
+  const hi = Math.max(lo, Math.min(end, descriptors.length));
+  const out: ToolResultLineArtifact[] = [];
+  for (let i = lo; i < hi; i++) {
+    out.push(materializeDescriptor(descriptors[i], contentWidth, dimFg));
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------
@@ -305,7 +392,14 @@ interface FileModifyBodyProps {
   colors: ConversationPalette;
   contentWidth: number;
   streaming: boolean;
+  /** Inline mode: render only the trailing N rows (default 25). Ignored when `window` is set. */
   maxVisibleLines?: number;
+  /**
+   * Detail (virtualized) mode: render only rows in `[start, end)`, padded with
+   * spacer boxes above/below so the scrollbar geometry stays correct. The
+   * caller (detail tab) computes this window from the live scroll offset.
+   */
+  window?: { start: number; end: number };
   onOpenDetail?: () => void;
 }
 
@@ -313,34 +407,57 @@ function FileModifyBodyInner({
   data,
   colors,
   contentWidth,
-  streaming,
   maxVisibleLines = DEFAULT_MAX_VISIBLE,
+  window,
   onOpenDetail,
 }: FileModifyBodyProps): React.ReactNode {
-  const rawArtifacts = useMemo(() => {
-    switch (data.mode) {
-      case "replace": return buildReplaceArtifacts(data, colors);
-      case "append": return buildAppendArtifacts(data, colors);
-      case "write": return buildWriteArtifacts(data, colors);
-    }
-  }, [data, colors]);
+  const descriptors = useMemo(() => buildLineDescriptors(data, colors), [data, colors]);
+  const dimFg = useMemo(() => RGBA.fromHex(colors.dim), [colors.dim]);
+  const total = descriptors.length;
 
-  const artifacts = useMemo(() => {
-    if (contentWidth <= 0) return rawArtifacts;
-    const dimFg = RGBA.fromHex(colors.dim);
-    return rawArtifacts.map((a) => {
-      const truncated = truncateChunks(a.content.chunks, contentWidth, dimFg);
-      if (truncated === a.content.chunks) return a;
-      return { ...a, content: new StyledText(truncated) };
-    });
-  }, [rawArtifacts, contentWidth, colors]);
+  const virtualized = window != null;
+  const start = virtualized
+    ? Math.max(0, Math.min(window.start, total))
+    : Math.max(0, total - maxVisibleLines);
+  const end = virtualized
+    ? Math.max(start, Math.min(window.end, total))
+    : total;
 
-  const total = artifacts.length;
-  const overflowCount = Math.max(0, total - maxVisibleLines);
-  const visibleArtifacts = overflowCount > 0
-    ? artifacts.slice(total - maxVisibleLines)
-    : artifacts;
+  const visible = useMemo(
+    () => {
+      const out: ToolResultLineArtifact[] = [];
+      for (let i = start; i < end; i++) {
+        out.push(materializeDescriptor(descriptors[i], contentWidth, dimFg));
+      }
+      return out;
+    },
+    [descriptors, start, end, contentWidth, dimFg],
+  );
 
+  const rows = visible.map((artifact, idx) => (
+    <box
+      key={start + idx}
+      flexDirection="row"
+      width="100%"
+      backgroundColor={artifact.rowBackgroundColor}
+    >
+      <text content={artifact.content} wrapMode="none" />
+    </box>
+  ));
+
+  if (virtualized) {
+    const topSpacer = start;
+    const bottomSpacer = total - end;
+    return (
+      <box flexDirection="column" gap={0}>
+        {topSpacer > 0 ? <box height={topSpacer} flexShrink={0} /> : null}
+        {rows}
+        {bottomSpacer > 0 ? <box height={bottomSpacer} flexShrink={0} /> : null}
+      </box>
+    );
+  }
+
+  const overflowCount = start;
   return (
     <box flexDirection="column" gap={0}>
       {overflowCount > 0 ? (
@@ -351,16 +468,7 @@ function FileModifyBodyInner({
           <text fg={colors.dim} content={`...(${overflowCount} earlier lines${onOpenDetail ? ", CLICK to open" : ""})`} />
         </SelectableRow>
       ) : null}
-      {visibleArtifacts.map((artifact, idx) => (
-        <box
-          key={idx}
-          flexDirection="row"
-          width="100%"
-          backgroundColor={artifact.rowBackgroundColor}
-        >
-          <text content={artifact.content} wrapMode="none" />
-        </box>
-      ))}
+      {rows}
     </box>
   );
 }
@@ -373,5 +481,7 @@ export const FileModifyBody = React.memo(
     && prev.contentWidth === next.contentWidth
     && prev.streaming === next.streaming
     && prev.maxVisibleLines === next.maxVisibleLines
-    && prev.onOpenDetail === next.onOpenDetail,
+    && prev.onOpenDetail === next.onOpenDetail
+    && prev.window?.start === next.window?.start
+    && prev.window?.end === next.window?.end,
 );

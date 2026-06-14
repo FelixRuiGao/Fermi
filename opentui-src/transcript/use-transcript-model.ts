@@ -8,6 +8,9 @@ import type { Session as TuiSession } from "../../src/ui/contracts.js";
 import { reconcileEntries } from "./reconcile.js";
 import type { ReconciledConversationEntry } from "./types.js";
 
+/** Coalescing window for the high-frequency subscribeLog signal (~one frame). */
+const SYNC_COALESCE_MS = 32;
+
 export interface ActiveTranscriptSource {
   sourceKey: string;
   logRevision: number;
@@ -106,22 +109,57 @@ export function useTranscriptModel(
     };
   }, [session]);
 
+  // Coalesce the subscribeLog signal. `subscribeLog` fires synchronously on
+  // every log mutation (Session._touchLog → notifyListeners), so a streamed
+  // tool call emits dozens of notifications per second — each one otherwise
+  // forcing a full projection + reconcile on the main thread (which starves
+  // scrolling). Collapse a burst to ~one sync per frame (leading + trailing);
+  // the poller below still guarantees an eventual sync.
+  const coalesceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const coalesceTrailingRef = useRef(false);
+  const scheduleSync = useCallback(() => {
+    if (coalesceTimerRef.current != null) {
+      coalesceTrailingRef.current = true;
+      return;
+    }
+    syncTranscript();
+    coalesceTimerRef.current = setTimeout(function tick() {
+      coalesceTimerRef.current = null;
+      if (coalesceTrailingRef.current) {
+        coalesceTrailingRef.current = false;
+        scheduleSync();
+      }
+    }, SYNC_COALESCE_MS);
+  }, [syncTranscript]);
+
   useEffect(() => {
     syncTranscript();
   }, [childSessions, selectedChildId, syncTranscript]);
 
   useEffect(() => {
+    // Sync once on (re)subscribe so a trailing sync dropped by the previous
+    // effect's cleanup — e.g. when `active` flips false at turn-end while a
+    // coalesce window was still open — is never missed. Runs on setup only
+    // (cleanup never setStates, avoiding unmounted-update warnings); the
+    // shouldSyncTranscript guard makes it a no-op when nothing changed.
+    syncTranscript();
     const unsubscribe = typeof session.subscribeLog === "function"
-      ? session.subscribeLog(syncTranscript)
+      ? session.subscribeLog(scheduleSync)
       : undefined;
-    // subscribeLog is the primary signal; the poller is a fallback for state
-    // that changes without a log bump. Idle sessions don't need it hot.
+    // subscribeLog is the primary signal (coalesced above); the poller is a
+    // fallback for state that changes without a log bump, and calls the sync
+    // directly since it is already coarse. Idle sessions don't need it hot.
     const poller = setInterval(syncTranscript, active ? 250 : 1000);
     return () => {
       if (unsubscribe) unsubscribe();
       clearInterval(poller);
+      if (coalesceTimerRef.current != null) {
+        clearTimeout(coalesceTimerRef.current);
+        coalesceTimerRef.current = null;
+      }
+      coalesceTrailingRef.current = false;
     };
-  }, [session, syncTranscript, active]);
+  }, [session, syncTranscript, scheduleSync, active]);
 
   return items;
 }

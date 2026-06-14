@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/react */
 
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { useRenderer } from "@opentui/react";
 
 import type { PresentationEntry } from "../../presentation/types.js";
 import type { ConversationPalette } from "../conversation-types.js";
@@ -15,6 +16,13 @@ interface DetailToolTabProps {
   scrollRef: React.RefObject<any>;
 }
 
+/** Extra rows materialized above/below the viewport so a fast scroll doesn't
+ * reveal un-rendered gaps before the next frame catches up. */
+const WINDOW_BUFFER = 12;
+/** Generous first-paint window before the frame callback measures the real
+ * viewport; corrected within one frame. */
+const INITIAL_WINDOW_END = 120;
+
 function DetailToolTabInner(
   { entry, colors, contentWidth, scrollRef }: DetailToolTabProps,
 ): React.ReactNode {
@@ -25,19 +33,48 @@ function DetailToolTabInner(
   const title = toolText ? `${displayName} ${toolText}` : displayName;
 
   const fmd = entry.fileModifyData;
+  const usesFmd = !!fmd && (fmd.hunks.length > 0 || (fmd.writeLines != null && fmd.writeLines.length > 0));
+
+  const renderer = useRenderer();
+  const [window, setWindow] = useState<{ start: number; end: number }>(
+    { start: 0, end: INITIAL_WINDOW_END },
+  );
+  // Mirror window in a ref so the frame callback compares without re-registering.
+  const windowRef = useRef(window);
+  windowRef.current = window;
+
+  // Virtualization: track the live scroll offset each frame and only re-window
+  // (→ re-materialize visible rows) when the visible range actually moves.
+  useEffect(() => {
+    if (!usesFmd) return;
+    const cb = async (): Promise<void> => {
+      const sb = scrollRef.current;
+      if (!sb) return;
+      const scrollTop = sb.scrollTop ?? 0;
+      const viewportHeight = sb.viewport?.height ?? INITIAL_WINDOW_END;
+      const start = Math.max(0, Math.floor(scrollTop) - WINDOW_BUFFER);
+      const end = Math.ceil(scrollTop + viewportHeight) + WINDOW_BUFFER;
+      const prev = windowRef.current;
+      if (prev.start !== start || prev.end !== end) {
+        setWindow({ start, end });
+      }
+    };
+    renderer.setFrameCallback(cb);
+    return () => renderer.removeFrameCallback(cb);
+  }, [renderer, scrollRef, usesFmd]);
 
   return (
     <box flexDirection="column" flexGrow={1} width="100%">
       <SectionHeader label={title} color={colors.dim} paddingLeft={2} paddingBottom={1} />
       <ScrollViewport colors={colors} scrollRef={scrollRef}>
-        {fmd && (fmd.hunks.length > 0 || (fmd.writeLines && fmd.writeLines.length > 0)) ? (
+        {usesFmd ? (
           <box paddingLeft={2} paddingRight={2}>
             <FileModifyBody
-              data={fmd}
+              data={fmd!}
               colors={colors}
               contentWidth={Math.max(8, contentWidth - 6)}
               streaming={entry.state === "active"}
-              maxVisibleLines={Infinity}
+              window={window}
             />
           </box>
         ) : streamSections.length > 0 ? (

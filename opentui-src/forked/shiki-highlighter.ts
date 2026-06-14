@@ -29,7 +29,67 @@ let currentShikiTheme: string = SHIKI_THEME_DARK;
 
 /** Switch the shiki theme to use for subsequent highlight calls. */
 export function setShikiTheme(mode: ThemeMode): void {
-  currentShikiTheme = mode === "light" ? SHIKI_THEME_LIGHT : SHIKI_THEME_DARK;
+  const next = mode === "light" ? SHIKI_THEME_LIGHT : SHIKI_THEME_DARK;
+  if (next !== currentShikiTheme) {
+    currentShikiTheme = next;
+    // Keys embed the theme so stale entries are never returned; clear anyway
+    // to bound memory across switches.
+    highlightCache.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-line highlight cache (LRU)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokenization is the dominant cost in syntax highlighting, and callers
+ * (file-modify body, markdown code blocks) re-highlight the *same* line text
+ * repeatedly — every streaming rebuild re-runs the whole visible file through
+ * `codeToTokens`, even though only the appended tail actually changed. This
+ * LRU memoizes `(theme, lang, code) -> raw tokens` so stable lines become
+ * cache hits and only genuinely-new text is tokenized.
+ *
+ * The cache stores *raw* token data (`{ text, color? }`, color as a hex
+ * string) — NOT live `TextChunk`/`RGBA` objects. Every access rebuilds fresh
+ * chunks with fresh `RGBA` instances (`chunksFromRawTokens`), so a consumer
+ * can never mutate state shared with the cache or with another call. This
+ * preserves the pre-cache contract (each call produced brand-new chunks); the
+ * only thing a hit skips is the expensive `codeToTokens`.
+ */
+interface RawToken {
+  text: string;
+  color?: string;
+}
+
+const HIGHLIGHT_CACHE_MAX = 4000;
+const highlightCache = new Map<string, RawToken[]>();
+
+function cacheGet(key: string): RawToken[] | undefined {
+  const hit = highlightCache.get(key);
+  if (hit === undefined) return undefined;
+  // Refresh recency (Map preserves insertion order → re-insert moves to tail).
+  highlightCache.delete(key);
+  highlightCache.set(key, hit);
+  return hit;
+}
+
+function cacheSet(key: string, value: RawToken[]): void {
+  if (highlightCache.size >= HIGHLIGHT_CACHE_MAX) {
+    // Evict least-recently-used (first inserted).
+    const oldest = highlightCache.keys().next().value;
+    if (oldest !== undefined) highlightCache.delete(oldest);
+  }
+  highlightCache.set(key, value);
+}
+
+/** Rebuild fresh `TextChunk[]` (fresh RGBA objects) from cached raw tokens. */
+function chunksFromRawTokens(tokens: RawToken[]): TextChunk[] {
+  return tokens.map((t) => ({
+    __isChunk: true,
+    text: t.text,
+    fg: t.color ? RGBA.fromHex(t.color) : undefined,
+  }));
 }
 
 /**
@@ -154,6 +214,12 @@ export function shikiHighlightToChunks(
     return null;
   }
 
+  const cacheKey = `${currentShikiTheme}\x00${resolved}\x00${code}`;
+  const cached = cacheGet(cacheKey);
+  if (cached !== undefined) {
+    return cached.length > 0 ? chunksFromRawTokens(cached) : null;
+  }
+
   try {
     const result = highlighter.codeToTokens(code, {
       lang: resolved,
@@ -161,23 +227,21 @@ export function shikiHighlightToChunks(
     });
 
     // result.tokens is line-based — each outer entry is a line of tokens
-    // with line breaks stripped by Shiki.  Flatten into a single chunk
-    // array, inserting a "\n" chunk between lines to preserve line breaks.
-    const chunks: TextChunk[] = [];
+    // with line breaks stripped by Shiki.  Flatten into a single raw-token
+    // array, inserting a "\n" token between lines to preserve line breaks.
+    const tokens: RawToken[] = [];
     for (let i = 0; i < result.tokens.length; i++) {
       const line = result.tokens[i];
       for (const token of line) {
-        chunks.push({
-          __isChunk: true,
-          text: token.content,
-          fg: token.color ? RGBA.fromHex(token.color) : undefined,
-        });
+        tokens.push({ text: token.content, color: token.color });
       }
       if (i < result.tokens.length - 1) {
-        chunks.push({ __isChunk: true, text: "\n" });
+        tokens.push({ text: "\n" });
       }
     }
-    return chunks.length > 0 ? chunks : null;
+    // Cache even empty results so repeated misses on the same text are cheap.
+    cacheSet(cacheKey, tokens);
+    return tokens.length > 0 ? chunksFromRawTokens(tokens) : null;
   } catch {
     return null;
   }

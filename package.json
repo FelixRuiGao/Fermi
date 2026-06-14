@@ -33,8 +33,8 @@
     "dev": "bun run opentui-src/main.tsx",
     "dev:cli": "bun src/cli.ts",
     "opentui:dev": "bun run opentui-src/main.tsx",
-    "test": "bun test tests/ opentui-src/transcript/",
-    "test:watch": "bun test --watch tests/ opentui-src/transcript/",
+    "test": "bun test tests/ opentui-src/transcript/ opentui-src/components/",
+    "test:watch": "bun test --watch tests/ opentui-src/transcript/ opentui-src/components/",
     "typecheck": "tsc --noEmit",
     "docs:dev": "npm --prefix docs-site run dev",
     "docs:build": "npm --prefix docs-site install && npm --prefix docs-site run build"
