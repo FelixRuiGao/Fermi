@@ -1401,6 +1401,24 @@ function slugifyProviderId(label: string): string {
   return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "custom";
 }
 
+/** Best-effort reachability probe for a custom endpoint. */
+async function testEndpoint(baseUrl: string, apiKey: string | undefined, protocol: string): Promise<{ ok: boolean; detail: string }> {
+  if (protocol === "anthropic") return { ok: true, detail: "skipped (Anthropic endpoints have no /v1/models)" };
+  try {
+    const url = `${baseUrl.replace(/\/+$/, "")}/models`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const headers: Record<string, string> = {};
+    if (apiKey && apiKey !== "local") headers["Authorization"] = `Bearer ${apiKey}`;
+    const res = await fetch(url, { headers, signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) return { ok: true, detail: `reachable (HTTP ${res.status})` };
+    return { ok: false, detail: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? " — check API key" : ""}` };
+  } catch (e) {
+    return { ok: false, detail: `unreachable: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 /** Prompt for a token count: suggested value (if any) + common presets + custom; optional skip. */
 async function promptTokenCount(
   ctx: CommandContext,
@@ -1533,6 +1551,10 @@ async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
   // 4. API key (optional)
   const apiKey = (await ctx.promptSecret({ message: `${label} — API key (Enter to skip if none required)`, allowEmpty: true }))?.trim();
 
+  // Reachability probe (informational; the user can still continue either way).
+  const probe = await testEndpoint(baseUrl, apiKey, protocol);
+  ctx.showMessage(probe.ok ? `✓ Endpoint ${probe.detail}` : `⚠ Endpoint ${probe.detail} — you can still continue and add models manually.`);
+
   // 5-6. Discover + add models (multi-model loop, doesn't close after each).
   const added = await addModelsInteractive(ctx, { label, baseUrl, protocol, apiKey });
   if (!added || added.length === 0) return false;
@@ -1569,6 +1591,7 @@ async function cmdManageCustomProvider(ctx: CommandContext, providerId: string):
     message: `Manage "${label}" (${models.length} model${models.length === 1 ? "" : "s"})`,
     options: [
       { label: "Add model(s)", value: "add" },
+      { label: "Edit endpoint / API key", value: "edit" },
       { label: "Remove a model", value: "rm" },
       { label: "Delete this provider", value: "del" },
       { label: "Cancel", value: "cancel" },
@@ -1581,6 +1604,27 @@ async function cmdManageCustomProvider(ctx: CommandContext, providerId: string):
   const apiKeyForDiscover = apiKeyRef.startsWith("${") ? process.env[apiKeyRef.slice(2, -1)] : apiKeyRef;
   const saveProviders = (next: Record<string, ProviderEntry>) =>
     persistSettingsPatch({ providers: next }, ctx.fermiHomeDir);
+
+  if (action === "edit") {
+    const newUrl = (await ctx.promptSecret!({ message: `${label} — new endpoint URL (Enter to keep "${entry.base_url}")`, allowEmpty: true }))?.trim();
+    const newKey = (await ctx.promptSecret!({ message: `${label} — new API key (Enter to keep current)`, allowEmpty: true }))?.trim();
+    const newBaseUrl = newUrl || entry.base_url || "";
+    let apiKeyField = entry.api_key;
+    if (newKey) {
+      const envVar = `FERMI_CUSTOM_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_KEY`;
+      setDotenvKey(envVar, newKey, ctx.fermiHomeDir);
+      process.env[envVar] = newKey;
+      apiKeyField = `\${${envVar}}`;
+    }
+    const updated: ProviderEntry = { ...entry, base_url: newBaseUrl, ...(apiKeyField ? { api_key: apiKeyField } : {}) };
+    saveProviders({ ...settings.providers, [providerId]: updated });
+    const ref = apiKeyField ?? "local";
+    for (const m of models) registerCustomModel(config, providerId, newBaseUrl, protocol, ref, m);
+    const probeKey = newKey || (apiKeyField?.startsWith("${") ? process.env[apiKeyField.slice(2, -1)] : apiKeyField);
+    const probe = await testEndpoint(newBaseUrl, probeKey, protocol);
+    ctx.showMessage(`Updated "${label}". ${probe.ok ? "✓ " + probe.detail : "⚠ " + probe.detail}`);
+    return;
+  }
 
   if (action === "add") {
     const existingIds = new Set(models.map((m) => m.id));
