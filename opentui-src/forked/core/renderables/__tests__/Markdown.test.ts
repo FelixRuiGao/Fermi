@@ -175,6 +175,15 @@ function getMarginBottom(renderable: { getLayoutNode(): { getMargin(edge: Edge):
   return 0
 }
 
+function getMarginTop(renderable: { getLayoutNode(): { getMargin(edge: Edge): unknown } }): number {
+  const margin = renderable.getLayoutNode().getMargin(Edge.Top) as unknown
+  if (typeof margin === "number") return margin
+  if (typeof margin === "object" && margin && "value" in margin && typeof margin.value === "number") {
+    return margin.value
+  }
+  return 0
+}
+
 test("basic table alignment", async () => {
   const markdown = `| Name | Age |
 |---|---|
@@ -572,7 +581,8 @@ const value = 1
   await renderMarkdownRenderable(md)
 
   expect(md._blockStates.map((state) => state.token.type)).toEqual(["paragraph", "code"])
-  expect(getMarginBottom(md._blockStates[0]!.renderable)).toBe(1)
+  // Coalesced spacing lives on the following block's marginTop, not the prior block's marginBottom.
+  expect(getMarginTop(md._blockStates[1]!.renderable)).toBe(1)
 
   const lines = captureFrame()
     .split("\n")
@@ -599,7 +609,8 @@ const value = 1
   renderer.root.add(md)
   await renderMarkdownRenderable(md)
 
-  expect(getMarginBottom(md._blockStates[0]!.renderable)).toBe(1)
+  // Coalesced spacing lives on the code block's marginTop, not the paragraph's marginBottom.
+  expect(getMarginTop(md._blockStates[1]!.renderable)).toBe(1)
 
   md.content = "Before"
   await renderMarkdownRenderable(md)
@@ -623,7 +634,8 @@ After`,
   await renderMarkdownRenderable(md)
 
   expect(md._blockStates.map((state) => state.token.type)).toEqual(["code", "paragraph"])
-  expect(getMarginBottom(md._blockStates[0]!.renderable)).toBe(1)
+  // Coalesced spacing lives on the following paragraph's marginTop, not the code block's marginBottom.
+  expect(getMarginTop(md._blockStates[1]!.renderable)).toBe(1)
 
   md.content = `\`\`\`ts
 const value = 1
@@ -2231,6 +2243,7 @@ Third paragraph.`,
     Second paragraph.
 
     WIDGET: custom
+
     Third paragraph."
   `)
 })

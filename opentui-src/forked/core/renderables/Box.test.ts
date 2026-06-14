@@ -444,11 +444,15 @@ describe("BoxRenderable - no-op rendering", () => {
     await renderOnce()
 
     const lines = captureFrame().split("\n")
-    expect(lines[0].slice(0, 10)).toBe("  Test    ")
+    // Fermi (Decision 1) draws a titleColor'd title itself in JS with one space of
+    // padding on each side (` Test `), so the title sits one column right of upstream's
+    // flush-left native title (T at col 3, not col 2). This padded placement is the
+    // intended Fermi visual and what the Agents│Todos status panel relies on.
+    expect(lines[0].slice(0, 10)).toBe("   Test   ")
     expect(lines[4].slice(0, 10)).toBe("     Bot  ")
     expect(getCellChar(0, 0)).toBe(" ")
-    expect(getCellChar(2, 0)).toBe("T")
-    expect(getCellForeground(2, 0)).toEqual([255, 0, 0, 255])
+    expect(getCellChar(3, 0)).toBe("T")
+    expect(getCellForeground(3, 0)).toEqual([255, 0, 0, 255])
     expect(getCellChar(5, 4)).toBe("B")
     expect(getCellForeground(5, 4)).toEqual([255, 0, 0, 255])
   })

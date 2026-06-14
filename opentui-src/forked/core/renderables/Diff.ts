@@ -55,6 +55,13 @@ export interface DiffRenderableOptions extends RenderableOptions<DiffRenderable>
 export class DiffRenderable extends Renderable {
   private _diff: string
   private _syncScroll: boolean = false
+  // Last-mirrored scroll offsets of each pane, used by onUpdate to detect which pane the
+  // user moved and copy it to the other (see onUpdate for why sync lives there, not in
+  // onMouseEvent).
+  private _syncedLeftScrollY = 0
+  private _syncedLeftScrollX = 0
+  private _syncedRightScrollY = 0
+  private _syncedRightScrollX = 0
   private _view: "unified" | "split"
   private _parsedDiff: StructuredPatch | null = null
   private _parseError: Error | null = null
@@ -194,28 +201,33 @@ export class DiffRenderable extends Renderable {
     }
   }
 
-  protected override onMouseEvent(event: MouseEvent): void {
-    if (event.type !== "scroll" || this._view !== "split" || !this._syncScroll) return
-    if (!this.leftCodeRenderable || !this.rightCodeRenderable) return
-    if (!event.target) return
+  // Scroll sync runs here, not in onMouseEvent: a CodeRenderable consumes its own wheel
+  // event (stopPropagation) so the scroll never bubbles to this parent, and the wheel
+  // delta is applied a frame later in the pane's own onUpdate. We therefore detect, once
+  // per frame, which pane's settled scroll moved since we last mirrored and copy it to the
+  // other. This lands one frame after the scroll — imperceptible in practice.
+  protected override onUpdate(deltaTime: number): void {
+    super.onUpdate(deltaTime)
 
-    if (this.isInsideSide(event.target, "left")) {
-      this.rightCodeRenderable.scrollY = this.leftCodeRenderable.scrollY
-      this.rightCodeRenderable.scrollX = this.leftCodeRenderable.scrollX
-    } else if (this.isInsideSide(event.target, "right")) {
-      this.leftCodeRenderable.scrollY = this.rightCodeRenderable.scrollY
-      this.leftCodeRenderable.scrollX = this.rightCodeRenderable.scrollX
-    }
-  }
+    const left = this.leftCodeRenderable
+    const right = this.rightCodeRenderable
+    if (!this._syncScroll || this._view !== "split" || !left || !right) return
 
-  private isInsideSide(target: Renderable | null, side: "left" | "right"): boolean {
-    const container = side === "left" ? this.leftCodeRenderable : this.rightCodeRenderable
-    let current = target
-    while (current) {
-      if (current === container) return true
-      current = current.parent
+    const leftMoved = left.scrollY !== this._syncedLeftScrollY || left.scrollX !== this._syncedLeftScrollX
+    const rightMoved = right.scrollY !== this._syncedRightScrollY || right.scrollX !== this._syncedRightScrollX
+
+    if (leftMoved) {
+      right.scrollY = left.scrollY
+      right.scrollX = left.scrollX
+    } else if (rightMoved) {
+      left.scrollY = right.scrollY
+      left.scrollX = right.scrollX
     }
-    return false
+
+    this._syncedLeftScrollY = left.scrollY
+    this._syncedLeftScrollX = left.scrollX
+    this._syncedRightScrollY = right.scrollY
+    this._syncedRightScrollX = right.scrollX
   }
 
   protected override onResize(width: number, height: number): void {
@@ -941,6 +953,15 @@ export class DiffRenderable extends Renderable {
   public set syncScroll(value: boolean) {
     if (this._syncScroll !== value) {
       this._syncScroll = value
+      if (value && this.leftCodeRenderable && this.rightCodeRenderable) {
+        // Seed the mirror baselines to the panes' current offsets. Without this, enabling
+        // sync after the panes were independently scrolled makes the next onUpdate see both
+        // as "moved" and snap one pane to the other's stale position.
+        this._syncedLeftScrollY = this.leftCodeRenderable.scrollY
+        this._syncedLeftScrollX = this.leftCodeRenderable.scrollX
+        this._syncedRightScrollY = this.rightCodeRenderable.scrollY
+        this._syncedRightScrollX = this.rightCodeRenderable.scrollX
+      }
     }
   }
 

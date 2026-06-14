@@ -2370,15 +2370,18 @@ test("DiffRenderable - split view scroll is not synchronized by default", async 
   expect(leftCodeRenderable).toBeTruthy()
   expect(rightCodeRenderable).toBeTruthy()
 
-  // Scroll over left pane
-  mockMouse.scroll(leftCodeRenderable.x, leftCodeRenderable.y + 1, "down")
+  // Scroll over left pane. The delay (> the renderer's 48ms scroll-gesture reuse window)
+  // lets the gesture latch expire before the next scroll, so the second scroll targets the
+  // pane under the cursor rather than staying locked to the first pane. (A fast wheel burst
+  // intentionally stays on the pane it started on — that latch is deliberate, not a bug.)
+  await mockMouse.scroll(leftCodeRenderable.x, leftCodeRenderable.y + 1, "down", { delayMs: 60 })
   await renderOnce()
 
   expect(leftCodeRenderable.scrollY).toBe(1)
   expect(rightCodeRenderable.scrollY).toBe(0)
 
   // Scroll over right pane
-  mockMouse.scroll(rightCodeRenderable.x + 1, rightCodeRenderable.y + 1, "down")
+  await mockMouse.scroll(rightCodeRenderable.x + 1, rightCodeRenderable.y + 1, "down")
   await renderOnce()
 
   expect(rightCodeRenderable.scrollY).toBe(1)
@@ -2411,8 +2414,10 @@ test("DiffRenderable - split view wheel scroll keeps panes synchronized", async 
   expect(leftCodeRenderable).toBeTruthy()
   expect(rightCodeRenderable).toBeTruthy()
 
-  // Scroll over left pane
+  // Scroll over left pane. The first frame applies the pane's deferred wheel delta; the
+  // second lets DiffRenderable mirror it to the other pane (sync settles one frame later).
   await mockMouse.scroll(leftCodeRenderable.x + 1, leftCodeRenderable.y + 1, "down")
+  await renderOnce()
   await renderOnce()
 
   expect(leftCodeRenderable.scrollY).toBeGreaterThan(0)
@@ -2420,6 +2425,7 @@ test("DiffRenderable - split view wheel scroll keeps panes synchronized", async 
 
   // Scroll over right pane
   await mockMouse.scroll(rightCodeRenderable.x + 1, rightCodeRenderable.y + 1, "down")
+  await renderOnce()
   await renderOnce()
 
   expect(rightCodeRenderable.scrollY).toBeGreaterThan(0)

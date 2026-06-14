@@ -10,6 +10,10 @@ async function getCapabilitiesFromChild(
   const rendererUrl = new URL("../renderer.ts", import.meta.url).href
   const testRendererUrl = new URL("../testing/test-renderer.ts", import.meta.url).href
   const testStreamsUrl = new URL("../testing/test-streams.ts", import.meta.url).href
+  // Tag the capabilities line: renderer.destroy() writes mouse-mode reset escape
+  // sequences to this same stdout afterward (the "direct-process-memory" factory targets
+  // the real process.stdout), so we can't rely on the JSON being the last line.
+  const CAPS_MARKER = "__OTUI_CAPS__"
   const script = `
     import { CliRenderer, createCliRenderer } from ${JSON.stringify(rendererUrl)}
     import { createTestRenderer } from ${JSON.stringify(testRendererUrl)}
@@ -47,7 +51,7 @@ async function getCapabilitiesFromChild(
     try {
       const internals = renderer
       const caps = internals.lib.getTerminalCapabilities(renderer.rendererPtr)
-      process.stdout.write(JSON.stringify(caps) + "\\n")
+      process.stdout.write(${JSON.stringify(CAPS_MARKER)} + JSON.stringify(caps) + "\\n")
     } finally {
       renderer.destroy()
     }
@@ -69,11 +73,11 @@ async function getCapabilitiesFromChild(
     throw new Error(`Child renderer failed with exit ${exitCode}: ${stderr}`)
   }
 
-  const line = stdout.trim().split(/\r?\n/).at(-1)
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith(CAPS_MARKER))
   if (!line) {
     throw new Error(`Child renderer did not emit capabilities: ${stderr}`)
   }
-  return JSON.parse(line)
+  return JSON.parse(line.slice(CAPS_MARKER.length))
 }
 
 describe("remote detection", () => {

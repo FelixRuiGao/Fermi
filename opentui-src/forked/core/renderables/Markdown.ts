@@ -1,4 +1,5 @@
 import { Renderable, type RenderableOptions } from "../Renderable.js"
+import { Edge, Unit } from "../yoga.js"
 import { type RenderContext } from "../types.js"
 import { SyntaxStyle, type StyleDefinition } from "../syntax-style.js"
 import type { TextChunk } from "../text-buffer.js"
@@ -1099,10 +1100,16 @@ export class MarkdownRenderable extends Renderable {
     let markdownMarginTop = 0
     let pendingGapBeforeNext = ""
 
-    const getNextMarginTop = (gapBeforeNext: string): number => {
+    const getNextMarginTop = (gapBeforeNext: string, currentIsSeparate: boolean): number => {
       const prev = renderTokens[renderTokens.length - 1]
       if (!prev) return 0
-      return this.shouldRenderSeparately(prev) || TRAILING_MARKDOWN_BLOCK_BREAKS_RE.test(prev.raw + gapBeforeNext)
+      // A separately-rendered block (code/table/blockquote/hr) always keeps one
+      // separator row from preceding content, even when the source is "tight"
+      // (no blank line). Otherwise only a blank-line break or a separately-rendered
+      // predecessor introduces the row.
+      return currentIsSeparate ||
+        this.shouldRenderSeparately(prev) ||
+        TRAILING_MARKDOWN_BLOCK_BREAKS_RE.test(prev.raw + gapBeforeNext)
         ? 1
         : 0
     }
@@ -1134,14 +1141,14 @@ export class MarkdownRenderable extends Renderable {
 
       if (this.shouldRenderSeparately(token)) {
         const trailingGap = flushMarkdownRaw()
-        setCoalescedMarginTop(token, getNextMarginTop(trailingGap || pendingGapBeforeNext))
+        setCoalescedMarginTop(token, getNextMarginTop(trailingGap || pendingGapBeforeNext, true))
         renderTokens.push(token)
         pendingGapBeforeNext = ""
         continue
       }
 
       if (markdownRaw.length === 0) {
-        markdownMarginTop = getNextMarginTop(pendingGapBeforeNext)
+        markdownMarginTop = getNextMarginTop(pendingGapBeforeNext, false)
         pendingGapBeforeNext = ""
       }
       markdownRaw += token.raw
@@ -1627,6 +1634,18 @@ export class MarkdownRenderable extends Renderable {
 
     const canUpdateInPlace = custom.renderable === custom.defaultResult?.renderable
 
+    // A custom-rendered block (a renderer-supplied widget that is NOT the default
+    // renderable) bypasses createDefaultRenderable, which is where the coalesced leading
+    // margin is normally applied. Fill in the separator row here — but only when the
+    // renderer left marginTop unset. We read the Yoga unit directly because the numeric
+    // marginTop getter collapses unset, "auto", and "%" all to a finite/NaN number, so
+    // overwriting based on it would silently change a renderer's explicit margin's unit.
+    const topMargin = custom.renderable.getLayoutNode().getMargin(Edge.Top) as { unit?: number } | number | undefined
+    const topMarginUnit = typeof topMargin === "object" && topMargin ? topMargin.unit : Unit.Point
+    if (topMarginUnit === Unit.Undefined) {
+      custom.renderable.marginTop = getCoalescedMarginTop(token)
+    }
+
     return {
       renderable: custom.renderable,
       tracksInterBlockMargin: canUpdateInPlace,
@@ -2027,6 +2046,9 @@ export class MarkdownRenderable extends Renderable {
             this.getInterBlockMargin(token, nextToken),
           )
           renderable = tableBlock.renderable
+          // This table special-case bypasses createDefaultRenderable (to keep the
+          // content cache), so apply the coalesced leading margin it would have set.
+          renderable.marginTop = getCoalescedMarginTop(token)
           tableContentCache = tableBlock.tableContentCache
         } else {
           renderable = this.createDefaultRenderable(token, blockIndex, nextToken) ?? undefined

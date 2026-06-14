@@ -389,7 +389,11 @@ export class SliderRenderable extends Renderable {
 
     const thumbRatio = viewportSize / contentSize
     const calculatedUnits = Math.round(trackUnits * thumbRatio)
-    const minimumUnits = Math.max(verticalUnitsPerCell, Math.round(this._minThumbSize * verticalUnitsPerCell))
+    // Floor at 2 units (one virtual half-cell, since getVirtualThumbSize divides by 4)
+    // to mirror the horizontal path's half-cell minimum — not a full cell. Otherwise a
+    // tiny vertical thumb is forced to a whole cell, breaking sub-cell symmetry with
+    // horizontal and contradicting the sub-cell rendering this slider already supports.
+    const minimumUnits = Math.max(2, Math.round(this._minThumbSize * verticalUnitsPerCell))
     const sizeUnits = Math.min(Math.max(calculatedUnits, minimumUnits), trackUnits)
     const maxStartUnits = Math.max(0, trackUnits - sizeUnits)
     const valueRatio = (this._value - this._min) / range

@@ -259,10 +259,16 @@ if (isFermiMarkdownPatchDisabled()) {
     let markdownMarginTop = 0;
     let pendingGapBeforeNext = "";
 
-    const getNextMarginTop = (gapBeforeNext: string): number => {
+    const getNextMarginTop = (gapBeforeNext: string, currentIsSeparate: boolean): number => {
       const prev = renderTokens[renderTokens.length - 1];
       if (!prev) return 0;
-      return this.shouldRenderSeparately(prev) || TRAILING_MARKDOWN_BLOCK_BREAKS_RE.test(prev.raw + gapBeforeNext)
+      // Mirror core/renderables/Markdown.ts: a separately-rendered block (code/table/
+      // blockquote/hr) always keeps one separator row from preceding content, even when
+      // the source is "tight" (no blank line). This monkeypatch wins at app runtime, so
+      // the in-tree fix must be duplicated here or it is silently reverted in production.
+      return currentIsSeparate ||
+        this.shouldRenderSeparately(prev) ||
+        TRAILING_MARKDOWN_BLOCK_BREAKS_RE.test(prev.raw + gapBeforeNext)
         ? 1
         : 0;
     };
@@ -292,14 +298,14 @@ if (isFermiMarkdownPatchDisabled()) {
 
       if (this.shouldRenderSeparately(token)) {
         const trailingGap = flushMarkdownRaw();
-        setCoalescedMarginTop(token, getNextMarginTop(trailingGap || pendingGapBeforeNext));
+        setCoalescedMarginTop(token, getNextMarginTop(trailingGap || pendingGapBeforeNext, true));
         renderTokens.push(token);
         pendingGapBeforeNext = "";
         continue;
       }
 
       if (markdownRaw.length === 0) {
-        markdownMarginTop = getNextMarginTop(pendingGapBeforeNext);
+        markdownMarginTop = getNextMarginTop(pendingGapBeforeNext, false);
         pendingGapBeforeNext = "";
       }
       markdownRaw += token.raw;
