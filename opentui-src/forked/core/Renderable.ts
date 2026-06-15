@@ -1610,8 +1610,14 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public static resolveMouseCursor(renderable: Renderable): MousePointerStyle | undefined {
+    // An explicit cursor on the element itself wins over the onMouseDown
+    // auto-detection below, so a container that handles mouse-down for its own
+    // reasons (e.g. a full-screen click-to-dismiss/focus background) can opt out
+    // of the pointer by setting cursor="default" — otherwise hovering empty
+    // screen edges would show a hand.
+    if (renderable.cursor) return renderable.cursor
     if (renderable._mouseListeners["down"]) return "pointer"
-    let current: Renderable | null = renderable
+    let current: Renderable | null = renderable.parent
     while (current) {
       if (current.cursor) return current.cursor
       current = current.parent

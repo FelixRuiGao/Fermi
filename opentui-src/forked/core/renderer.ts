@@ -3848,8 +3848,27 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }
   public setMousePointer(style: MousePointerStyle): void {
+    // Never change the pointer while the terminal is unfocused. The visible
+    // shape isn't ours to control then, and emitting one poisons the terminal's
+    // recorded shape: it records the change but doesn't repaint, so on focus
+    // regain an identical shape is de-duplicated and the cursor sticks stale
+    // (the Ghostty focus-stuck bug). Leaving it untouched keeps the recorded
+    // shape consistent with what's visible, so the first hover after refocus
+    // re-resolves to a real change and repaints cleanly — no focus-time fixup
+    // needed. `null` (focus reporting unknown/unsupported) does not gate.
+    if (this._terminalFocusState === false) return
     this._currentMousePointerStyle = style
     this.lib.setCursorStyleOptions(this.rendererPtr, { cursor: style })
+    // The native side flushes the OSC 22 pointer-shape escape only inside a
+    // render tick, and only when mouse_pointer != lastMousePointerStyle (see
+    // zig renderer.zig). setCursorStyleOptions just stores the style; it does
+    // not write anything. When the renderer is idle (no live requests) — e.g.
+    // a settled resumed conversation — hovering a clickable box changes no
+    // state and schedules no frame, so the escape is never emitted and the
+    // terminal pointer never changes (works on a still-ticking empty/startup
+    // screen, silently fails after resume). Force a one-shot frame so the
+    // pointer change actually reaches the terminal.
+    this.requestRender()
   }
 
   private updateMousePointerForRenderable(renderable: Renderable | undefined): void {

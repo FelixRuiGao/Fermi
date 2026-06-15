@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, afterEach } from "bun:test"
 import { createTestRenderer, MouseButtons, type MockMouse, type TestRenderer } from "../testing.js"
 import { BoxRenderable } from "../renderables/index.js"
+import { Renderable } from "../Renderable.js"
 import type { MousePointerStyle } from "../types.js"
 
 describe("mouse pointer style", () => {
@@ -33,6 +34,21 @@ describe("mouse pointer style", () => {
       renderer.setMousePointer(style)
       expect((renderer as any)._currentMousePointerStyle).toBe(style)
     }
+  })
+
+  // Never touch the pointer while the terminal is unfocused: emitting a shape
+  // change then would poison the terminal's recorded shape (it records but
+  // doesn't repaint while unfocused), and an identical shape on focus regain is
+  // de-duplicated — the cursor sticks stale. Suppressing the change keeps the
+  // recorded shape consistent so the first hover after refocus repaints cleanly.
+  test("setMousePointer is suppressed while the terminal is unfocused", () => {
+    ;(renderer as any)._terminalFocusState = false
+    renderer.setMousePointer("pointer")
+    expect((renderer as any)._currentMousePointerStyle).toBeUndefined()
+
+    ;(renderer as any)._terminalFocusState = true
+    renderer.setMousePointer("pointer")
+    expect((renderer as any)._currentMousePointerStyle).toBe("pointer")
   })
 
   test("onMouseOver callback can set mouse pointer", async () => {
@@ -88,6 +104,37 @@ describe("mouse pointer style", () => {
 
     expect(pointerReset).toBe(true)
     expect((renderer as any)._currentMousePointerStyle).toBe("default")
+  })
+
+  // Regression: the native side only flushes the OSC 22 pointer escape during
+  // a render tick (zig renderer.zig: mouse_pointer != lastMousePointerStyle).
+  // setCursorStyleOptions just stores the style. If setMousePointer does not
+  // request a render, an idle renderer (e.g. a settled resumed conversation,
+  // where hovering a clickable box changes no state) never ticks and the
+  // pointer escape is never written — the cursor silently never updates even
+  // though _currentMousePointerStyle is correct. This guards that gap; it is
+  // invisible to unit tests that call renderOnce() and to TS-state assertions.
+  test("setMousePointer requests a render so the pointer escape is flushed", () => {
+    let renderRequests = 0
+    const original = renderer.requestRender.bind(renderer)
+    ;(renderer as any).requestRender = () => {
+      renderRequests++
+      original()
+    }
+    renderer.setMousePointer("pointer")
+    expect(renderRequests).toBeGreaterThan(0)
+  })
+
+  // An element's own onMouseDown auto-resolves to a pointer, but an explicit
+  // cursor on the same element must win — otherwise a container that handles
+  // mouse-down for its own reasons (the full-screen click-to-dismiss/focus
+  // background) turns every empty screen edge into a hand cursor.
+  test("explicit cursor overrides the onMouseDown auto-pointer", () => {
+    const button = new BoxRenderable(renderer, { onMouseDown() {} })
+    expect(Renderable.resolveMouseCursor(button)).toBe("pointer")
+
+    const background = new BoxRenderable(renderer, { cursor: "default", onMouseDown() {} })
+    expect(Renderable.resolveMouseCursor(background)).toBe("default")
   })
 
   test("pointer resets on renderer destroy", async () => {

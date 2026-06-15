@@ -418,6 +418,9 @@ export function OpenTuiScreen({
       paddingLeft={1}
       paddingRight={0}
       gap={0}
+      // Background click-to-dismiss handler — opt out of the onMouseDown
+      // pointer auto-detection so hovering empty screen edges stays an arrow.
+      cursor="default"
       onMouseDown={onBackgroundMouseDown}
     >
       {/* Horizontal tab bar */}
