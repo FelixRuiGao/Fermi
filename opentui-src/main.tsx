@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, openSync, writeSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -139,6 +139,22 @@ export async function launchTui(): Promise<void> {
     }
     for (const w of result.warnings) console.warn(w);
   }
+
+  // Redirect stderr to a log file before the TUI takes over the terminal.
+  // Without this, console.warn/error from libraries (e.g. markitdown-ts) and
+  // MCP server child process stderr corrupt the TUI display.
+  const { getFermiHomeDir } = await import("../src/home-path.js");
+  const stderrLogDir = getFermiHomeDir();
+  if (!existsSync(stderrLogDir)) mkdirSync(stderrLogDir, { recursive: true });
+  const stderrLogFd = openSync(join(stderrLogDir, "stderr.log"), "w");
+  const _origStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: any, encodingOrCb?: any, cb?: any): boolean => {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk, typeof encodingOrCb === "string" ? encodingOrCb as BufferEncoding : "utf8") : chunk;
+    try { writeSync(stderrLogFd, buf); } catch { /* best effort */ }
+    if (typeof encodingOrCb === "function") encodingOrCb();
+    else if (typeof cb === "function") cb();
+    return true;
+  }) as typeof process.stderr.write;
 
   const useThread = resolveRendererThreadSetting();
   writeFermiOpenTuiDiag("main.bootstrap", {

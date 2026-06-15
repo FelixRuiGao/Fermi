@@ -271,6 +271,7 @@ export class MCPClientManager {
         command: cfg.command,
         args: cfg.args,
         env: Object.keys(env).length > 0 ? env : undefined,
+        stderr: "pipe",
       });
     } else if (cfg.transport === "sse") {
       if (!SSEClientTransport) {
