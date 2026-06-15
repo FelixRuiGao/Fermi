@@ -197,6 +197,7 @@ type MarkdownRenderablePatched = InstanceType<typeof MarkdownRenderable> & {
   _conceal: boolean;
   _concealCode: boolean;
   _streaming: boolean;
+  _reserveHeightWhileStreaming?: boolean;
   _treeSitterClient?: unknown;
   _linkifyMarkdownChunks?: unknown;
   getStyle?: (group: string) => { fg?: ColorInput } | undefined;
@@ -334,8 +335,9 @@ if (isFermiMarkdownPatchDisabled()) {
       // 0.4.1: draw raw text only while the precomputed styled text is present.
       drawUnstyledText: initialStyledText !== undefined,
       streaming: true,
-      // Fermi: monotonic height floor while streaming (prevents viewport shrink).
-      reserveHeightWhileStreaming: this._streaming,
+      // Fermi: per-width height floor — follows the explicit reserve flag when
+      // set (lets completed entries disable it), else falls back to streaming.
+      reserveHeightWhileStreaming: this._reserveHeightWhileStreaming ?? this._streaming,
       initialStyledText,
       baseHighlight,
       onHighlight: createMarkdownSyntheticBlockHighlighter(() => this._treeSitterClient),
@@ -473,8 +475,9 @@ if (isFermiMarkdownPatchDisabled()) {
     renderable.conceal = this._conceal;
     // 0.4.1: draw raw text only while the precomputed styled text is present.
     renderable.drawUnstyledText = initialStyledText !== undefined;
-    // Fermi: monotonic height floor while streaming (prevents viewport shrink).
-    renderable.reserveHeightWhileStreaming = this._streaming;
+    // Fermi: per-width height floor — follows the explicit reserve flag when set
+    // (lets completed entries disable it), else falls back to streaming.
+    renderable.reserveHeightWhileStreaming = this._reserveHeightWhileStreaming ?? this._streaming;
     renderable.streaming = true;
     renderable.baseHighlight = baseHighlight;
     renderable.marginBottom = marginBottom;

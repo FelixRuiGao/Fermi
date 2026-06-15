@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: the conversation flickered with a full-screen redraw at the end of every turn. When the assistant's last message finished, its rendered markdown ran a finalize pass that re-snapped the trailing block's height; because the conversation is pinned to the bottom, that size change re-anchored the scroll and forced a full-viewport repaint every turn. Assistant markdown now stays in streaming render mode after a turn ends (so there's no finalize re-snap), and the streaming height reservation is scoped to only the actively-streaming message — completed messages settle at their true height, with no per-turn repaint.
+
 ## v0.3.12
 
 - Added: skill and MCP availability changes now queue non-waking system notices for the next agent turn. Notices preserve the order of separate user operations, list enabled/disabled skills, and list concrete MCP tool names that became available or unavailable so the agent treats the change as normal runtime configuration instead of assuming its earlier reasoning was wrong.

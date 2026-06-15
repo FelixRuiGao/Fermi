@@ -22,51 +22,40 @@ export function AssistantEntry({
 }: AssistantEntryProps): React.ReactNode {
   const text = entry.assistantText ?? "";
 
-  // Assistant markdown/code is pinned to streaming mode permanently — it is
-  // intentionally NOT flipped to false when the turn ends. `entry.assistantStreaming`
-  // is read and discarded on purpose (kept on the entry for other consumers / debug).
+  // Assistant rendering uses TWO independent signals on purpose. Do not collapse
+  // them back into one — they fix two different things and pull in opposite ways.
   //
-  // Why this exists — the per-turn flicker it fixes:
-  //   When the last assistant entry transitioned streaming=true -> false at turn
-  //   end, OpenTUI's MarkdownRenderable.streaming setter ran updateBlocks(true),
-  //   which (a) re-finalized the trailing blocks (trailingUnstable 2 -> 0) and
-  //   (b) reset our Fermi streaming height floor (reserveHeightWhileStreaming),
-  //   letting the block snap from its streamed height down to its compact height.
-  //   That snap is a non-monotonic content-size change, and the conversation
-  //   ScrollBox is sticky-bottom: a size change re-pins the scroll offset and
-  //   schedules an unconditional nextTick repaint (ScrollBox.recalculateBarProps).
-  //   The net result was a full-viewport redraw — a visible flicker — at the end
-  //   of EVERY turn. Pinning streaming=true removes the transition, so the
-  //   finalize/snap (and therefore the flicker) never happens.
+  // 1) renderedStreaming = true (ALWAYS)
+  //    The markdown/code renderable stays in streaming render mode and is never
+  //    flipped to false at turn end. Flipping it ran MarkdownRenderable's finalize
+  //    (updateBlocks: trailingUnstable 2 -> 0 + re-layout), which snapped the
+  //    trailing block's height; the conversation ScrollBox is sticky-bottom, so
+  //    that size change re-pinned the scroll and forced an unconditional nextTick
+  //    repaint — a full-viewport flicker at the end of EVERY turn. Keeping it true
+  //    removes the transition (this is how opencode renders assistant text), so the
+  //    flicker never happens. Pinning streaming is safe on the default markdown
+  //    renderer: prose blocks get a synchronous initialStyledText and fenced code
+  //    uses the synchronous hljs wrapper, so there is no blank-until-highlight on
+  //    cold mount (/resume, raw<->rendered toggle). The only blank path is a
+  //    whole-message <code> with drawUnstyledText=false, i.e. the non-user
+  //    FERMI_OPENTUI_ASSISTANT_RENDERER=code flag.
   //
-  // Precedent: opencode (a large production TUI on the same @opentui stack) keeps
-  // its assistant markdown at streaming={true} and never finalizes it. So this is
-  // a known-viable approach, not a novel hack.
-  //
-  // Tested without finding a bug on the default markdown renderer: /resume cold
-  // mount, raw<->rendered toggle, and completed messages ending in tables, fenced
-  // code blocks, blockquotes/lists, and interrupted / half-formed markdown. It is
-  // safe on the default path because that path never depends on an async highlight's
-  // first frame: fenced code blocks render through a synchronous hljs-styled
-  // TextRenderable wrapper (patch-opentui-markdown.ts createCodeRenderable), and
-  // prose blocks receive a synchronous initialStyledText (which is only produced
-  // while streaming=true), so there is no blank-until-highlight on cold mount.
-  // (The one path that WOULD blank — a whole-message <code> with
-  // drawUnstyledText=false — only occurs under the internal, non-user
-  // FERMI_OPENTUI_ASSISTANT_RENDERER=code flag.)
-  //
-  // Known, accepted cost: because streaming never ends, the Fermi streaming height
-  // floor never resets, so a completed message keeps its streamed height instead of
-  // snapping compact — at worst a line or two of residual trailing space on messages
-  // whose streamed height exceeded the final concealed height. Accepted: far cheaper
-  // than a guaranteed full repaint on every turn.
-  //
-  // Do NOT revert this to `entry.assistantStreaming` without replacing the mechanism
-  // — that brings the per-turn flicker straight back. The clean (larger) alternative
-  // is to keep only the actively-streaming entry in streaming mode and converge the
-  // height in a single frame at finalize; that is deliberately not done here.
-  void entry.assistantStreaming;
+  // 2) reserveHeightWhileStreaming = entry.assistantStreaming (the REAL state)
+  //    The per-width monotonic height floor (a Fermi patch — opencode has no such
+  //    floor, which is exactly why opencode can pin streaming with no fallout) must
+  //    only be ON while a turn is actively streaming, to absorb the one-frame height
+  //    dips from async highlight/conceal. It MUST go OFF once the entry is done.
+  //    A completed entry that keeps the floor on caches over-tall per-width
+  //    measurements that never reset, which (a) leaves residual trailing space and
+  //    (b) makes a block's height non-monotonic in width — at some widths
+  //    floor[wider] > floor[narrower]. That inversion turns the vertical scrollbar's
+  //    width feedback into a sustained limit cycle: the transcript strobes between
+  //    two layouts dozens of times per second at certain terminal widths. Driving
+  //    the floor from the real streaming state kills both, while signal (1) keeps
+  //    the flicker fix. (Floor off at completion is ~free: with no resize happening
+  //    the floor already equals the true height, so nothing snaps.)
   const renderedStreaming = true;
+  const reserveHeight = entry.assistantStreaming ?? false;
 
   return (
     <box paddingTop={1}>
@@ -78,6 +67,7 @@ export function AssistantEntry({
           filetype="markdown"
           syntaxStyle={markdownStyle}
           streaming={renderedStreaming}
+          reserveHeightWhileStreaming={reserveHeight}
           conceal={true}
           drawUnstyledText={false}
           fg={colors.text}
@@ -89,6 +79,7 @@ export function AssistantEntry({
           syntaxStyle={markdownStyle}
           treeSitterClient={undefined}
           streaming={renderedStreaming}
+          reserveHeightWhileStreaming={reserveHeight}
           conceal={true}
           concealCode={false}
           internalBlockMode="top-level"

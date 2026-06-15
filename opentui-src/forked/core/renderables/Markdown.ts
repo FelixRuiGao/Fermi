@@ -109,6 +109,15 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
    */
   streaming?: boolean
   /**
+   * Fermi: decouple the monotonic streaming height floor from `streaming`.
+   * When set, child code renderables reserve height per this flag instead of
+   * `streaming`. This lets a completed entry stay in streaming render mode (no
+   * finalize re-parse, so no per-turn repaint) while turning the per-width
+   * height floor OFF — which is what avoids the resize height-oscillation and
+   * the residual trailing space. Defaults to following `streaming` when omitted.
+   */
+  reserveHeightWhileStreaming?: boolean
+  /**
    * Options for internally rendered markdown tables.
    */
   tableOptions?: MarkdownTableOptions
@@ -293,6 +302,9 @@ export class MarkdownRenderable extends Renderable {
 
   _parseState: ParseState | null = null
   private _streaming: boolean = false
+  // Fermi: when defined, overrides _streaming as the per-width height-floor
+  // signal for child code renderables (undefined = follow _streaming).
+  private _reserveHeightWhileStreaming?: boolean
   _blockStates: BlockState[] = []
   _stableBlockCount = 0
   private _styleDirty: boolean = false
@@ -327,6 +339,7 @@ export class MarkdownRenderable extends Renderable {
     this._tableOptions = options.tableOptions
     this._renderNode = options.renderNode
     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._reserveHeightWhileStreaming = options.reserveHeightWhileStreaming
     this._internalBlockMode = options.internalBlockMode ?? this._contentDefaultOptions.internalBlockMode
 
     this.updateBlocks()
@@ -413,6 +426,22 @@ export class MarkdownRenderable extends Renderable {
     if (this.isDestroyed) return
     if (this._streaming !== value) {
       this._streaming = value
+      this.updateBlocks(true)
+    }
+  }
+
+  get reserveHeightWhileStreaming(): boolean | undefined {
+    return this._reserveHeightWhileStreaming
+  }
+
+  set reserveHeightWhileStreaming(value: boolean | undefined) {
+    if (this.isDestroyed) return
+    if (this._reserveHeightWhileStreaming !== value) {
+      this._reserveHeightWhileStreaming = value
+      // Re-apply the floor flag to existing block renderables. This does NOT
+      // touch `streaming`, so there is no trailing-block re-parse — far lighter
+      // than the old streaming->false finalize; it only flips each block's
+      // per-width height floor on/off.
       this.updateBlocks(true)
     }
   }
@@ -666,7 +695,7 @@ export class MarkdownRenderable extends Renderable {
       conceal: this._conceal,
       drawUnstyledText: initialStyledText !== undefined,
       streaming: true,
-      reserveHeightWhileStreaming: this._streaming,
+      reserveHeightWhileStreaming: this._reserveHeightWhileStreaming ?? this._streaming,
       initialStyledText,
       baseHighlight,
       onHighlight: createMarkdownSyntheticBlockHighlighter(() => this._treeSitterClient),
@@ -1005,7 +1034,7 @@ export class MarkdownRenderable extends Renderable {
     renderable.bg = this._bg
     renderable.conceal = this._conceal
     renderable.drawUnstyledText = initialStyledText !== undefined
-    renderable.reserveHeightWhileStreaming = this._streaming
+    renderable.reserveHeightWhileStreaming = this._reserveHeightWhileStreaming ?? this._streaming
     renderable.streaming = true
     renderable.baseHighlight = baseHighlight
     renderable.content = content
