@@ -293,6 +293,10 @@ async function cmdUsage(ctx: CommandContext, _args: string): Promise<void> {
   ctx.showMessage("__usage_panel__");
 }
 
+async function cmdStat(ctx: CommandContext, _args: string): Promise<void> {
+  ctx.showMessage("__stat_panel__");
+}
+
 async function cmdNew(ctx: CommandContext, _args: string): Promise<void> {
   if (ctx.restartRuntimeForNewSession) {
     await ctx.restartRuntimeForNewSession();
@@ -2218,6 +2222,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme });
   registry.register({ name: "/diff", description: "Set write/edit diff display (compact / full)", handler: cmdDiff });
   registry.register({ name: "/usage", description: "Show session token usage", handler: cmdUsage, aliases: ["/context"] });
+  registry.register({ name: "/stat", description: "Show all-time token statistics", handler: cmdStat });
   registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate });
   registry.register({ name: "/review", description: "Review code changes", handler: cmdReview });
   return registry;

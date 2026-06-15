@@ -129,6 +129,7 @@ export interface Session {
   cumulativeUncachedTokens: number;
   systemPromptTokens: number;
   contextBreakdown: { systemPrompt: number; tools: number; agentsMd: number; skills: number; messages: number };
+  computeGlobalTokenStats?(): { cumulativeInput: number; cumulativeOutput: number; cumulativeCacheRead: number; cumulativeUncached: number; sessionCount: number };
   onSaveRequest?: () => void;
   setStore(store: SessionStore | null): void;
   getPendingAsk(): PendingAskUi | null;

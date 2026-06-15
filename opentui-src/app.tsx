@@ -528,6 +528,8 @@ export function OpenTuiApp({
   const [updateToast, setUpdateToast] = useState<{ phase: "downloading" | "staged" | "available"; version: string } | null>(null);
   const [usagePanel, setUsagePanel] = useState(false);
   const [usageData, setUsageData] = useState<import("./display/overlays/usage-panel.js").UsageData | null>(null);
+  const [statPanel, setStatPanel] = useState(false);
+  const [statData, setStatData] = useState<import("./display/overlays/stat-panel.js").StatData | null>(null);
   const [markdownMode, setMarkdownMode] = useState<"rendered" | "raw">("rendered");
   const [permissionModeState, setPermissionModeState] = useState<string>(session.permissionMode ?? "reversible");
   const [pendingAsk, setPendingAsk] = useState<PendingAskUi | null>(
@@ -1640,6 +1642,10 @@ export function OpenTuiApp({
           setUsagePanel((current) => !current);
           return;
         }
+        if (message === "__stat_panel__") {
+          setStatPanel((current) => !current);
+          return;
+        }
         if (message === "__sidebar_toggle__") {
           setSidebarMode((current) => {
             const next = current === "auto" ? "open" : current === "open" ? "close" : "auto";
@@ -2339,6 +2345,15 @@ export function OpenTuiApp({
     if (usagePanel) {
       if (event.name === "escape" || (event.name === "c" && event.ctrl)) {
         setUsagePanel(false);
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
+    if (statPanel) {
+      if (event.name === "escape" || (event.name === "c" && event.ctrl)) {
+        setStatPanel(false);
         event.preventDefault();
         event.stopPropagation();
       }
@@ -3239,6 +3254,32 @@ export function OpenTuiApp({
       clearTimeout(handle);
     };
   }, [usagePanel, session, effectiveContextTokens, effectiveContextLimit]);
+
+  useEffect(() => {
+    if (!statPanel) {
+      setStatData(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      if (cancelled) return;
+      const stats = session.computeGlobalTokenStats?.();
+      if (stats) {
+        setStatData({
+          cumulativeInput: stats.cumulativeInput,
+          cumulativeCacheRead: stats.cumulativeCacheRead,
+          cumulativeUncached: stats.cumulativeUncached,
+          cumulativeOutput: stats.cumulativeOutput,
+          sessionCount: stats.sessionCount,
+        });
+      }
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [statPanel, session]);
+
   const effectiveCacheReadTokens = childSnapshot ? childSnapshot.cacheReadTokens : cacheReadTokens;
   const effectiveProcessing = childSnapshot ? childSnapshot.running : processing;
   const effectiveEntries = presentationEntries;
@@ -3392,6 +3433,9 @@ export function OpenTuiApp({
       usagePanel={usagePanel}
       usageData={usageData}
       onUsageDismiss={() => setUsagePanel(false)}
+      statPanel={statPanel}
+      statData={statData}
+      onStatDismiss={() => setStatPanel(false)}
       onBackgroundMouseDown={() => {
         if (commandOverlay.visible) setCommandOverlay(EMPTY_COMMAND_OVERLAY);
         if (commandPicker) setCommandPicker(null);

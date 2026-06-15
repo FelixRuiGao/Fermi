@@ -2937,6 +2937,11 @@ export class Session {
   get systemPromptTokens(): number { return this._computeUsageStats().systemPromptTotal; }
   get contextBreakdown(): ContextBreakdown { return this._computeUsageStats().systemPromptBreakdown; }
 
+  computeGlobalTokenStats(): import("./persistence.js").GlobalTokenStats {
+    return (this._store as import("./persistence.js").SessionStore)?.computeGlobalTokenStats?.()
+      ?? { cumulativeInput: 0, cumulativeOutput: 0, cumulativeCacheRead: 0, cumulativeUncached: 0, sessionCount: 0 };
+  }
+
   /** Effective context budget: contextLength × context budget percent. */
   get contextBudget(): number {
     return Math.round((this.primaryAgent?.modelConfig?.contextLength ?? 0) * this._contextManager.budgetPercent / 100);

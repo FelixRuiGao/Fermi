@@ -447,6 +447,63 @@ export class SessionStore {
   set sessionDir(value: string) {
     this._sessionDir = value;
   }
+
+  /**
+   * Scan every session's log.json across all projects and sum token_update
+   * entries. Returns cumulative input/output/cached/uncached + session count.
+   * Designed for the /stat panel — tolerates corrupt/missing files gracefully.
+   */
+  computeGlobalTokenStats(): GlobalTokenStats {
+    const projectsDir = join(this._preferredBaseDir, "projects");
+    if (!existsSync(projectsDir)) return { cumulativeInput: 0, cumulativeOutput: 0, cumulativeCacheRead: 0, cumulativeUncached: 0, sessionCount: 0 };
+
+    let cumulativeInput = 0;
+    let cumulativeOutput = 0;
+    let cumulativeCacheRead = 0;
+    let cumulativeUncached = 0;
+    let sessionCount = 0;
+
+    for (const projectName of readdirSync(projectsDir)) {
+      const projectDir = join(projectsDir, projectName);
+      try { if (!statSync(projectDir).isDirectory()) continue; } catch { continue; }
+
+      for (const sessionName of readdirSync(projectDir)) {
+        const logFile = join(projectDir, sessionName, "log.json");
+        try {
+          if (!statSync(join(projectDir, sessionName)).isDirectory()) continue;
+          const raw = JSON.parse(readFileSync(logFile, "utf-8"));
+          const entries = raw.entries as Array<Record<string, unknown>> | undefined;
+          if (!entries) continue;
+          let hasTokens = false;
+          for (const e of entries) {
+            if (e.type !== "token_update") continue;
+            const meta = e.meta as Record<string, unknown> | undefined;
+            if (!meta) continue;
+            const input = meta["input_tokens"] as number ?? meta["inputTokens"] as number ?? 0;
+            if (!Number.isFinite(input) || input <= 0) continue;
+            const total = (meta["total_tokens"] as number ?? meta["totalTokens"] as number ?? input) as number;
+            const cacheRead = (meta["cache_read_tokens"] as number ?? meta["cacheReadTokens"] as number ?? 0) as number;
+            cumulativeInput += input;
+            cumulativeOutput += Math.max(0, total - input);
+            cumulativeCacheRead += cacheRead;
+            cumulativeUncached += Math.max(0, input - cacheRead);
+            hasTokens = true;
+          }
+          if (hasTokens) sessionCount++;
+        } catch { continue; }
+      }
+    }
+
+    return { cumulativeInput, cumulativeOutput, cumulativeCacheRead, cumulativeUncached, sessionCount };
+  }
+}
+
+export interface GlobalTokenStats {
+  cumulativeInput: number;
+  cumulativeOutput: number;
+  cumulativeCacheRead: number;
+  cumulativeUncached: number;
+  sessionCount: number;
 }
 
 // ====================================================================

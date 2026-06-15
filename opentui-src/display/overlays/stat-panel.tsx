@@ -6,25 +6,16 @@ import type { DisplayTheme } from "../theme/index.js";
 
 const ATTRS_BOLD = createTextAttributes({ bold: true });
 
-export interface UsageData {
+export interface StatData {
   cumulativeInput: number;
   cumulativeCacheRead: number;
   cumulativeUncached: number;
   cumulativeOutput: number;
-  contextUsed: number;
-  contextLimit: number;
-  breakdown: {
-    systemPrompt: number;
-    tools: number;
-    agentsMd: number;
-    skills: number;
-    messages: number;
-  };
+  sessionCount: number;
 }
 
-interface UsagePanelProps {
-  /** null while the session-usage scan is still running. */
-  data: UsageData | null;
+interface StatPanelProps {
+  data: StatData | null;
   theme: DisplayTheme;
   terminalWidth: number;
   terminalHeight: number;
@@ -69,22 +60,22 @@ function Row({ label, value, pct, fg, dim, indent }: {
 
 const PANEL_WIDTH = ROW_WIDTH + 6;
 
-export function UsagePanel({
+export function StatPanel({
   data,
   theme,
   terminalWidth,
   terminalHeight,
   onDismiss,
-}: UsagePanelProps): React.ReactNode {
+}: StatPanelProps): React.ReactNode {
   const { colors } = theme;
 
   const width = Math.min(PANEL_WIDTH, terminalWidth - 4);
   const left = Math.max(0, Math.floor((terminalWidth - width) / 2));
-  const top = Math.max(1, Math.floor(terminalHeight / 2) - 6);
+  const top = Math.max(1, Math.floor(terminalHeight / 2) - 5);
 
   let body: React.ReactNode;
   if (data === null) {
-    body = <text fg={colors.dim} content="Calculating session usage …" />;
+    body = <text fg={colors.dim} content="Scanning all sessions …" />;
   } else {
     const cachedPct = data.cumulativeInput > 0
       ? `(${((data.cumulativeCacheRead / data.cumulativeInput) * 100).toFixed(1)}%)`
@@ -93,23 +84,14 @@ export function UsagePanel({
       ? `(${((data.cumulativeUncached / data.cumulativeInput) * 100).toFixed(1)}%)`
       : "(0.0%)";
 
-    const ctx = data.contextUsed;
-    const b = data.breakdown;
-    const pct = (n: number) => ctx > 0 ? `(${((n / ctx) * 100).toFixed(1)}%)` : "(0.0%)";
-
     body = (
       <box flexDirection="column">
+        <Row label="Sessions" value={String(data.sessionCount)} fg={colors.text} dim={colors.dim} />
+        <box height={1} />
         <Row label="Total Input" value={fmtNum(data.cumulativeInput)} fg={colors.text} dim={colors.dim} />
         <Row label="Cached" value={fmtNum(data.cumulativeCacheRead)} pct={cachedPct} fg={colors.text} dim={colors.dim} indent />
         <Row label="Uncached" value={fmtNum(data.cumulativeUncached)} pct={uncachedPct} fg={colors.text} dim={colors.dim} indent />
         <Row label="Total Output" value={fmtNum(data.cumulativeOutput)} fg={colors.text} dim={colors.dim} />
-        <box height={1} />
-        <Row label="Context" value={fmtNum(ctx)} fg={colors.text} dim={colors.dim} />
-        <Row label="System Prompt" value={fmtNum(b.systemPrompt)} pct={pct(b.systemPrompt)} fg={colors.text} dim={colors.dim} indent />
-        <Row label="Tools" value={fmtNum(b.tools)} pct={pct(b.tools)} fg={colors.text} dim={colors.dim} indent />
-        <Row label="AGENTS.md" value={fmtNum(b.agentsMd)} pct={pct(b.agentsMd)} fg={colors.text} dim={colors.dim} indent />
-        {b.skills > 0 ? <Row label="Skills" value={fmtNum(b.skills)} pct={pct(b.skills)} fg={colors.text} dim={colors.dim} indent /> : null}
-        <Row label="Messages" value={fmtNum(b.messages)} pct={pct(b.messages)} fg={colors.text} dim={colors.dim} indent />
       </box>
     );
   }
@@ -127,7 +109,7 @@ export function UsagePanel({
         border={true}
         borderStyle="rounded"
         borderColor={colors.dim}
-        title=" Session Usage "
+        title=" All-Time Stats "
         titleColor={colors.accent}
         fillTransparentBackground={true}
         paddingLeft={3}
