@@ -12,7 +12,7 @@ export const SPAWN_TOOL: ToolDef = {
   name: "spawn",
   description:
     "Spawn a single sub-agent with inline parameters. " +
-    "Check pre-defined templates (e.g. 'explorer', 'executor') before creating custom ones. " +
+    "Check pre-defined templates (e.g. 'explorer', 'reviewer') before creating custom ones. " +
     "See system prompt for available templates and their capabilities.",
   parameters: {
     type: "object",
@@ -23,7 +23,7 @@ export const SPAWN_TOOL: ToolDef = {
       },
       template: {
         type: "string",
-        description: "Pre-defined template name, e.g. 'explorer', 'executor'.",
+        description: "Pre-defined template name, e.g. 'explorer', 'reviewer'.",
       },
       template_path: {
         type: "string",
