@@ -360,8 +360,8 @@ export function OpenTuiApp({
   const [cacheReadTokens, setCacheReadTokens] = useState(0);
   const updateContextTokenState = useCallback((inputTokens: number | undefined, cacheTokens?: number) => {
     if (typeof inputTokens !== "number" || !Number.isFinite(inputTokens) || inputTokens <= 0) return;
-    setContextTokens(inputTokens);
-    setCacheReadTokens(cacheTokens ?? 0);
+    setContextTokens((prev) => prev === inputTokens ? prev : inputTokens);
+    setCacheReadTokens((prev) => { const next = cacheTokens ?? 0; return prev === next ? prev : next; });
   }, []);
   // Usage snapshot for Codex or Copilot — only one is active at a time, based
   // on the current model provider. Hidden for all other providers.
@@ -889,9 +889,9 @@ export function OpenTuiApp({
       setShellSnapshots((previous) => sameShellSnapshotList(previous, nextShells) ? previous : nextShells);
       // Archived children stay in _childSessions (Session instance alive), so they always
       // appear in snapshots. No need for frozenChildView protection here.
-      setPendingAsk(session.getPendingAsk?.() ?? null);
-      setPermissionModeState(session.permissionMode ?? "reversible");
-      setRootLogRevision(session.getLogRevision?.() ?? 0);
+      setPendingAsk((prev) => { const next = session.getPendingAsk?.() ?? null; return prev === next ? prev : next; });
+      setPermissionModeState((prev) => { const next = session.permissionMode ?? "reversible"; return prev === next ? prev : next; });
+      setRootLogRevision((prev) => { const next = session.getLogRevision?.() ?? 0; return prev === next ? prev : next; });
       updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
     };
 

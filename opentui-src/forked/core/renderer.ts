@@ -3858,17 +3858,30 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // needed. `null` (focus reporting unknown/unsupported) does not gate.
     if (this._terminalFocusState === false) return
     this._currentMousePointerStyle = style
-    this.lib.setCursorStyleOptions(this.rendererPtr, { cursor: style })
-    // The native side flushes the OSC 22 pointer-shape escape only inside a
-    // render tick, and only when mouse_pointer != lastMousePointerStyle (see
-    // zig renderer.zig). setCursorStyleOptions just stores the style; it does
-    // not write anything. When the renderer is idle (no live requests) — e.g.
-    // a settled resumed conversation — hovering a clickable box changes no
-    // state and schedules no frame, so the escape is never emitted and the
-    // terminal pointer never changes (works on a still-ticking empty/startup
-    // screen, silently fails after resume). Force a one-shot frame so the
-    // pointer change actually reaches the terminal.
-    this.requestRender()
+    // Emit OSC 22 directly through writeOut() instead of going through the
+    // native render loop (setCursorStyleOptions + requestRender). Two reasons:
+    //
+    // 1. Idle flush: the native side only emits OSC 22 inside a render tick,
+    //    and an idle renderer (settled resumed conversation) never ticks — a
+    //    bare hover changes no on-screen state, so the escape never goes out.
+    //
+    // 2. Cursor survival: a render-triggered frame hides the text cursor in
+    //    its sync block (beginRenderFrame → hideCursor). The native loop
+    //    processes cursor BEFORE mouse-pointer, so if the pointer change is
+    //    the only thing that opens the block, the cursor section has already
+    //    passed with "nothing changed" and won't re-emit showCursor.
+    //
+    // Direct writeOut() is serialized with frame bytes (no interleave) but
+    // doesn't open a sync block, so the text cursor is untouched.
+    //
+    // Importantly, we do NOT call setCursorStyleOptions here. That would
+    // update native terminal.state.mouse_pointer without advancing the
+    // renderer's lastMousePointerStyle cache, causing the next unrelated
+    // render frame to re-emit the same OSC 22 inside its sync block —
+    // reintroducing the cursor-hiding issue. By leaving native state alone,
+    // mouse_pointer == lastMousePointerStyle on the next frame → no re-emit.
+    const name = style === "not-allowed" ? "not-allowed" : style
+    this.writeOut(`\x1b]22;${name}\x07`)
   }
 
   private updateMousePointerForRenderable(renderable: Renderable | undefined): void {

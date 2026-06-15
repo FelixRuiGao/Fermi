@@ -106,23 +106,23 @@ describe("mouse pointer style", () => {
     expect((renderer as any)._currentMousePointerStyle).toBe("default")
   })
 
-  // Regression: the native side only flushes the OSC 22 pointer escape during
-  // a render tick (zig renderer.zig: mouse_pointer != lastMousePointerStyle).
-  // setCursorStyleOptions just stores the style. If setMousePointer does not
-  // request a render, an idle renderer (e.g. a settled resumed conversation,
-  // where hovering a clickable box changes no state) never ticks and the
-  // pointer escape is never written — the cursor silently never updates even
-  // though _currentMousePointerStyle is correct. This guards that gap; it is
-  // invisible to unit tests that call renderOnce() and to TS-state assertions.
-  test("setMousePointer requests a render so the pointer escape is flushed", () => {
-    let renderRequests = 0
-    const original = renderer.requestRender.bind(renderer)
-    ;(renderer as any).requestRender = () => {
-      renderRequests++
-      original()
+  // Regression: the native render loop only flushes the OSC 22 pointer escape
+  // during a render tick, but a render tick's sync block hides the text cursor
+  // before the pointer section opens it — leaving the cursor invisible when
+  // only the pointer changed. So setMousePointer emits the OSC 22 directly
+  // via writeOut() instead of requestRender(), bypassing the sync block.
+  // This test guards that the pointer escape IS emitted (via writeOut, not
+  // requestRender) and that the tracked style is updated.
+  test("setMousePointer emits the pointer escape directly", () => {
+    let writeOutCalls = 0
+    const original = (renderer as any).writeOut.bind(renderer)
+    ;(renderer as any).writeOut = (...args: any[]) => {
+      writeOutCalls++
+      return original(...args)
     }
     renderer.setMousePointer("pointer")
-    expect(renderRequests).toBeGreaterThan(0)
+    expect(writeOutCalls).toBeGreaterThan(0)
+    expect((renderer as any)._currentMousePointerStyle).toBe("pointer")
   })
 
   // An element's own onMouseDown auto-resolves to a pointer, but an explicit

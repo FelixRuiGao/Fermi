@@ -43,23 +43,17 @@ interface GlowTextProps {
   toColor: string;
 }
 
+// Animation disabled: continuous PTY output from the color animation resets
+// Ghostty's cursor blink timer (processOutput → reset_cursor_blink every
+// ≤500ms, while the blink period is 600ms), preventing the input cursor from
+// blinking on the welcome screen. Static midpoint color until we move to a
+// self-drawn cursor that doesn't depend on the terminal's blink timer.
 function GlowTextInner({
   text,
   fromColor,
   toColor,
 }: GlowTextProps): React.ReactNode {
-  const [time, setTime] = React.useState(0);
-
-  React.useEffect(() => {
-    const id = setInterval(() => setTime((t) => t + 0.1), 33);
-    return () => clearInterval(id);
-  }, []);
-
-  // ~4s period, compound sine for organic feel (avoids mechanical repetition).
-  // Sweeps fromColor(pale blue) → midrange(accent) → toColor(deep blue-purple).
-  const t = (Math.sin(time * 0.5) * 0.7 + Math.sin(time * 0.37) * 0.3 + 1) * 0.5;
-  const fg = lerpColor(fromColor, toColor, t);
-
+  const fg = lerpColor(fromColor, toColor, 0.5);
   return <text fg={fg} attributes={ATTRS_BOLD} content={text} />;
 }
 

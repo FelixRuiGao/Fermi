@@ -280,7 +280,7 @@ function InputAreaInner(props: InputAreaProps): React.ReactNode {
           textColor={selectedChildId ? colors.muted : colors.text}
           focusedTextColor={selectedChildId ? colors.muted : colors.text}
           placeholderColor={colors.muted}
-          cursorStyle={{ style: "block", blinking: false }}
+          cursorStyle={{ style: "line", blinking: true }}
           cursorColor="#ffffff"
           flexGrow={1}
           maxHeight={maxInputLines}
