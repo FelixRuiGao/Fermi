@@ -348,7 +348,7 @@ export class ChildSessionManager {
       pendingInboxCount: session.pendingInboxCount,
       lastActivityAt: handle.lastActivityAt,
       // Child page chrome fields
-      inputTokens: session.lastInputTokens,
+      inputTokens: session.lastTotalTokens,
       contextBudget: session.contextBudget,
       modelConfigName: modelConfig?.name ?? "",
       modelProvider: modelConfig?.provider ?? "",

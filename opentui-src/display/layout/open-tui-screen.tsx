@@ -46,6 +46,7 @@ import { computePickerMaxVisible, getSidebarWidth } from "./metrics.js";
 import { HorizontalTabBar } from "./horizontal-tab-bar.js";
 import { shortenPath } from "../utils/format.js";
 import { UpdateToast } from "../overlays/update-toast.js";
+import { UsagePanel } from "../overlays/usage-panel.js";
 
 export interface OpenTuiScreenProps {
   theme: DisplayTheme;
@@ -150,6 +151,12 @@ export interface OpenTuiScreenProps {
   onUpdateRestart?: () => void;
   /** Called when user dismisses the update toast. */
   onUpdateDismiss?: () => void;
+  /** Whether the usage panel overlay is visible. */
+  usagePanel?: boolean;
+  /** Usage data for the panel. */
+  usageData?: import("../overlays/usage-panel.js").UsageData | null;
+  /** Called when user dismisses the usage panel. */
+  onUsageDismiss?: () => void;
 }
 
 export function OpenTuiScreen({
@@ -240,6 +247,9 @@ export function OpenTuiScreen({
   updateToast,
   onUpdateRestart,
   onUpdateDismiss,
+  usagePanel,
+  usageData,
+  onUsageDismiss,
 }: OpenTuiScreenProps): React.ReactNode {
   const conversationColumnWidth = terminal.width - 1;
   const conversationContentWidth = Math.max(20, conversationColumnWidth - 6);
@@ -531,6 +541,16 @@ export function OpenTuiScreen({
           terminalWidth={terminal.width}
           onRestart={onUpdateRestart}
           onDismiss={onUpdateDismiss}
+        />
+      ) : null}
+
+      {usagePanel && onUsageDismiss ? (
+        <UsagePanel
+          data={usageData ?? null}
+          theme={theme}
+          terminalWidth={terminal.width}
+          terminalHeight={terminal.height}
+          onDismiss={onUsageDismiss}
         />
       ) : null}
 

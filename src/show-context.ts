@@ -36,7 +36,7 @@ function formatTokens(tokens: number): string {
 // Entry content serialization for token estimation
 // ------------------------------------------------------------------
 
-function estimateEntryTokens(entry: LogEntry): number {
+export function estimateEntryTokens(entry: LogEntry): number {
   let text: string;
   switch (entry.type) {
     case "user_message":

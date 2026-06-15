@@ -122,6 +122,54 @@ export interface PromptRecipe {
  * This is the core assembly pipeline, extracted so Session can rebuild the
  * cached prompt when templates, AGENTS.md, skills, or config are reloaded.
  */
+/** Individual prompt layers, before concatenation. */
+export interface PromptLayers {
+  /** Role body from system_prompt.md (core behavioral instructions). */
+  roleBody: string;
+  /** Tool documentation from tools.md (detailed usage docs per tool). */
+  toolDocs: string;
+  /** Knowledge files (optional, concatenated). */
+  knowledge: string;
+}
+
+/**
+ * Return the individual prompt layers that assembleSystemPrompt would concatenate.
+ * Used by the usage panel to estimate per-section token costs.
+ */
+export function getPromptLayers(recipe: PromptRecipe): PromptLayers {
+  const { templateDir, spec } = recipe;
+  const roleBody = resolveSystemPrompt(spec, templateDir);
+
+  let toolDocs = "";
+  const toolsPromptFile = spec["tools_prompt_file"] as string | undefined;
+  if (toolsPromptFile) {
+    const toolsPath = join(templateDir, toolsPromptFile);
+    if (existsSync(toolsPath)) {
+      toolDocs = readFileSync(toolsPath, "utf-8").trimEnd();
+    }
+  } else {
+    toolDocs = resolveTierDefaultPrompt(spec) ?? "";
+  }
+
+  let knowledge = "";
+  const knowledgeDir = join(templateDir, "knowledge");
+  if (existsSync(knowledgeDir) && statSync(knowledgeDir).isDirectory()) {
+    const parts: string[] = [];
+    const entries = readdirSync(knowledgeDir).sort();
+    for (const entry of entries) {
+      if (entry.startsWith(".")) continue;
+      const fullPath = join(knowledgeDir, entry);
+      try {
+        if (!statSync(fullPath).isFile()) continue;
+      } catch { continue; }
+      parts.push(readFileSync(fullPath, "utf-8"));
+    }
+    knowledge = parts.join("\n\n");
+  }
+
+  return { roleBody, toolDocs, knowledge };
+}
+
 export function assembleSystemPrompt(recipe: PromptRecipe): string {
   const { templateDir, spec } = recipe;
 

@@ -526,6 +526,8 @@ export function OpenTuiApp({
 
   const [hint, setHint] = useState<string | null>(null);
   const [updateToast, setUpdateToast] = useState<{ phase: "downloading" | "staged" | "available"; version: string } | null>(null);
+  const [usagePanel, setUsagePanel] = useState(false);
+  const [usageData, setUsageData] = useState<import("./display/overlays/usage-panel.js").UsageData | null>(null);
   const [markdownMode, setMarkdownMode] = useState<"rendered" | "raw">("rendered");
   const [permissionModeState, setPermissionModeState] = useState<string>(session.permissionMode ?? "reversible");
   const [pendingAsk, setPendingAsk] = useState<PendingAskUi | null>(
@@ -698,7 +700,7 @@ export function OpenTuiApp({
     setPhase("Working");
     try {
       await session.resumePendingTurn({ signal: controller.signal });
-      updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+      updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
       setPendingAsk(session.getPendingAsk?.() ?? null);
       autoSave();
     } catch (err) {
@@ -890,7 +892,7 @@ export function OpenTuiApp({
       setPendingAsk(session.getPendingAsk?.() ?? null);
       setPermissionModeState(session.permissionMode ?? "reversible");
       setRootLogRevision(session.getLogRevision?.() ?? 0);
-      updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+      updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
     };
 
     syncFromLog();
@@ -934,7 +936,7 @@ export function OpenTuiApp({
         session.appendStatusMessage?.("[No reply] The model chose not to reply.", "no_reply");
         break;
       case "agent_end":
-        updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+        updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
         break;
       case "ask_requested":
         setPendingAsk(session.getPendingAsk?.() ?? null);
@@ -949,7 +951,7 @@ export function OpenTuiApp({
         // Source-side guard in `onTokenUpdate` already drops zero/missing
         // usage, so a token_update event always carries a real input_tokens.
         updateContextTokenState(
-          event.extra["input_tokens"] as number | undefined,
+          (event.extra["total_tokens"] as number | undefined) ?? (event.extra["input_tokens"] as number | undefined),
           event.extra["cache_read_tokens"] as number | undefined,
         );
         break;
@@ -1634,6 +1636,10 @@ export function OpenTuiApp({
           setHelpPanel((current) => !current);
           return;
         }
+        if (message === "__usage_panel__") {
+          setUsagePanel((current) => !current);
+          return;
+        }
         if (message === "__sidebar_toggle__") {
           setSidebarMode((current) => {
             const next = current === "auto" ? "open" : current === "open" ? "close" : "auto";
@@ -1647,7 +1653,7 @@ export function OpenTuiApp({
       resetUiState: () => {
         setProcessing(false);
         setPhase("idle");
-        updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+        updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
         setPendingAsk(null);
         setAskError(null);
       },
@@ -1731,7 +1737,7 @@ export function OpenTuiApp({
     setPhase("Working");
     try {
       await session.turn(input, { signal: controller.signal, inlineImages });
-      updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+      updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
       setPendingAsk(session.getPendingAsk?.() ?? null);
       autoSave();
     } catch {
@@ -1948,7 +1954,7 @@ export function OpenTuiApp({
     setPhase("Working");
     try {
       await s.runInjectedCommand(displayText, content, { signal: controller.signal });
-      updateContextTokenState(session.lastInputTokens, session.lastCacheReadTokens ?? 0);
+      updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
       setPendingAsk(session.getPendingAsk?.() ?? null);
       autoSave();
     } catch {
@@ -2324,6 +2330,15 @@ export function OpenTuiApp({
     if (helpPanel) {
       if (event.name === "escape" || (event.name === "c" && event.ctrl)) {
         setHelpPanel(false);
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
+    if (usagePanel) {
+      if (event.name === "escape" || (event.name === "c" && event.ctrl)) {
+        setUsagePanel(false);
         event.preventDefault();
         event.stopPropagation();
       }
@@ -3194,6 +3209,36 @@ export function OpenTuiApp({
     : modelNameColor;
   const effectiveContextTokens = childSnapshot ? childSnapshot.inputTokens : contextTokens;
   const effectiveContextLimit = childSnapshot ? childSnapshot.contextBudget : session.contextBudget;
+
+  // Usage panel data is computed off a deferred tick so the "Calculating…"
+  // frame paints before the (potentially long) log scan runs — otherwise a big
+  // conversation would freeze the panel's first render.
+  useEffect(() => {
+    if (!usagePanel) {
+      setUsageData(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      if (cancelled) return;
+      const ctx = effectiveContextTokens;
+      const bd = session.contextBreakdown;
+      const messages = Math.max(0, ctx - session.systemPromptTokens);
+      setUsageData({
+        cumulativeInput: session.cumulativeInputTokens,
+        cumulativeCacheRead: session.cumulativeCacheReadTokens,
+        cumulativeUncached: session.cumulativeUncachedTokens,
+        cumulativeOutput: session.cumulativeOutputTokens,
+        contextUsed: ctx,
+        contextLimit: effectiveContextLimit ?? 0,
+        breakdown: { ...bd, messages },
+      });
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [usagePanel, session, effectiveContextTokens, effectiveContextLimit]);
   const effectiveCacheReadTokens = childSnapshot ? childSnapshot.cacheReadTokens : cacheReadTokens;
   const effectiveProcessing = childSnapshot ? childSnapshot.running : processing;
   const effectiveEntries = presentationEntries;
@@ -3344,6 +3389,9 @@ export function OpenTuiApp({
       onUpdateDismiss={() => {
         setUpdateToast(null);
       }}
+      usagePanel={usagePanel}
+      usageData={usageData}
+      onUsageDismiss={() => setUsagePanel(false)}
       onBackgroundMouseDown={() => {
         if (commandOverlay.visible) setCommandOverlay(EMPTY_COMMAND_OVERLAY);
         if (commandPicker) setCommandPicker(null);

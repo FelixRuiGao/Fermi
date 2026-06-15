@@ -123,6 +123,12 @@ export interface Session {
   lastTotalTokens: number;
   lastCacheReadTokens?: number;
   contextBudget: number;
+  cumulativeInputTokens: number;
+  cumulativeOutputTokens: number;
+  cumulativeCacheReadTokens: number;
+  cumulativeUncachedTokens: number;
+  systemPromptTokens: number;
+  contextBreakdown: { systemPrompt: number; tools: number; agentsMd: number; skills: number; messages: number };
   onSaveRequest?: () => void;
   setStore(store: SessionStore | null): void;
   getPendingAsk(): PendingAskUi | null;

@@ -18,7 +18,7 @@ import { join, dirname, resolve, relative, isAbsolute } from "node:path";
 // child_process — now only used by BackgroundShellManager
 import * as yaml from "js-yaml";
 
-import { assembleSystemPrompt } from "./templates/loader.js";
+import { assembleSystemPrompt, getPromptLayers } from "./templates/loader.js";
 
 import { Agent, isNoReply, NO_REPLY_MARKER } from "./agents/agent.js";
 import type {
@@ -30,7 +30,7 @@ import type {
 } from "./agents/tool-loop.js";
 import { createEphemeralLogState } from "./ephemeral-log.js";
 import { isCompactMarker, allocateContextId, stripContextTags, ContextTagStripBuffer } from "./context-rendering.js";
-import { generateShowContext } from "./show-context.js";
+import { estimateEntryTokens, generateShowContext } from "./show-context.js";
 import { getThinkingLevels, getHighestThinkingLevel, getModelMaxOutputTokens, type Config, type ModelConfig } from "./config.js";
 import type { MCPClientManager } from "./mcp-client.js";
 import { ProgressEvent, type ProgressLevel, type ProgressReporter } from "./progress.js";
@@ -102,7 +102,7 @@ import { BackgroundShellManager, type BackgroundShellSnapshot, type BackgroundSh
 import { PermissionAdvisor, PermissionRuleStore, initBashParser, type PermissionMode, type PermissionRule, type ApprovalOffer } from "./permissions/index.js";
 import { HookRuntime, type HookEvent, type HookPayload } from "./hooks/index.js";
 import type { HookManifest } from "./hooks/types.js";
-import { assembleFullSystemPrompt } from "./prompt-assembler.js";
+import { assembleFullSystemPrompt, readAgentsMemory } from "./prompt-assembler.js";
 import { shell } from "./platform/index.js";
 import { buildShellNotes } from "./tools/shell-notes.js";
 import {
@@ -320,6 +320,31 @@ class NoReplyStreamBuffer {
 // Session
 // ------------------------------------------------------------------
 
+/** Cumulative usage figures derived from the log's token_update entries. */
+interface UsageStats {
+  /** Σ inputTokens across every provider call (billed input, re-sent each call). */
+  cumulativeInput: number;
+  /** Σ output tokens (totalTokens − inputTokens) across every provider call. */
+  cumulativeOutput: number;
+  /** Σ cacheReadTokens (the cached slice of cumulativeInput). */
+  cumulativeCacheRead: number;
+  /** Σ (inputTokens − cacheReadTokens) (the uncached slice of cumulativeInput). */
+  cumulativeUncached: number;
+  /** Estimated fixed prompt: first call's input minus the first user message. */
+  systemPromptTotal: number;
+  /** Per-section breakdown of systemPromptTotal (ratio-scaled estimates). */
+  systemPromptBreakdown: ContextBreakdown;
+}
+
+/** Per-section token estimates for the context breakdown. */
+interface ContextBreakdown {
+  systemPrompt: number;
+  tools: number;
+  agentsMd: number;
+  skills: number;
+  messages: number;
+}
+
 export class Session {
   primaryAgent: Agent;
   config: Config;
@@ -367,10 +392,22 @@ export class Session {
     this._logStore.idAllocator = alloc;
   }
 
-  // Token tracking
+  // Token tracking (per-response snapshot)
   private _lastInputTokens = 0;
   private _lastTotalTokens = 0;
   private _lastCacheReadTokens = 0;
+
+  // Cumulative usage (Total Input/Output/Cached/Uncached + system prompt) is
+  // DERIVED from the log's token_update entries, not kept as live counters:
+  // token_update entries persist across restore and survive compaction (they
+  // carry no contextId/content to strip), so the log is the single source of
+  // truth and live/restored values can't drift. Memoized by log length so
+  // repeated usage-panel renders don't rescan the log.
+  private _usageStatsCache: { logLen: number; stats: UsageStats } | null = null;
+
+  // Per-section gptEncode estimates of the system prompt. Invalidated only
+  // when the prompt is reassembled (_reloadPromptAndTools / _resetTransientState).
+  private _promptSectionEstimates: { systemPrompt: number; tools: number; agentsMd: number; skills: number } | null = null;
 
   // Compact phase
   private _compactInProgress = false;
@@ -753,7 +790,7 @@ export class Session {
         (this.primaryAgent as unknown as { _provider?: { budgetCalcMode?: string } })._provider?.budgetCalcMode,
       isCompactInProgress: () => this._compactInProgress,
       canAutoCompact: () => this._capabilities.includeSpawnTool,
-      getLastInputTokens: () => this._lastInputTokens,
+      getLastInputTokens: () => this._lastTotalTokens,
       deliverSystemNotice: (content) => {
         this._deliverMessage({ type: "system_notice", sender: "system", content, timestamp: Date.now() });
       },
@@ -1735,6 +1772,8 @@ export class Session {
     this._lastInputTokens = 0;
     this._lastTotalTokens = 0;
     this._lastCacheReadTokens = 0;
+    this._usageStatsCache = null;
+    this._promptSectionEstimates = null;
     this._compactInProgress = false;
     this._hintState = "none";
     this._agentState = "idle";
@@ -2775,6 +2814,128 @@ export class Session {
   set lastCacheReadTokens(value: number) {
     this._lastCacheReadTokens = value;
   }
+
+  // ── Cumulative usage stats (derived from log token_update entries) ──
+
+  /**
+   * Estimate token counts for each section of the system prompt using
+   * gpt-tokenizer. Cached until prompt/skills/tools reload.
+   */
+  private _getPromptSectionEstimates(): { systemPrompt: number; tools: number; agentsMd: number; skills: number } {
+    if (this._promptSectionEstimates) return this._promptSectionEstimates;
+
+    const recipe = this.primaryAgent.promptRecipe;
+
+    // System Prompt (role body + knowledge — NOT tool docs)
+    let estSystemPrompt = 0;
+    let estToolDocs = 0;
+    if (recipe) {
+      const layers = getPromptLayers(recipe);
+      estSystemPrompt = gptEncode(layers.roleBody).length + gptEncode(layers.knowledge).length;
+      estToolDocs = gptEncode(layers.toolDocs).length;
+    } else {
+      estSystemPrompt = gptEncode(this.primaryAgent.systemPrompt).length;
+    }
+
+    // Tool schemas (ToolDef[] serialized as provider would)
+    let estToolSchemas = 0;
+    for (const tool of this.primaryAgent.tools) {
+      if (tool.name === "skill") continue; // counted separately
+      estToolSchemas += gptEncode(
+        JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }),
+      ).length;
+    }
+
+    // AGENTS.md
+    const agentsMdText = readAgentsMemory(this._projectRoot);
+    const estAgentsMd = agentsMdText ? gptEncode(agentsMdText).length : 0;
+
+    // Skill tool (description embeds the skill listing)
+    const skillDef = buildSkillToolDef(this._skills);
+    const estSkills = skillDef
+      ? gptEncode(JSON.stringify({ name: skillDef.name, description: skillDef.description, parameters: skillDef.parameters })).length
+      : 0;
+
+    // Tools = tool docs (inline in prompt) + tool schemas (API tools[])
+    const tools = estToolDocs + estToolSchemas;
+
+    this._promptSectionEstimates = { systemPrompt: estSystemPrompt, tools, agentsMd: estAgentsMd, skills: estSkills };
+    return this._promptSectionEstimates;
+  }
+
+  /**
+   * Recompute cumulative usage by summing every token_update entry in the log.
+   * Memoized by log length: the result only changes when entries are appended
+   * (live turn) or the log is replaced (restore / new session).
+   */
+  private _computeUsageStats(): UsageStats {
+    const logLen = this._log.length;
+    const cached = this._usageStatsCache;
+    if (cached && cached.logLen === logLen) return cached.stats;
+
+    let cumulativeInput = 0;
+    let cumulativeOutput = 0;
+    let cumulativeCacheRead = 0;
+    let cumulativeUncached = 0;
+    let firstInput = 0;
+    let firstUserMessageTokens = 0;
+    let sawFirstUserMessage = false;
+
+    for (const entry of this._log) {
+      if (entry.type === "token_update") {
+        const meta = entry.meta as Record<string, unknown>;
+        const input = meta["inputTokens"] as number;
+        if (!Number.isFinite(input) || input <= 0) continue;
+        const total = (meta["totalTokens"] as number | undefined) ?? input;
+        const cacheRead = (meta["cacheReadTokens"] as number | undefined) ?? 0;
+        cumulativeInput += input;
+        cumulativeOutput += Math.max(0, total - input);
+        cumulativeCacheRead += cacheRead;
+        cumulativeUncached += Math.max(0, input - cacheRead);
+        if (firstInput === 0) firstInput = input;
+      } else if (
+        !sawFirstUserMessage &&
+        entry.type === "user_message" &&
+        (entry.meta as Record<string, unknown>)["inputKind"] === "user"
+      ) {
+        firstUserMessageTokens = estimateEntryTokens(entry);
+        sawFirstUserMessage = true;
+      }
+    }
+
+    const systemPromptTotal = Math.max(0, firstInput - firstUserMessageTokens);
+
+    // Scale gpt-tokenizer estimates by the ratio between the provider's actual
+    // system prompt size and our total estimate, so the per-section numbers add
+    // up to the provider-reported figure.
+    const est = this._getPromptSectionEstimates();
+    const estTotal = est.systemPrompt + est.tools + est.agentsMd + est.skills;
+    const ratio = estTotal > 0 ? systemPromptTotal / estTotal : 0;
+
+    const stats: UsageStats = {
+      cumulativeInput,
+      cumulativeOutput,
+      cumulativeCacheRead,
+      cumulativeUncached,
+      systemPromptTotal,
+      systemPromptBreakdown: {
+        systemPrompt: Math.round(est.systemPrompt * ratio),
+        tools: Math.round(est.tools * ratio),
+        agentsMd: Math.round(est.agentsMd * ratio),
+        skills: Math.round(est.skills * ratio),
+        messages: 0, // filled by the panel from context - systemPromptTotal
+      },
+    };
+    this._usageStatsCache = { logLen, stats };
+    return stats;
+  }
+
+  get cumulativeInputTokens(): number { return this._computeUsageStats().cumulativeInput; }
+  get cumulativeOutputTokens(): number { return this._computeUsageStats().cumulativeOutput; }
+  get cumulativeCacheReadTokens(): number { return this._computeUsageStats().cumulativeCacheRead; }
+  get cumulativeUncachedTokens(): number { return this._computeUsageStats().cumulativeUncached; }
+  get systemPromptTokens(): number { return this._computeUsageStats().systemPromptTotal; }
+  get contextBreakdown(): ContextBreakdown { return this._computeUsageStats().systemPromptBreakdown; }
 
   /** Effective context budget: contextLength × context budget percent. */
   get contextBudget(): number {
@@ -4647,6 +4808,8 @@ export class Session {
       this._lastInputTokens = inputTokens;
       this._lastTotalTokens = usage?.totalTokens ?? inputTokens;
       this._lastCacheReadTokens = usage?.cacheReadTokens ?? 0;
+      // Cumulative stats are derived from the token_update entry appended below
+      // (see _computeUsageStats), so there is nothing to accumulate here.
       this._appendEntry(
         createTokenUpdate(
           this._nextLogId("token_update"),
@@ -4661,6 +4824,7 @@ export class Session {
       if (this._progress) {
         const extra: Record<string, unknown> = { input_tokens: inputTokens };
         if (usage) {
+          extra["total_tokens"] = usage.totalTokens;
           if (usage.cacheReadTokens > 0) extra["cache_read_tokens"] = usage.cacheReadTokens;
           if (usage.cacheCreationTokens > 0) extra["cache_creation_tokens"] = usage.cacheCreationTokens;
         }
@@ -5466,6 +5630,7 @@ export class Session {
   _reloadPromptAndTools(): void {
     this._refreshSkills();
     this._cachedSystemPrompt = this._assembleSystemPrompt();
+    this._promptSectionEstimates = null;
   }
 
   /**

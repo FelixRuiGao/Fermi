@@ -484,7 +484,7 @@ export class OptimizedBuffer {
         leftTitleText = leftTitleText.slice(0, Math.max(1, maxTitleLen - 1)) + "…"
       }
     }
-    if (jsDrawsLeftTitle && leftTitleText) {
+    if (jsDrawsLeftTitle && leftTitleText && !leftTitleText.startsWith(" ")) {
       leftTitleText = ` ${leftTitleText} `
     }
 
@@ -511,7 +511,12 @@ export class OptimizedBuffer {
     if (jsDrawsLeftTitle && leftTitleText && leftTitleText.length > 0) {
       const sides = getBorderSides(options.border)
       if (sides.top) {
-        const titlePadding = 2
+        // Honor a caller-supplied space as the title's inset: a title that
+        // already pads itself (e.g. " Session Usage ") sits one cell from the
+        // corner, so the leading space lands right after it instead of leaving
+        // a border dash AND a space (which reads as a double gap). Bare titles
+        // (e.g. "Agents (2)") keep the conventional ╭─ dash gap.
+        const titlePadding = leftTitleText.startsWith(" ") ? 1 : 2
         const titleStartX = options.x + titlePadding
         const titleFg = options.titleColor!
         for (let i = 0; i < leftTitleText.length; i++) {
