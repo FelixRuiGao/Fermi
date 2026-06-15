@@ -9,6 +9,7 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: the conversation flickered with a full-screen redraw at the end of every turn. When the assistant's last message finished, its rendered markdown left streaming mode, which re-finalized the trailing blocks and let the block snap from its streamed height down to a compact one; because the conversation view is sticky-to-bottom, that size change re-pinned the scroll offset and forced a full-viewport repaint on every turn. Assistant markdown now stays in streaming mode after the turn ends — the same approach opencode uses for assistant text — so the finalize/resnap (and the flicker) never runs.
 - Fixed: MCP tools broke prompt caching on the first two turns. The `skill` tool was reordered relative to MCP tools between turns, invalidating the provider's cached tools prefix.
 
 ## v0.3.11
