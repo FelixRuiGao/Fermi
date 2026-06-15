@@ -1,9 +1,14 @@
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, mock } from "bun:test";
 import { buildDefaultRegistry, type CommandContext } from "../src/commands.js";
+import { registerMcpTools } from "../src/tool-runtime.js";
 
 function makeContext(
   registry: ReturnType<typeof buildDefaultRegistry>,
   session: Record<string, unknown>,
+  overrides: Partial<CommandContext> = {},
 ): CommandContext {
   return {
     session,
@@ -11,33 +16,122 @@ function makeContext(
     autoSave: mock(),
     resetUiState: mock(),
     commandRegistry: registry,
+    ...overrides,
   };
 }
 
 describe("/mcp command", () => {
-  it("connects MCP servers before listing tools", async () => {
+  it("connects MCP servers before rendering the status summary", async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), "fermi-mcp-command-"));
     const registry = buildDefaultRegistry();
     const cmd = registry.lookup("/mcp");
     expect(cmd).toBeTruthy();
 
-    const tools: Array<{ name: string }> = [];
-    const ensureMcpReady = mock(async () => {
-      tools.push({ name: "mcp__sqlite__query" });
-      tools.push({ name: "mcp__sqlite__schema" });
-    });
-    const session = {
-      ensureMcpReady,
-      mcpManager: {
-        getAllTools: () => tools,
+    try {
+      writeFileSync(
+        join(homeDir, "settings.json"),
+        JSON.stringify({
+          mcp_servers: {
+            sqlite: {
+              transport: "stdio",
+              command: "sqlite-mcp",
+            },
+          },
+        }),
+      );
+
+      const ensureMcpReady = mock(async () => {});
+      const session = {
+        ensureMcpReady,
+        mcpManager: {
+          getAllTools: () => [
+            { name: "mcp__sqlite__query" },
+            { name: "mcp__sqlite__schema" },
+          ],
+        },
+      };
+
+      const ctx = makeContext(
+        registry,
+        session,
+        { fermiHomeDir: homeDir } as Partial<CommandContext>,
+      );
+      await cmd!.handler(ctx, "");
+
+      expect(ensureMcpReady).toHaveBeenCalledTimes(1);
+      const rendered = (ctx.showMessage as ReturnType<typeof mock>).mock.calls[0]?.[0] as string;
+      expect(rendered).toContain("MCP: 1 server(s), 1 enabled");
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("MCP runtime registration", () => {
+  it("removes stale MCP tool schemas and executors after reload", async () => {
+    const readTool = {
+      name: "read_file",
+      description: "Read",
+      parameters: { type: "object", properties: {} },
+    };
+    const skillTool = {
+      name: "skill",
+      description: "Skill",
+      parameters: { type: "object", properties: {} },
+    };
+    const docsTool = {
+      name: "mcp__docs__search",
+      description: "Search docs",
+      parameters: { type: "object", properties: {} },
+    };
+    const dbTool = {
+      name: "mcp__db__query",
+      description: "Query db",
+      parameters: { type: "object", properties: {} },
+    };
+    const dbToolReloaded = {
+      name: "mcp__db__query",
+      description: "Query db v2",
+      parameters: {
+        type: "object",
+        properties: { sql: { type: "string" } },
+        required: ["sql"],
       },
     };
 
-    const ctx = makeContext(registry, session);
-    await cmd!.handler(ctx, "");
+    let currentTools = [docsTool, dbTool];
+    const manager = {
+      connectAll: mock(async () => {}),
+      getAllTools: () => currentTools,
+      callTool: mock(async (name: string) => ({ content: `called ${name}` })),
+    };
+    const executors: Record<string, any> = {};
+    const agent = {
+      tools: [readTool, skillTool],
+      _mcpToolsSpec: "all",
+    };
 
-    expect(ensureMcpReady).toHaveBeenCalledTimes(1);
-    const rendered = (ctx.showMessage as ReturnType<typeof mock>).mock.calls[0]?.[0] as string;
-    expect(rendered).toContain("sqlite");
-    expect(rendered).toContain("query");
+    await registerMcpTools(manager as any, executors, [agent as any]);
+
+    expect(agent.tools.map((t) => t.name)).toEqual([
+      "read_file",
+      "mcp__docs__search",
+      "mcp__db__query",
+      "skill",
+    ]);
+    expect(executors["mcp__docs__search"]).toBeTruthy();
+    expect(executors["mcp__db__query"]).toBeTruthy();
+
+    currentTools = [dbToolReloaded];
+    await registerMcpTools(manager as any, executors, [agent as any]);
+
+    expect(agent.tools.map((t) => t.name)).toEqual([
+      "read_file",
+      "mcp__db__query",
+      "skill",
+    ]);
+    expect(agent.tools.find((t) => t.name === "mcp__db__query")?.description).toBe("Query db v2");
+    expect(executors["mcp__docs__search"]).toBeUndefined();
+    expect(executors["mcp__db__query"]).toBeTruthy();
   });
 });

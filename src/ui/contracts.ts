@@ -203,6 +203,9 @@ export interface Session {
   getAllSkillNames?(): { name: string; description: string; enabled: boolean }[];
   setSkillEnabled?(name: string, enabled: boolean): void;
   reloadSkills?(): { added: string[]; removed: string[]; total: number };
+  notifySkillAvailabilityChanged?(changes: { enabled?: string[]; disabled?: string[] }): void;
+  reloadMcp?(options?: { notice?: boolean; reason?: string }): Promise<string>;
+  reconnectMcpServer?(serverName: string): Promise<boolean>;
   skills?: ReadonlyMap<string, unknown>;
   getPlanState?(): PlanCheckpoint[];
   subscribePlan?(listener: () => void): () => void;

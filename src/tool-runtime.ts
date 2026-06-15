@@ -266,6 +266,32 @@ export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecu
 // MCP tool registration
 // ------------------------------------------------------------------
 
+const MCP_TOOL_PREFIX = "mcp__";
+
+function isMcpToolName(name: string): boolean {
+  return name.startsWith(MCP_TOOL_PREFIX);
+}
+
+function selectMcpToolsForAgent(
+  spec: unknown,
+  mcpTools: ToolDef[],
+): ToolDef[] {
+  if (!spec || spec === "none") return [];
+
+  if (spec === "all") {
+    return mcpTools;
+  }
+
+  if (Array.isArray(spec)) {
+    const prefixes = (spec as string[]).map((s) => `mcp__${s}__`);
+    return mcpTools.filter((t) =>
+      prefixes.some((p) => t.name.startsWith(p)),
+    );
+  }
+
+  return [];
+}
+
 export async function registerMcpTools(
   mcpManager: MCPClientManager,
   executors: Record<string, ToolExecutor>,
@@ -274,6 +300,13 @@ export async function registerMcpTools(
   try {
     await mcpManager.connectAll();
     const mcpTools = mcpManager.getAllTools();
+    const activeMcpToolNames = new Set(mcpTools.map((t) => t.name));
+
+    for (const name of Object.keys(executors)) {
+      if (isMcpToolName(name) && !activeMcpToolNames.has(name)) {
+        delete executors[name];
+      }
+    }
 
     for (const tool of mcpTools) {
       if (tool.name in executors) continue;
@@ -289,19 +322,13 @@ export async function registerMcpTools(
       seenAgents.add(agent);
 
       const spec = (agent as any)._mcpToolsSpec;
-      if (!spec || spec === "none") continue;
+      const selectedTools = selectMcpToolsForAgent(spec, mcpTools);
+      const selectedToolNames = new Set(selectedTools.map((t) => t.name));
+      const selectedToolsByName = new Map(selectedTools.map((t) => [t.name, t]));
 
-      let selectedTools: ToolDef[];
-      if (spec === "all") {
-        selectedTools = mcpTools;
-      } else if (Array.isArray(spec)) {
-        const prefixes = (spec as string[]).map((s) => `mcp__${s}__`);
-        selectedTools = mcpTools.filter((t) =>
-          prefixes.some((p) => t.name.startsWith(p)),
-        );
-      } else {
-        selectedTools = [];
-      }
+      agent.tools = agent.tools
+        .filter((t) => !isMcpToolName(t.name) || selectedToolNames.has(t.name))
+        .map((t) => isMcpToolName(t.name) ? selectedToolsByName.get(t.name) ?? t : t);
 
       if (!selectedTools.length) continue;
 

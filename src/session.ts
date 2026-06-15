@@ -350,6 +350,24 @@ interface ContextBreakdown {
   messages: number;
 }
 
+interface McpAvailabilitySnapshot {
+  servers: string[];
+  tools: string[];
+}
+
+interface ToolAvailabilityNotice {
+  reason: string;
+  skillsEnabled?: string[];
+  skillsDisabled?: string[];
+  skillsAdded?: string[];
+  skillsRemoved?: string[];
+  mcpServersConnected?: string[];
+  mcpServersDisconnected?: string[];
+  mcpServersChanged?: string[];
+  mcpToolsAdded?: string[];
+  mcpToolsRemoved?: string[];
+}
+
 export class Session {
   primaryAgent: Agent;
   config: Config;
@@ -2496,6 +2514,17 @@ export class Session {
     }
   }
 
+  notifySkillAvailabilityChanged(changes: {
+    enabled?: string[];
+    disabled?: string[];
+  }): void {
+    this._queueToolAvailabilityNotice({
+      reason: "the user updated skill availability",
+      skillsEnabled: changes.enabled,
+      skillsDisabled: changes.disabled,
+    });
+  }
+
   /**
    * Rescan skill directories, apply disabled filter, and rebuild
    * the skill tool definition. Returns change report for callers
@@ -2579,12 +2608,97 @@ export class Session {
   // reload tool executor
   // ==================================================================
 
+  private _sortedUnique(values: Iterable<string | undefined | null>): string[] {
+    return [...new Set([...values].filter((v): v is string => typeof v === "string" && v.length > 0))]
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  private _diffNames(before: Iterable<string>, after: Iterable<string>): { added: string[]; removed: string[] } {
+    const beforeSet = new Set(before);
+    const afterSet = new Set(after);
+    return {
+      added: this._sortedUnique([...afterSet].filter((name) => !beforeSet.has(name))),
+      removed: this._sortedUnique([...beforeSet].filter((name) => !afterSet.has(name))),
+    };
+  }
+
+  private _snapshotMcpAvailability(): McpAvailabilitySnapshot {
+    const manager = this._mcpManager;
+    if (!manager) return { servers: [], tools: [] };
+
+    const toolNames: string[] = [];
+    const serverNames: string[] = [];
+
+    try {
+      if (typeof manager.getAllTools === "function") {
+        for (const tool of manager.getAllTools()) {
+          if (typeof tool.name !== "string") continue;
+          toolNames.push(tool.name);
+          const parts = tool.name.split("__");
+          if (parts.length >= 3 && parts[0] === "mcp") {
+            const serverName = parts[1];
+            if (serverName) serverNames.push(serverName);
+          }
+        }
+      }
+    } catch { /* best effort */ }
+
+    try {
+      if (typeof manager.getServerStatuses === "function") {
+        for (const status of manager.getServerStatuses()) {
+          if (status.state === "connected") serverNames.push(status.name);
+        }
+      }
+    } catch { /* best effort */ }
+
+    return {
+      servers: this._sortedUnique(serverNames),
+      tools: this._sortedUnique(toolNames),
+    };
+  }
+
+  private _queueToolAvailabilityNotice(notice: ToolAvailabilityNotice): void {
+    const sections: string[] = [
+      `Tool availability changed because ${notice.reason}.`,
+      "This is normal runtime behavior; do not infer from this change alone that your earlier answer or reasoning was wrong. Use the skills and MCP tools currently available in this turn.",
+    ];
+
+    const addList = (label: string, items: string[] | undefined): void => {
+      const values = this._sortedUnique(items ?? []);
+      if (values.length === 0) return;
+      sections.push("", `${label}:`);
+      for (const value of values) sections.push(`- ${value}`);
+    };
+
+    addList("Skills enabled", notice.skillsEnabled);
+    addList("Skills disabled", notice.skillsDisabled);
+    addList("Skills now available after reload", notice.skillsAdded);
+    addList("Skills no longer available after reload", notice.skillsRemoved);
+    addList("MCP servers connected", notice.mcpServersConnected);
+    addList("MCP servers disconnected", notice.mcpServersDisconnected);
+    addList("MCP servers reconnected or changed", notice.mcpServersChanged);
+    addList("MCP tools now available", notice.mcpToolsAdded);
+    addList("MCP tools no longer available", notice.mcpToolsRemoved);
+
+    if (sections.length <= 2) return;
+
+    this._deliverMessage({
+      type: "system_notice",
+      sender: "system",
+      timestamp: Date.now(),
+      content: sections.join("\n"),
+      wake: false,
+      tuiVisible: false,
+    });
+  }
+
   /**
    * Reload MCP servers from settings. Reads global + local settings,
    * reconfigures the MCPClientManager, and notifies the TUI.
    * Returns a human-readable summary of what changed.
    */
-  async reloadMcp(): Promise<string> {
+  async reloadMcp(options?: { notice?: boolean; reason?: string }): Promise<string> {
+    const before = this._snapshotMcpAvailability();
     const globalSettings = loadGlobalSettings();
     const localSettings = loadLocalSettings(this._projectRoot);
     const effective = Object.keys(localSettings).length > 0
@@ -2604,6 +2718,19 @@ export class Session {
       if (mcpResult.changed.length) changes.push(`~${mcpResult.changed.join(", ")}`);
 
       const allTools = this._mcpManager.getAllTools();
+      const after = this._snapshotMcpAvailability();
+      const serverDiff = this._diffNames(before.servers, after.servers);
+      const toolDiff = this._diffNames(before.tools, after.tools);
+      if (options?.notice !== false) {
+        this._queueToolAvailabilityNotice({
+          reason: options?.reason ?? "MCP configuration was reloaded",
+          mcpServersConnected: serverDiff.added,
+          mcpServersDisconnected: serverDiff.removed,
+          mcpServersChanged: mcpResult.changed,
+          mcpToolsAdded: toolDiff.added,
+          mcpToolsRemoved: toolDiff.removed,
+        });
+      }
 
       if (this.onMcpStatus && typeof this._mcpManager.getServerStatuses === "function") {
         this.onMcpStatus(this._mcpManager.getServerStatuses());
@@ -2619,6 +2746,18 @@ export class Session {
       this._mcpConnected = false;
       await this._ensureMcp();
       const allTools = this._mcpManager!.getAllTools();
+      const after = this._snapshotMcpAvailability();
+      const serverDiff = this._diffNames(before.servers, after.servers);
+      const toolDiff = this._diffNames(before.tools, after.tools);
+      if (options?.notice !== false) {
+        this._queueToolAvailabilityNotice({
+          reason: options?.reason ?? "MCP configuration was reloaded",
+          mcpServersConnected: serverDiff.added,
+          mcpServersDisconnected: serverDiff.removed,
+          mcpToolsAdded: toolDiff.added,
+          mcpToolsRemoved: toolDiff.removed,
+        });
+      }
 
       if (this.onMcpStatus && typeof this._mcpManager!.getServerStatuses === "function") {
         this.onMcpStatus(this._mcpManager!.getServerStatuses());
@@ -2628,6 +2767,29 @@ export class Session {
     }
 
     return "MCP: no servers configured";
+  }
+
+  async reconnectMcpServer(serverName: string): Promise<boolean> {
+    if (!this._mcpManager || typeof this._mcpManager.reconnectServer !== "function") return false;
+    const before = this._snapshotMcpAvailability();
+    const ok = await this._mcpManager.reconnectServer(serverName);
+    this._mcpConnected = false;
+    await this._ensureMcp();
+    const after = this._snapshotMcpAvailability();
+    const serverDiff = this._diffNames(before.servers, after.servers);
+    const toolDiff = this._diffNames(before.tools, after.tools);
+    this._queueToolAvailabilityNotice({
+      reason: `the user reconnected MCP server '${serverName}'`,
+      mcpServersConnected: serverDiff.added,
+      mcpServersDisconnected: serverDiff.removed,
+      mcpServersChanged: [serverName],
+      mcpToolsAdded: toolDiff.added,
+      mcpToolsRemoved: toolDiff.removed,
+    });
+    if (this.onMcpStatus && typeof this._mcpManager.getServerStatuses === "function") {
+      this.onMcpStatus(this._mcpManager.getServerStatuses());
+    }
+    return ok;
   }
 
   private async _execReload(): Promise<ToolResult> {
@@ -2647,11 +2809,28 @@ export class Session {
     report.push("System prompt: rebuilt");
 
     // 3. Reload MCP
+    const mcpBefore = this._snapshotMcpAvailability();
     try {
-      report.push(await this.reloadMcp());
+      report.push(await this.reloadMcp({
+        notice: false,
+        reason: "the reload tool refreshed MCP configuration",
+      }));
     } catch (err) {
       report.push(`MCP: reload failed — ${err instanceof Error ? err.message : String(err)}`);
     }
+    const mcpAfter = this._snapshotMcpAvailability();
+    const mcpServerDiff = this._diffNames(mcpBefore.servers, mcpAfter.servers);
+    const mcpToolDiff = this._diffNames(mcpBefore.tools, mcpAfter.tools);
+
+    this._queueToolAvailabilityNotice({
+      reason: "the reload tool refreshed skills, MCP servers, and the system prompt",
+      skillsAdded: skillResult.added,
+      skillsRemoved: skillResult.removed,
+      mcpServersConnected: mcpServerDiff.added,
+      mcpServersDisconnected: mcpServerDiff.removed,
+      mcpToolsAdded: mcpToolDiff.added,
+      mcpToolsRemoved: mcpToolDiff.removed,
+    });
 
     return new ToolResult({ content: report.join("\n") });
   }

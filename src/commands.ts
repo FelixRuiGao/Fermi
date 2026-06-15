@@ -2543,7 +2543,9 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
 
   if (action === "__reload__") {
     try {
-      const report = await session.reloadMcp();
+      const report = await session.reloadMcp({
+        reason: "the user reloaded MCP configuration",
+      });
       hint(report);
     } catch (err) {
       hint(`Reload failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -2558,7 +2560,10 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
     const mcpManager = session.mcpManager;
 
     if (op === "reconnect") {
-      if (mcpManager && typeof mcpManager.reconnectServer === "function") {
+      if (typeof session.reconnectMcpServer === "function") {
+        const ok = await session.reconnectMcpServer(serverName);
+        hint(ok ? `${serverName}: reconnected` : `${serverName}: reconnect failed`);
+      } else if (mcpManager && typeof mcpManager.reconnectServer === "function") {
         const ok = await mcpManager.reconnectServer(serverName);
         hint(ok ? `${serverName}: reconnected` : `${serverName}: reconnect failed`);
         if (session.onMcpStatus && typeof mcpManager.getServerStatuses === "function") {
@@ -2572,7 +2577,9 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
       const disabled = op === "disable";
       if (setMcpServerDisabled(serverName, disabled, ctx.fermiHomeDir)) {
         try {
-          const report = await session.reloadMcp();
+          const report = await session.reloadMcp({
+            reason: `the user ${disabled ? "disabled" : "enabled"} MCP server '${serverName}'`,
+          });
           hint(`${serverName}: ${disabled ? "disabled" : "enabled"} (${report})`);
         } catch (err) {
           hint(`${serverName}: ${disabled ? "disabled" : "enabled"} (reload failed: ${err instanceof Error ? err.message : String(err)})`);
@@ -2634,11 +2641,25 @@ async function cmdSkills(ctx: CommandContext, args: string): Promise<void> {
   const enabledNames = new Set(trimmed.split(",").map((s: string) => s.trim()).filter(Boolean));
   const allSkills = session.getAllSkillNames();
   const oldSkills = session.skills;
+  const enabledBefore = new Set(
+    allSkills
+      .filter((s: { enabled: boolean }) => s.enabled)
+      .map((s: { name: string }) => s.name),
+  );
 
   for (const s of allSkills) {
     session.setSkillEnabled(s.name, enabledNames.has(s.name));
   }
   session.reloadSkills();
+  if (typeof session.notifySkillAvailabilityChanged === "function") {
+    const enabled = allSkills
+      .map((s: { name: string }) => s.name)
+      .filter((name: string) => enabledNames.has(name) && !enabledBefore.has(name));
+    const disabled = allSkills
+      .map((s: { name: string }) => s.name)
+      .filter((name: string) => !enabledNames.has(name) && enabledBefore.has(name));
+    session.notifySkillAvailabilityChanged({ enabled, disabled });
+  }
 
   // Re-register slash commands
   reRegisterSkillCommands(ctx.commandRegistry, oldSkills, session.skills);
