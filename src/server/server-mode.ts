@@ -135,12 +135,14 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
     }
   }
 
-  // MCP manager
+  // MCP manager (connect eagerly, await lazily on first turn)
   let mcpManager: unknown = null;
+  let mcpReadyPromise: Promise<void> | undefined;
   if (config.mcpServerConfigs.length > 0) {
     try {
       const { MCPClientManager } = await import("../mcp-client.js");
       mcpManager = new MCPClientManager(config.mcpServerConfigs);
+      mcpReadyPromise = (mcpManager as any).connectAll().catch(() => {});
     } catch {
       // optional
     }
@@ -190,6 +192,7 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
     skillRoots,
     progress: undefined,
     mcpManager: mcpManager as never,
+    mcpReadyPromise,
     promptsDirs,
     store: store as never,
     contextBudgetPercent,

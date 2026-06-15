@@ -45,6 +45,7 @@ import { computePickerMaxVisible, getSidebarWidth } from "./metrics.js";
 import { HorizontalTabBar } from "./horizontal-tab-bar.js";
 import { shortenPath } from "../utils/format.js";
 import { UpdateToast } from "../overlays/update-toast.js";
+import { McpToast } from "../overlays/mcp-toast.js";
 import { UsagePanel } from "../overlays/usage-panel.js";
 import { StatPanel } from "../overlays/stat-panel.js";
 
@@ -147,6 +148,10 @@ export interface OpenTuiScreenProps {
   onStopShell?: (shellId: string) => void;
   /** Update toast state — null means hidden. */
   updateToast?: { phase: import("../overlays/update-toast.js").UpdateToastPhase; version: string } | null;
+  /** MCP connection failures — null means hidden. */
+  mcpFailures?: import("../overlays/mcp-toast.js").McpFailure[] | null;
+  /** Called when user dismisses or auto-dismiss fires on the MCP toast. */
+  onMcpDismiss?: () => void;
   /** Called when user clicks "Restart" in the update toast. */
   onUpdateRestart?: () => void;
   /** Called when user dismisses the update toast. */
@@ -253,6 +258,8 @@ export function OpenTuiScreen({
   updateToast,
   onUpdateRestart,
   onUpdateDismiss,
+  mcpFailures,
+  onMcpDismiss,
   usagePanel,
   usageData,
   onUsageDismiss,
@@ -547,6 +554,15 @@ export function OpenTuiScreen({
           terminalWidth={terminal.width}
           onRestart={onUpdateRestart}
           onDismiss={onUpdateDismiss}
+        />
+      ) : null}
+
+      {mcpFailures && mcpFailures.length > 0 && onMcpDismiss ? (
+        <McpToast
+          failures={mcpFailures}
+          theme={theme}
+          terminalWidth={terminal.width}
+          onDismiss={onMcpDismiss}
         />
       ) : null}
 

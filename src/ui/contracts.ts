@@ -131,6 +131,7 @@ export interface Session {
   contextBreakdown: { systemPrompt: number; tools: number; agentsMd: number; skills: number; messages: number };
   computeGlobalTokenStats?(): { cumulativeInput: number; cumulativeOutput: number; cumulativeCacheRead: number; cumulativeUncached: number; sessionCount: number };
   onSaveRequest?: () => void;
+  onMcpStatus?: (statuses: Array<{ name: string; state: string; toolCount: number; error?: string }>) => void;
   setStore(store: SessionStore | null): void;
   getPendingAsk(): PendingAskUi | null;
   resolveAgentQuestionAsk?(askId: string, decision: AgentQuestionDecision): void;

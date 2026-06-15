@@ -360,8 +360,8 @@ export function OpenTuiApp({
   const [cacheReadTokens, setCacheReadTokens] = useState(0);
   const updateContextTokenState = useCallback((inputTokens: number | undefined, cacheTokens?: number) => {
     if (typeof inputTokens !== "number" || !Number.isFinite(inputTokens) || inputTokens <= 0) return;
-    setContextTokens((prev) => prev === inputTokens ? prev : inputTokens);
-    setCacheReadTokens((prev) => { const next = cacheTokens ?? 0; return prev === next ? prev : next; });
+    setContextTokens(inputTokens);
+    setCacheReadTokens(cacheTokens ?? 0);
   }, []);
   // Usage snapshot for Codex or Copilot — only one is active at a time, based
   // on the current model provider. Hidden for all other providers.
@@ -527,6 +527,7 @@ export function OpenTuiApp({
 
   const [hint, setHint] = useState<string | null>(null);
   const [updateToast, setUpdateToast] = useState<{ phase: "downloading" | "staged" | "available"; version: string } | null>(null);
+  const [mcpFailures, setMcpFailures] = useState<import("./display/overlays/mcp-toast.js").McpFailure[] | null>(null);
   const [usagePanel, setUsagePanel] = useState(false);
   const [usageData, setUsageData] = useState<import("./display/overlays/usage-panel.js").UsageData | null>(null);
   const [statPanel, setStatPanel] = useState(false);
@@ -690,6 +691,18 @@ export function OpenTuiApp({
       session.onSaveRequest = undefined;
     };
   }, [session, autoSave]);
+
+  useEffect(() => {
+    session.onMcpStatus = (statuses: any[]) => {
+      const failed = statuses
+        .filter((s: any) => s.state === "failed")
+        .map((s: any) => ({ name: s.name, error: s.error }));
+      if (failed.length > 0) setMcpFailures(failed);
+    };
+    return () => {
+      session.onMcpStatus = undefined;
+    };
+  }, [session]);
 
   const runPendingTurn = useCallback(async () => {
     if (typeof session.resumePendingTurn !== "function") {
@@ -892,9 +905,9 @@ export function OpenTuiApp({
       setShellSnapshots((previous) => sameShellSnapshotList(previous, nextShells) ? previous : nextShells);
       // Archived children stay in _childSessions (Session instance alive), so they always
       // appear in snapshots. No need for frozenChildView protection here.
-      setPendingAsk((prev) => { const next = session.getPendingAsk?.() ?? null; return prev === next ? prev : next; });
-      setPermissionModeState((prev) => { const next = session.permissionMode ?? "reversible"; return prev === next ? prev : next; });
-      setRootLogRevision((prev) => { const next = session.getLogRevision?.() ?? 0; return prev === next ? prev : next; });
+      setPendingAsk(session.getPendingAsk?.() ?? null);
+      setPermissionModeState(session.permissionMode ?? "reversible");
+      setRootLogRevision(session.getLogRevision?.() ?? 0);
       updateContextTokenState(session.lastTotalTokens, session.lastCacheReadTokens ?? 0);
     };
 
@@ -3431,6 +3444,8 @@ export function OpenTuiApp({
       onUpdateDismiss={() => {
         setUpdateToast(null);
       }}
+      mcpFailures={mcpFailures}
+      onMcpDismiss={() => setMcpFailures(null)}
       usagePanel={usagePanel}
       usageData={usageData}
       onUsageDismiss={() => setUsagePanel(false)}

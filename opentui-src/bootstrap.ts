@@ -147,12 +147,14 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     modelState,
   );
 
-  // ── MCP client ──
+  // ── MCP client (connect eagerly, await lazily on first turn) ──
   let mcpManager: unknown = null;
+  let mcpReadyPromise: Promise<void> | undefined;
   if (config.mcpServerConfigs.length > 0) {
     try {
       const { MCPClientManager } = await import("../src/mcp-client.js");
       mcpManager = new MCPClientManager(config.mcpServerConfigs);
+      mcpReadyPromise = (mcpManager as any).connectAll().catch(() => {});
     } catch {
       console.warn(
         "Warning: MCP servers configured but MCP client module not available. Install @modelcontextprotocol/sdk if needed.",
@@ -198,6 +200,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     skillRoots,
     progress: undefined,
     mcpManager: mcpManager as never,
+    mcpReadyPromise,
     promptsDirs,
     store: store as never,
     contextBudgetPercent,

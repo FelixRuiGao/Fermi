@@ -358,6 +358,7 @@ export class Session {
   private _progress?: ProgressReporter;
   private _mcpManager?: MCPClientManager;
   private _mcpConnected = false;
+  private _mcpReadyPromise?: Promise<void>;
 
   /** Tool permission gate — add advisors to control tool execution. */
   readonly toolGate = new ToolGate();
@@ -527,6 +528,8 @@ export class Session {
 
   /** Callback for incremental persistence — called at save-worthy checkpoints. */
   onSaveRequest?: () => void;
+  /** Callback for MCP connection status — called after initial connect or reload. */
+  onMcpStatus?: (statuses: Array<{ name: string; state: string; toolCount: number; error?: string }>) => void;
 
   // Counters
   private _turnCount = 0;
@@ -751,6 +754,8 @@ export class Session {
     skillRoots?: string[];
     progress?: ProgressReporter;
     mcpManager?: MCPClientManager;
+    /** Promise from bootstrap's fire-and-forget connectAll(). Awaited on first turn. */
+    mcpReadyPromise?: Promise<void>;
     promptsDirs?: string[];
     store?: any;
     contextBudgetPercent?: number;
@@ -782,6 +787,7 @@ export class Session {
     this._skillRoots = opts.skillRoots ?? [];
     this._progress = opts.progress;
     this._mcpManager = opts.mcpManager;
+    this._mcpReadyPromise = opts.mcpReadyPromise;
     this._promptsDirs = opts.promptsDirs;
     this._capabilities = opts.capabilities ?? ROOT_SESSION_CAPABILITIES;
     this._turnOutputTarget = opts.onTurnOutput;
@@ -4249,9 +4255,6 @@ export class Session {
     }
 
     this._ensureSessionStorageReady();
-    if (this._mcpManager) {
-      await this._ensureMcp();
-    }
 
     const signal = options?.signal;
     if (this._pendingTurnState) {
@@ -4350,6 +4353,11 @@ export class Session {
       );
     }
     this.onSaveRequest?.();
+
+    // Ensure MCP is connected (after user message is displayed).
+    if (this._mcpManager) {
+      await this._ensureMcp();
+    }
 
     // Before-turn auto-compact: if last known usage + estimated new tokens
     // exceeds the threshold, compact now so the activation runs in fresh context.
@@ -6380,12 +6388,24 @@ export class Session {
 
   private async _ensureMcp(): Promise<void> {
     if (!this._mcpManager) return;
+    if (this._mcpConnected) return;
+
+    // Await bootstrap's fire-and-forget connectAll if available.
+    if (this._mcpReadyPromise) {
+      await this._mcpReadyPromise;
+      this._mcpReadyPromise = undefined;
+    }
+
     const agents = [this.primaryAgent, ...Object.values(this.agentTemplates)];
     this._mcpConnected = await registerMcpTools(
       this._mcpManager,
       this._toolExecutors,
       agents,
     );
+
+    if (this.onMcpStatus && typeof this._mcpManager.getServerStatuses === "function") {
+      this.onMcpStatus(this._mcpManager.getServerStatuses());
+    }
   }
 
   // ==================================================================
