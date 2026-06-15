@@ -18,6 +18,7 @@ import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSetti
 import { fetchModelSpecSuggestion } from "./models-dev-lookup.js";
 import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch, loadGlobalSettings } from "./persistence.js";
 import { validateSummarizeHintLevels } from "./settings.js";
+import { VERSION } from "./version.js";
 import { applySessionRestore, findSessionById } from "./session-resume.js";
 import { setDotenvKey } from "./dotenv.js";
 import { fetchModelsFromServer } from "./model-discovery.js";
@@ -1628,8 +1629,18 @@ async function cmdAutoUpdate(ctx: CommandContext, args: string): Promise<void> {
 
   if (choice === "on" || choice === "off") {
     const enabled = choice === "on";
+    const wasEnabled = loadGlobalSettings(ctx.fermiHomeDir).auto_update !== false;
     persistSettingsPatch({ auto_update: enabled }, ctx.fermiHomeDir);
     hint(`Auto-update: ${enabled ? "ON" : "OFF"}`);
+    // Turning auto-update ON kicks off an immediate background check — the same
+    // one that runs at startup when auto-update is enabled. The TUI's update
+    // poll picks up the resulting state and shows the toast if an update exists.
+    if (enabled && !wasEnabled) {
+      try {
+        const { checkForUpdates, setUpdateStateGetter } = await import("./update-check.js");
+        setUpdateStateGetter(checkForUpdates(VERSION, ctx.fermiHomeDir, true));
+      } catch { /* best effort — the setting is already persisted */ }
+    }
     return;
   }
 
