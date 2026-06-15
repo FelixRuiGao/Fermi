@@ -207,6 +207,16 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     projectRoot: projectPath,
   });
 
+  // Notify TUI when eager MCP connect completes
+  if (mcpReadyPromise && mcpManager) {
+    const mgr = mcpManager as any;
+    mcpReadyPromise.then(() => {
+      if (session.onMcpStatus && typeof mgr.getServerStatuses === "function") {
+        session.onMcpStatus(mgr.getServerStatuses());
+      }
+    });
+  }
+
   // ── Hooks (global > project > workspace) ──
   try {
     const { loadHooksMulti } = await import("../src/hooks/index.js");

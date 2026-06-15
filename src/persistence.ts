@@ -699,6 +699,7 @@ export interface MCPServerSettingsEntry {
   env?: Record<string, string>;
   env_allowlist?: string[];
   sensitive_tools?: string[];
+  disabled?: boolean;
 }
 
 /** System-managed model selection state. Lives in state/model-selection.json. */
@@ -1664,6 +1665,7 @@ export function settingsToConfigInputs(settings: FermiSettings): {
   if (settings.mcp_servers) {
     for (const [name, cfg] of Object.entries(settings.mcp_servers)) {
       if (!cfg || typeof cfg !== "object") continue;
+      if (cfg.disabled) continue;
       const env: Record<string, string> = {};
       if (cfg.env) {
         for (const [k, v] of Object.entries(cfg.env)) {

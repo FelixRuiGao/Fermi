@@ -50,10 +50,14 @@ function OverlayFrame({ theme, width = "100%", height, children }: OverlayFrameP
   );
 }
 
+type SemanticColor = "success" | "error" | "muted";
+
 interface OverlayOptionRowProps {
   theme: DisplayTheme;
   label: string;
+  labelParts?: Array<{ text: string; color?: SemanticColor }>;
   detail?: string;
+  detailColor?: SemanticColor;
   /** Fixed column width for detail text (for cross-row alignment). */
   detailColumnWidth?: number;
   selected: boolean;
@@ -62,10 +66,18 @@ interface OverlayOptionRowProps {
   onPress?: () => void;
 }
 
+const SEMANTIC_COLOR_MAP: Record<string, (t: DisplayTheme) => string> = {
+  success: (t) => t.colors.green,
+  error: (t) => t.colors.red,
+  muted: (t) => t.colors.muted,
+};
+
 function OverlayOptionRow({
   theme,
   label,
+  labelParts,
   detail,
+  detailColor,
   detailColumnWidth,
   selected,
   disabled = false,
@@ -75,9 +87,37 @@ function OverlayOptionRow({
   const isSelected = selected && !disabled;
   const fg = disabled ? theme.colors.muted : isSelected ? theme.colors.accent : theme.colors.dim;
   const prefix = isSelected ? "> " : "  ";
+
+  // Rich label: render as inline colored segments, no detail column
+  if (labelParts && labelParts.length > 0) {
+    return (
+      <SelectableRow
+        hoverBackgroundColor={theme.colors.border}
+        onPress={disabled ? undefined : onPress}
+      >
+        <box flexDirection="row" width="100%">
+          <text fg={fg} content={prefix} wrapMode="none" />
+          {labelParts.map((part, i) => (
+            <text
+              key={i}
+              fg={part.color ? (SEMANTIC_COLOR_MAP[part.color]?.(theme) ?? fg) : fg}
+              content={part.text}
+              wrapMode="none"
+            />
+          ))}
+        </box>
+      </SelectableRow>
+    );
+  }
+
+  // Two-column layout: label left, detail right
   if (detail !== undefined && detailColumnWidth) {
     const gapWidth = 1;
     const labelWidth = Math.max(1, width - detailColumnWidth - gapWidth);
+    const iconFg = detailColor
+      ? SEMANTIC_COLOR_MAP[detailColor]?.(theme) ?? fg
+      : undefined;
+    const iconMatch = iconFg ? detail.match(/^([^\s]+)(\s.*)$/) : null;
     return (
       <SelectableRow
         hoverBackgroundColor={theme.colors.border}
@@ -93,14 +133,21 @@ function OverlayOptionRow({
             truncate
           />
           <box width={gapWidth} flexShrink={0} />
-          <text
-            fg={fg}
-            content={truncateToWidth(detail, detailColumnWidth)}
-            width={detailColumnWidth}
-            flexShrink={0}
-            wrapMode="none"
-            truncate
-          />
+          {iconMatch ? (
+            <box flexDirection="row" width={detailColumnWidth} flexShrink={0}>
+              <text fg={iconFg} content={iconMatch[1]} wrapMode="none" />
+              <text fg={fg} content={truncateToWidth(iconMatch[2], detailColumnWidth - iconMatch[1].length)} wrapMode="none" truncate />
+            </box>
+          ) : (
+            <text
+              fg={fg}
+              content={truncateToWidth(detail, detailColumnWidth)}
+              width={detailColumnWidth}
+              flexShrink={0}
+              wrapMode="none"
+              truncate
+            />
+          )}
         </box>
       </SelectableRow>
     );
@@ -223,7 +270,9 @@ export function CommandPickerView(
             key={`picker-${picker.stack.length}-${actualIndex}`}
             theme={theme}
             label={item.label}
+            labelParts={item.labelParts}
             detail={item.detail}
+            detailColor={item.detailColor}
             detailColumnWidth={detailColumnWidth}
             selected={actualIndex === level.selected}
             disabled={item.disabled}

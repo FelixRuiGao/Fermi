@@ -167,13 +167,23 @@ export interface CommandContext {
 /**
  * An option entry for command overlays.
  */
+export type SemanticColor = "success" | "error" | "muted";
+
 export interface CommandOption {
   /** Display label shown in the overlay. */
   label: string;
+  /**
+   * Rich label segments with optional per-segment color.
+   * When present, the label is rendered as concatenated colored segments
+   * instead of a plain string. `label` is still used for search/fallback.
+   */
+  labelParts?: Array<{ text: string; color?: SemanticColor }>;
   /** Value submitted as the command argument when selected. */
   value: string;
   /** Right-aligned detail text shown alongside the label (e.g., "+42 -18"). */
   detail?: string;
+  /** Semantic color for the leading icon in detail text. */
+  detailColor?: SemanticColor;
   /** Non-submittable row used for headings or notices. */
   disabled?: boolean;
   /** Child options for hierarchical selection (e.g., provider → model). */
@@ -2207,7 +2217,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/tier", description: "Configure sub-agent model tiers", handler: cmdTier, options: tierOptions });
   registry.register({ name: "/quit", description: "Exit the application", handler: cmdQuit, aliases: ["/exit"] });
   registry.register({ name: "/skills", description: "Manage installed skills", handler: cmdSkills, options: skillsOptions, checkboxMode: true });
-  registry.register({ name: "/mcp", description: "Show MCP server status and tools", handler: cmdMcp });
+  registry.register({ name: "/mcp", description: "Manage MCP servers", handler: cmdMcp, options: mcpOptions, pickerTitle: "MCP Servers" });
   registry.register({ name: "/rename", description: "Rename current session", handler: cmdRename });
   registry.register({ name: "/codex", description: "OpenAI ChatGPT login", handler: cmdCodex, options: codexOptions });
   registry.register({ name: "/copilot", description: "GitHub Copilot login", handler: cmdCopilot, options: copilotOptions });
@@ -2216,7 +2226,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/todos", description: "Toggle todo panel", handler: cmdTodos });
   registry.register({ name: "/permission", description: "Set permission mode", handler: cmdPermission });
   registry.register({ name: "/rewind", description: "Rewind to a previous turn", handler: cmdRewind, aliases: ["/undo"] });
-  registry.register({ name: "/hooks", description: "Show registered hooks", handler: cmdHooks });
+  registry.register({ name: "/hooks", description: "Manage registered hooks", handler: cmdHooks, options: hooksOptions, pickerTitle: "Hooks" });
   registry.register({ name: "/copy", description: "Copy the agent's most recent text response", handler: cmdCopy });
   registry.register({ name: "/fork", description: "Fork the current session into a new branch", handler: cmdFork });
   registry.register({ name: "/theme", description: "Set theme mode (auto / light / dark)", handler: cmdTheme });
@@ -2381,78 +2391,202 @@ async function cmdFork(ctx: CommandContext): Promise<void> {
 // /mcp command
 // ------------------------------------------------------------------
 
-async function cmdMcp(ctx: CommandContext): Promise<void> {
-  const session = ctx.session;
-  const mcpManager = session.mcpManager;
+/**
+ * Read the full MCP server list from settings (including disabled).
+ * This is the picker's data source — separate from MCPClientManager
+ * which only knows about active (non-disabled) servers.
+ */
+function getAllMcpServerNames(homeDir?: string): Map<string, { disabled: boolean }> {
+  const settings = loadGlobalSettings(homeDir);
+  const result = new Map<string, { disabled: boolean }>();
+  if (settings.mcp_servers) {
+    for (const [name, cfg] of Object.entries(settings.mcp_servers)) {
+      if (!cfg || typeof cfg !== "object") continue;
+      result.set(name, { disabled: cfg.disabled === true });
+    }
+  }
+  return result;
+}
 
-  if (!mcpManager) {
-    ctx.showMessage(
-      "No MCP servers configured.\n" +
-      "Add servers to ~/.fermi/mcp.json to enable MCP tools.",
-    );
-    return;
+function mcpOptions(ctx: CommandOptionsContext): CommandOption[] {
+  const session = ctx.session;
+  const mcpManager = session?.mcpManager;
+  const allServers = getAllMcpServerNames();
+  if (allServers.size === 0 && !mcpManager) return [];
+
+  // Runtime statuses from MCPClientManager (active servers only)
+  const statusMap = new Map<string, { state: string; toolCount: number; error?: string }>();
+  if (mcpManager && typeof mcpManager.getServerStatuses === "function") {
+    for (const s of mcpManager.getServerStatuses()) {
+      statusMap.set(s.name, s);
+    }
   }
 
+  // Tools grouped by server
+  const toolsByServer = new Map<string, string[]>();
+  if (mcpManager) {
+    for (const tool of mcpManager.getAllTools()) {
+      const parts = tool.name.split("__");
+      const server = parts.length >= 3 ? parts[1] : "unknown";
+      if (!toolsByServer.has(server)) toolsByServer.set(server, []);
+      toolsByServer.get(server)!.push(parts.length >= 3 ? parts.slice(2).join("__") : tool.name);
+    }
+  }
+
+  const opts: CommandOption[] = [
+    { label: "Reload config", value: "__reload__" },
+  ];
+
+  for (const [name, { disabled }] of allServers) {
+    const status = statusMap.get(name);
+    const children: CommandOption[] = [];
+
+    if (disabled) {
+      children.push({ label: "Enable", value: `${name}:enable` });
+      opts.push({
+        label: name,
+        labelParts: [
+          { text: name },
+          { text: " · " },
+          { text: "✗", color: "muted" },
+          { text: " Disabled" },
+        ],
+        value: name,
+        children,
+      });
+    } else {
+      const connected = status?.state === "connected";
+      const stateLabel = status?.state
+        ? status.state.charAt(0).toUpperCase() + status.state.slice(1)
+        : "Not connected";
+
+      const parts: Array<{ text: string; color?: SemanticColor }> = [
+        { text: name },
+        { text: " · " },
+        { text: connected ? "✓" : "✗", color: connected ? "success" : "error" },
+        { text: ` ${stateLabel}` },
+      ];
+      if (connected && status!.toolCount > 0) {
+        parts.push({ text: ` · ${status!.toolCount} tools` });
+      }
+      if (!connected && status?.error) {
+        parts.push({ text: ` · ${status.error}` });
+      }
+
+      children.push({ label: "Reconnect", value: `${name}:reconnect` });
+      children.push({ label: "Disable", value: `${name}:disable` });
+      const serverTools = toolsByServer.get(name) ?? [];
+      if (serverTools.length > 0) {
+        children.push({
+          label: `View tools (${serverTools.length})`,
+          value: `${name}:tools`,
+          children: serverTools.map((t) => ({ label: t, value: "", disabled: true })),
+        });
+      }
+
+      opts.push({
+        label: name,
+        labelParts: parts,
+        value: name,
+        children,
+      });
+    }
+  }
+
+  return opts;
+}
+
+function setMcpServerDisabled(serverName: string, disabled: boolean, homeDir?: string): boolean {
+  const settings = loadGlobalSettings(homeDir);
+  const servers = settings.mcp_servers;
+  if (!servers || !servers[serverName]) return false;
+
+  if (disabled) {
+    servers[serverName].disabled = true;
+  } else {
+    delete servers[serverName].disabled;
+  }
+  persistSettingsPatch({ mcp_servers: servers }, homeDir);
+  return true;
+}
+
+async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
+  const session = ctx.session;
+  const hint = ctx.showHint ?? ctx.showMessage;
+
+  // Ensure MCP is ready (no-op if already connected)
   try {
     if (typeof session.ensureMcpReady === "function") {
       await session.ensureMcpReady();
-    } else if (typeof mcpManager.connectAll === "function") {
-      await mcpManager.connectAll();
     }
-  } catch (err) {
+  } catch { /* proceed — statuses will show failures */ }
+
+  const allServers = getAllMcpServerNames(ctx.fermiHomeDir);
+  if (allServers.size === 0) {
     ctx.showMessage(
-      "Failed to connect MCP servers.\n" +
-      `${err instanceof Error ? err.message : String(err)}`,
+      "No MCP servers configured.\n" +
+      "Add servers to settings.json under \"mcp_servers\".",
     );
     return;
   }
 
-  const allTools = mcpManager.getAllTools();
+  let action = args.trim();
 
-  if (allTools.length === 0) {
-    ctx.showMessage(
-      "MCP configured but no tools discovered.\n" +
-      "Make sure your MCP servers are running and exposing tools.",
+  if (!action && ctx.promptCommandPicker) {
+    const picked = await ctx.promptCommandPicker(
+      mcpOptions({ session, store: ctx.store }),
+      { title: "MCP Servers" },
     );
+    if (!picked) return;
+    action = picked.value;
+  }
+
+  if (action === "__reload__") {
+    try {
+      const report = await session.reloadMcp();
+      hint(report);
+    } catch (err) {
+      hint(`Reload failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return;
   }
 
-  // Group tools by server (parse mcp__server__tool naming)
-  const byServer = new Map<string, string[]>();
-  for (const tool of allTools) {
-    const parts = tool.name.split("__");
-    const server = parts.length >= 3 ? parts[1] : "unknown";
-    if (!byServer.has(server)) byServer.set(server, []);
-    const originalName = parts.length >= 3 ? parts.slice(2).join("__") : tool.name;
-    byServer.get(server)!.push(originalName);
-  }
+  const colonIdx = action.indexOf(":");
+  if (colonIdx > 0) {
+    const serverName = action.slice(0, colonIdx);
+    const op = action.slice(colonIdx + 1);
+    const mcpManager = session.mcpManager;
 
-  // Show server statuses if available
-  const statuses = typeof mcpManager.getServerStatuses === "function"
-    ? mcpManager.getServerStatuses()
-    : null;
-
-  const lines: string[] = [`MCP: ${byServer.size} server(s), ${allTools.length} tool(s)\n`];
-  for (const [server, tools] of byServer) {
-    const status = statuses?.find((s: any) => s.name === server);
-    const stateLabel = status ? ` [${status.state}]` : "";
-    const errorLabel = status?.error ? ` (${status.error})` : "";
-    lines.push(`  ${server}${stateLabel}${errorLabel} (${tools.length} tools)`);
-    for (const t of tools) {
-      lines.push(`    - ${t}`);
-    }
-  }
-
-  // Show failed servers that have no tools
-  if (statuses) {
-    for (const s of statuses) {
-      if (!byServer.has(s.name) && s.state === "failed") {
-        lines.push(`  ${s.name} [failed] (${s.error ?? "unknown error"})`);
+    if (op === "reconnect") {
+      if (mcpManager && typeof mcpManager.reconnectServer === "function") {
+        const ok = await mcpManager.reconnectServer(serverName);
+        hint(ok ? `${serverName}: reconnected` : `${serverName}: reconnect failed`);
+        if (session.onMcpStatus && typeof mcpManager.getServerStatuses === "function") {
+          session.onMcpStatus(mcpManager.getServerStatuses());
+        }
       }
+      return;
+    }
+
+    if (op === "disable" || op === "enable") {
+      const disabled = op === "disable";
+      if (setMcpServerDisabled(serverName, disabled, ctx.fermiHomeDir)) {
+        try {
+          const report = await session.reloadMcp();
+          hint(`${serverName}: ${disabled ? "disabled" : "enabled"} (${report})`);
+        } catch (err) {
+          hint(`${serverName}: ${disabled ? "disabled" : "enabled"} (reload failed: ${err instanceof Error ? err.message : String(err)})`);
+        }
+      } else {
+        hint(`Server "${serverName}" not found in settings.`);
+      }
+      return;
     }
   }
 
-  ctx.showMessage(lines.join("\n"));
+  // Fallback for non-interactive environments
+  const enabledCount = [...allServers.values()].filter((s) => !s.disabled).length;
+  hint(`MCP: ${allServers.size} server(s), ${enabledCount} enabled. Use picker for details.`);
 }
 
 // ------------------------------------------------------------------
@@ -2891,37 +3025,158 @@ async function cmdRewind(ctx: CommandContext, args: string): Promise<void> {
 // /hooks command
 // ------------------------------------------------------------------
 
-async function cmdHooks(ctx: CommandContext): Promise<void> {
+function loadAllHooksFromDisk(): Array<{ name: string; event: string; command: string; args?: string[]; disabled?: boolean; _sourcePath?: string; _scope?: string; matcher?: { toolNames?: string[]; agentIds?: string[] }; failClosed?: boolean }> {
+  try {
+    const { resolveAssetPaths } = require("./config.js") as typeof import("./config.js");
+    const { loadHooksMulti } = require("./hooks/index.js") as typeof import("./hooks/index.js");
+    const paths = resolveAssetPaths();
+    // loadHooksMulti de-dupes by name (project overrides global)
+    // We want ALL including disabled, so we load raw from disk
+    const allHooks: any[] = [];
+    for (const { dir, scope } of paths.hookRoots) {
+      const { loadHooksFromDir } = require("./hooks/index.js") as typeof import("./hooks/index.js");
+      for (const h of loadHooksFromDir(dir, scope as "project" | "global")) {
+        allHooks.push(h);
+      }
+    }
+    // De-dupe by name (later scopes override earlier)
+    const byName = new Map<string, any>();
+    for (const h of allHooks) byName.set(h.name, h);
+    return [...byName.values()];
+  } catch {
+    return [];
+  }
+}
+
+function setHookDisabled(sourcePath: string, disabled: boolean): boolean {
+  if (!existsSync(sourcePath)) return false;
+  try {
+    const raw = JSON.parse(readFileSync(sourcePath, "utf-8"));
+    if (disabled) {
+      raw["disabled"] = true;
+    } else {
+      delete raw["disabled"];
+    }
+    writeFileSync(sourcePath, JSON.stringify(raw, null, 2) + "\n");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function reloadHooksIntoRuntime(session: any): number {
+  try {
+    const { resolveAssetPaths } = require("./config.js") as typeof import("./config.js");
+    const { loadHooksMulti } = require("./hooks/index.js") as typeof import("./hooks/index.js");
+    const paths = resolveAssetPaths();
+    const hooks = loadHooksMulti(paths.hookRoots);
+    session.hookRuntime.setHooks(hooks);
+    return hooks.length;
+  } catch {
+    return -1;
+  }
+}
+
+function hooksOptions(_ctx: CommandOptionsContext): CommandOption[] {
+  const allHooks = loadAllHooksFromDisk();
+  const opts: CommandOption[] = [
+    { label: "Reload hooks", value: "__reload__" },
+  ];
+
+  if (allHooks.length === 0) {
+    opts.push({ label: "No hooks found", value: "", disabled: true });
+    return opts;
+  }
+
+  for (const hook of allHooks) {
+    const scope = hook._scope ?? "unknown";
+    const matcherParts: string[] = [];
+    if (hook.matcher?.toolNames?.length) matcherParts.push(hook.matcher.toolNames.join(","));
+    if (hook.matcher?.agentIds?.length) matcherParts.push(hook.matcher.agentIds.join(","));
+    const matcherSuffix = matcherParts.length ? ` [${matcherParts.join("; ")}]` : "";
+    const disabledTag = hook.disabled ? " (disabled)" : "";
+
+    const children: CommandOption[] = [];
+    if (hook.disabled) {
+      children.push({ label: "Enable", value: `${hook.name}:enable` });
+    } else {
+      children.push({ label: "Disable", value: `${hook.name}:disable` });
+    }
+    if (hook._sourcePath) {
+      children.push({ label: "Show config path", value: `${hook.name}:path` });
+    }
+
+    opts.push({
+      label: `${hook.name}${disabledTag}`,
+      detail: `${scope} · ${hook.event}${matcherSuffix}`,
+      value: hook.name,
+      children,
+    });
+  }
+
+  return opts;
+}
+
+async function cmdHooks(ctx: CommandContext, args: string): Promise<void> {
   const session = ctx.session;
   const hookRuntime = session.hookRuntime;
+  const hint = ctx.showHint ?? ctx.showMessage;
+
   if (!hookRuntime) {
     ctx.showMessage("Hook system not available.");
     return;
   }
 
-  const hooks = hookRuntime.hooks;
-  if (!hooks || hooks.length === 0) {
-    ctx.showMessage(
-      "No hooks registered.\n\n" +
-      "To add hooks, create a hook.json in:\n" +
-      "  ~/.fermi/hooks/<name>/hook.json (global)\n" +
-      "  {project}/.fermi/hooks/<name>/hook.json (project)",
+  let action = args.trim();
+
+  if (!action && ctx.promptCommandPicker) {
+    const picked = await ctx.promptCommandPicker(
+      hooksOptions({ session, store: ctx.store }),
+      { title: "Hooks" },
     );
+    if (!picked) return;
+    action = picked.value;
+  }
+
+  if (action === "__reload__") {
+    const count = reloadHooksIntoRuntime(session);
+    hint(count >= 0 ? `Hooks reloaded: ${count} active` : "Failed to reload hooks.");
     return;
   }
 
-  const lines = [`${hooks.length} hook(s) registered:\n`];
-  for (const hook of hooks) {
-    const scope = hook._scope ?? "unknown";
-    const matcher = hook.matcher
-      ? ` [${hook.matcher.toolNames?.join(",") ?? ""}${hook.matcher.agentIds?.join(",") ?? ""}]`
-      : "";
-    lines.push(
-      `  ${hook.name} (${scope})\n` +
-      `    event: ${hook.event}${matcher}\n` +
-      `    command: ${hook.command}${hook.args?.length ? " " + hook.args.join(" ") : ""}\n` +
-      `    failClosed: ${hook.failClosed ?? false}`,
-    );
+  const colonIdx = action.indexOf(":");
+  if (colonIdx > 0) {
+    const hookName = action.slice(0, colonIdx);
+    const op = action.slice(colonIdx + 1);
+
+    const allHooks = loadAllHooksFromDisk();
+    const hook = allHooks.find((h) => h.name === hookName);
+    if (!hook) {
+      hint(`Hook "${hookName}" not found.`);
+      return;
+    }
+
+    if (op === "enable" || op === "disable") {
+      const disabled = op === "disable";
+      if (hook._sourcePath && setHookDisabled(hook._sourcePath, disabled)) {
+        reloadHooksIntoRuntime(session);
+        hint(`${hookName}: ${disabled ? "disabled" : "enabled"}`);
+      } else {
+        hint(`Failed to ${op} "${hookName}" — check hook.json`);
+      }
+      return;
+    }
+
+    if (op === "path") {
+      hint(hook._sourcePath ?? "Source path unknown.");
+      return;
+    }
   }
-  ctx.showMessage(lines.join("\n"));
+
+  // Fallback for non-interactive environments
+  const allHooks = loadAllHooksFromDisk();
+  const activeCount = allHooks.filter((h) => !h.disabled).length;
+  hint(allHooks.length === 0
+    ? "No hooks registered."
+    : `${allHooks.length} hook(s), ${activeCount} active. Use picker for details.`);
 }

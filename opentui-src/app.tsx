@@ -698,11 +698,30 @@ export function OpenTuiApp({
         .filter((s: any) => s.state === "failed")
         .map((s: any) => ({ name: s.name, error: s.error }));
       if (failed.length > 0) setMcpFailures(failed);
+
+      // Hot-update /mcp picker if open
+      setCommandPicker((prev) => {
+        if (!prev || prev.commandName !== "/mcp") return prev;
+        if (prev.stack.length > 1) return prev; // don't refresh while drilled down
+        const cmd = commandRegistry.lookup("/mcp");
+        if (!cmd?.options) return prev;
+        const newOptions = cmd.options({ session, store: store ?? undefined });
+        if (newOptions.length === 0) return prev;
+        const level = prev.stack[0];
+        return {
+          ...prev,
+          stack: [{
+            ...level,
+            options: newOptions,
+            selected: Math.min(level.selected, newOptions.length - 1),
+          }],
+        };
+      });
     };
     return () => {
       session.onMcpStatus = undefined;
     };
-  }, [session]);
+  }, [session, commandRegistry, store]);
 
   const runPendingTurn = useCallback(async () => {
     if (typeof session.resumePendingTurn !== "function") {
@@ -1876,7 +1895,7 @@ export function OpenTuiApp({
         resetTurnPasteState();
         lastInputValueRef.current = "";
         setDraftValue("");
-    
+
         return;
       }
     }
@@ -2046,7 +2065,7 @@ export function OpenTuiApp({
       resetTurnPasteState();
       lastInputValueRef.current = "";
       setDraftValue("");
-  
+
       return;
     }
 
@@ -2171,7 +2190,7 @@ export function OpenTuiApp({
       resetTurnPasteState();
       lastInputValueRef.current = "";
       setDraftValue("");
-  
+
       return;
     }
     void handleSubmit(selectedValue);

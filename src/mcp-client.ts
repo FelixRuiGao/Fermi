@@ -333,6 +333,16 @@ export class MCPClientManager {
       .filter((td): td is ToolDef => td !== undefined);
   }
 
+  /** Public reconnect — disconnect then reconnect a single server by name. */
+  async reconnectServer(serverName: string): Promise<boolean> {
+    return this._reconnectServer(serverName);
+  }
+
+  /** Public disconnect — disconnect a single server by name. */
+  async disconnectServer(serverName: string): Promise<void> {
+    return this._disconnectServer(serverName);
+  }
+
   // ------------------------------------------------------------------
   // Tool execution
   // ------------------------------------------------------------------
