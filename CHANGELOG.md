@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.11
+
 - Added: `/mcp` and `/hooks` are now interactive picker commands. `/mcp` shows each server with live connection status (✓ green / ✗ red), and offers Reconnect, Disable/Enable, View tools drill-down, and Reload config — the picker hot-updates as servers finish connecting. `/hooks` lists each hook with Disable/Enable toggle and Reload hooks to pick up changes from disk without restarting the session.
 - Added: MCP servers connect eagerly at startup (fire-and-forget while you read the welcome screen) instead of blocking on the first message. Failed servers show a dismissible toast in the top-right corner. The first user message appears immediately in the TUI — MCP readiness is awaited after it's written to the log.
 - Added: `reload` tool — the agent can call it after writing SKILL.md, AGENTS.md, or MCP config to refresh skills, rebuild the system prompt, and reconfigure MCP servers in one shot, without restarting the session.
