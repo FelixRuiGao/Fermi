@@ -2514,9 +2514,19 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
   const session = ctx.session;
   const hint = ctx.showHint ?? ctx.showMessage;
 
-  // Ensure MCP is ready (no-op if already connected)
+  // Prefer the turn-lock-wrapped command variant so an MCP reload cannot
+  // overlap a turn; fall back to the bare method for older session shapes.
+  const reloadMcpLocked = (reason: string): Promise<string> =>
+    typeof session.reloadMcpFromCommand === "function"
+      ? session.reloadMcpFromCommand(reason)
+      : session.reloadMcp({ reason });
+
+  // Ensure MCP is ready (no-op if already connected). Use the turn-lock-wrapped
+  // variant so a status warm-up that connects servers cannot overlap a turn.
   try {
-    if (typeof session.ensureMcpReady === "function") {
+    if (typeof session.ensureMcpReadyFromCommand === "function") {
+      await session.ensureMcpReadyFromCommand();
+    } else if (typeof session.ensureMcpReady === "function") {
       await session.ensureMcpReady();
     }
   } catch { /* proceed — statuses will show failures */ }
@@ -2543,9 +2553,8 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
 
   if (action === "__reload__") {
     try {
-      const report = await session.reloadMcp({
-        reason: "the user reloaded MCP configuration",
-      });
+      hint("Reloading MCP servers…");
+      const report = await reloadMcpLocked("the user reloaded MCP configuration");
       hint(report);
     } catch (err) {
       hint(`Reload failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -2560,7 +2569,11 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
     const mcpManager = session.mcpManager;
 
     if (op === "reconnect") {
-      if (typeof session.reconnectMcpServer === "function") {
+      hint(`Connecting MCP server '${serverName}'…`);
+      if (typeof session.reconnectMcpServerFromCommand === "function") {
+        const ok = await session.reconnectMcpServerFromCommand(serverName);
+        hint(ok ? `${serverName}: reconnected` : `${serverName}: reconnect failed`);
+      } else if (typeof session.reconnectMcpServer === "function") {
         const ok = await session.reconnectMcpServer(serverName);
         hint(ok ? `${serverName}: reconnected` : `${serverName}: reconnect failed`);
       } else if (mcpManager && typeof mcpManager.reconnectServer === "function") {
@@ -2577,9 +2590,10 @@ async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
       const disabled = op === "disable";
       if (setMcpServerDisabled(serverName, disabled, ctx.fermiHomeDir)) {
         try {
-          const report = await session.reloadMcp({
-            reason: `the user ${disabled ? "disabled" : "enabled"} MCP server '${serverName}'`,
-          });
+          if (!disabled) hint(`Connecting MCP server '${serverName}'…`);
+          const report = await reloadMcpLocked(
+            `the user ${disabled ? "disabled" : "enabled"} MCP server '${serverName}'`,
+          );
           hint(`${serverName}: ${disabled ? "disabled" : "enabled"} (${report})`);
         } catch (err) {
           hint(`${serverName}: ${disabled ? "disabled" : "enabled"} (reload failed: ${err instanceof Error ? err.message : String(err)})`);

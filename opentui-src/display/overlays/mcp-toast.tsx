@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/react */
 
-import React, { useEffect, useRef } from "react";
+import React from "react";
 import type { DisplayTheme } from "../theme/index.js";
 
 export interface McpFailure {
@@ -12,27 +12,19 @@ interface McpToastProps {
   failures: McpFailure[];
   theme: DisplayTheme;
   terminalWidth: number;
-  onDismiss: () => void;
 }
 
 const TOAST_WIDTH = 44;
-const AUTO_DISMISS_MS = 8000;
 
+// The toast does not auto-dismiss: an MCP connection failure stays visible
+// until it clears on its own (the server recovers — handled by onMcpStatus) or
+// the user dismisses it manually (Ctrl+L). Both paths live at the app level.
 export function McpToast({
   failures,
   theme,
   terminalWidth,
-  onDismiss,
 }: McpToastProps): React.ReactNode {
   const { colors } = theme;
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    timerRef.current = setTimeout(onDismiss, AUTO_DISMISS_MS);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [onDismiss]);
 
   const lines: string[] = [];
   for (const f of failures.slice(0, 3)) {

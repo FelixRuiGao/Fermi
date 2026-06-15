@@ -206,6 +206,10 @@ export interface Session {
   notifySkillAvailabilityChanged?(changes: { enabled?: string[]; disabled?: string[] }): void;
   reloadMcp?(options?: { notice?: boolean; reason?: string }): Promise<string>;
   reconnectMcpServer?(serverName: string): Promise<boolean>;
+  /** Turn-lock-wrapped command variants so reload cannot overlap a live turn. */
+  reloadMcpFromCommand?(reason: string): Promise<string>;
+  reconnectMcpServerFromCommand?(serverName: string): Promise<boolean>;
+  ensureMcpReadyFromCommand?(): Promise<void>;
   skills?: ReadonlyMap<string, unknown>;
   getPlanState?(): PlanCheckpoint[];
   subscribePlan?(listener: () => void): () => void;

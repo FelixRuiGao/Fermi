@@ -3,8 +3,18 @@ import { describe, expect, it, mock } from "bun:test";
 import { Session } from "../src/session.js";
 
 describe("tool availability system notices", () => {
-  it("queues separate non-waking notices for separate skill changes", () => {
+  it("does not queue notices before the first real user message", () => {
     const session = Object.create(Session.prototype) as any;
+    session._conversationStarted = false;
+    session._deliverMessage = mock(() => ({ accepted: true }));
+
+    session.notifySkillAvailabilityChanged({ disabled: ["docx"] });
+    expect(session._deliverMessage).toHaveBeenCalledTimes(0);
+  });
+
+  it("queues separate non-waking notices for separate skill changes after the conversation has started", () => {
+    const session = Object.create(Session.prototype) as any;
+    session._conversationStarted = true;
     session._deliverMessage = mock(() => ({ accepted: true }));
 
     session.notifySkillAvailabilityChanged({ disabled: ["docx"] });
@@ -26,6 +36,7 @@ describe("tool availability system notices", () => {
 
   it("queues MCP reconnect notices with concrete tool names", async () => {
     const session = Object.create(Session.prototype) as any;
+    session._conversationStarted = true;
     session._deliverMessage = mock(() => ({ accepted: true }));
     session._mcpConnected = true;
     session._ensureMcp = mock(async () => {});
@@ -58,5 +69,29 @@ describe("tool availability system notices", () => {
     expect(notice.content).toContain("MCP tools no longer available:");
     expect(notice.content).toContain("- mcp__docs__fetch");
     expect(notice.content).toContain("do not infer from this change alone");
+  });
+
+  it("seeds _conversationStarted from a restored log that holds a real user message", () => {
+    const session = Object.create(Session.prototype) as any;
+
+    expect(
+      session._entriesHaveRealUserMessage([
+        { discarded: false, type: "status", meta: {} },
+        { discarded: false, type: "user_message", meta: { inputKind: "summarize" } },
+      ]),
+    ).toBe(false);
+
+    expect(
+      session._entriesHaveRealUserMessage([
+        { discarded: false, type: "user_message", meta: { inputKind: "user" } },
+      ]),
+    ).toBe(true);
+
+    // Discarded user messages do not count.
+    expect(
+      session._entriesHaveRealUserMessage([
+        { discarded: true, type: "user_message", meta: { inputKind: "user" } },
+      ]),
+    ).toBe(false);
   });
 });

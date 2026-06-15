@@ -199,4 +199,39 @@ describe("queued user input", () => {
       rmSync(projectRoot, { recursive: true, force: true });
     }
   });
+
+  it("flushes older ride-along messages before a new explicit turn starts", async () => {
+    const projectRoot = makeTempDir("fermi-queued-input-ride-along-order-");
+    try {
+      const session = makeSession(projectRoot);
+      let firstCallMessages: Array<Record<string, unknown>> = [];
+
+      (session.primaryAgent as any).asyncRunWithMessages = async (
+        opts: { getMessages: () => Array<Record<string, unknown>> },
+      ) => {
+        firstCallMessages = opts.getMessages();
+        return textResult("response", 1);
+      };
+
+      expect((session as any)._deliverMessage({
+        type: "system_notice",
+        sender: "system",
+        content: "older ride-along notice",
+        timestamp: Date.now(),
+        wake: false,
+        tuiVisible: false,
+      })).toEqual({ accepted: true });
+
+      await session.turn("later explicit input");
+
+      const userContents = firstCallMessages
+        .filter((message) => message.role === "user")
+        .map((message) => String(message.content));
+      expect(userContents).toHaveLength(2);
+      expect(userContents[0]).toContain("older ride-along notice");
+      expect(userContents[1]).toContain("later explicit input");
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
 });

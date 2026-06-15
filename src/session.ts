@@ -539,6 +539,11 @@ export class Session {
   // Inbox: holds messages for push delivery into tool results.
   // Typed message inbox — all messages flow through _deliverMessage.
   private _inbox: MessageEnvelope[] = [];
+  // True once a real user message has driven an activation (or was loaded from
+  // a restored log). Gates tool-availability notices: skill/MCP changes made
+  // before the first user message never queue a ride-along notice. Flipped in
+  // _beginActiveInput; seeded on restore in _applyRestoredState.
+  private _conversationStarted = false;
   private _currentTurnSignal: AbortSignal | null = null;
   private _currentTurnAbortController: AbortController | null = null;
 
@@ -911,6 +916,7 @@ export class Session {
     this._initialModel = this._describeInitialModel();
     this._title = undefined;
     this._cachedSummary = undefined;
+    this._conversationStarted = false;
     this._log = [];
     this._logStore.resetRevision();
     this._idAllocator = new LogIdAllocator();
@@ -1107,6 +1113,11 @@ export class Session {
     contextId: string,
     tuiVisible = true,
   ): void {
+    // The canonical point a real user message enters the model log — every
+    // active-input and drain path funnels here. Mark the conversation started so
+    // tool-availability notices are suppressed only before the first user
+    // message, regardless of which path delivered it.
+    if (inputKind === "user") this._conversationStarted = true;
     this._appendEntry(
       createUserMessageEntry(
         this._nextLogId("user_message"),
@@ -1427,6 +1438,30 @@ export class Session {
    */
   private _hasWakingInboxMessages(): boolean {
     return this._inbox.some((msg) => msg.wake !== false);
+  }
+
+  /**
+   * Pre-activation prelude shared by every entry that records a NEW active
+   * input (user message, /summarize, /compact). The single choke point that
+   * enforces wake:false ordering and the "conversation has started" boundary:
+   *
+   *   1. Earlier-arrived ride-along (wake:false) inbox messages land in the log
+   *      first, in arrival order. `wake:false` means "do not start a turn by
+   *      itself", not "jump behind the next active input".
+   *   2. The new active input is recorded.
+   *
+   * Delivery to the model-facing log (user_message vs status entry) stays with
+   * the caller — it legitimately differs per activation kind. The
+   * "conversation started" flag is flipped at that delivery point
+   * (_appendDeliveredUserMessage), so every user-message path sets it.
+   */
+  private _beginActiveInput(
+    inputKind: "user" | "summarize" | "compact",
+    display: string,
+    content: unknown,
+  ): { inputIndex: number; inputId: string; contextId: string } {
+    this._drainInboxAsEntries();
+    return this._recordInputReceived(inputKind, display, content);
   }
 
   private _hasTrackedShells(): boolean {
@@ -2136,6 +2171,9 @@ export class Session {
     this._usedContextIds.clear();
     this._compactCount = 0;
     this._workCount = 0;
+    // Keep the "conversation started" flag truthful to the rewound log: a rewind
+    // that drops every real user message must re-suppress availability notices.
+    this._conversationStarted = this._entriesHaveRealUserMessage(log);
     for (const entry of log) {
       const ctx = (entry.meta as Record<string, unknown>)?.["contextId"];
       if (typeof ctx === "string") this._usedContextIds.add(ctx);
@@ -2254,6 +2292,10 @@ export class Session {
     this._persistedModelSelection = { ...state.persistedModelSelection };
 
     this._log = state.entries;
+    // A restored log that already holds a real user message means the
+    // conversation has started — toggling MCP/skills after resume should queue
+    // notices normally. Seed the flag here (the single restore commit point).
+    this._conversationStarted = this._entriesHaveRealUserMessage(state.entries);
     // Do NOT reset the log revision — it is a transient change-detection
     // counter that must stay monotonically increasing on *this* session so
     // that UI subscribers (shouldSyncTranscript) always detect the swap.
@@ -2613,6 +2655,19 @@ export class Session {
       .sort((a, b) => a.localeCompare(b));
   }
 
+  /** Scan-once helper: do the given entries contain a delivered real user
+   * message? Used only to seed _conversationStarted on restore — the live guard
+   * reads the cached flag, not this. */
+  private _entriesHaveRealUserMessage(entries: Iterable<LogEntry>): boolean {
+    for (const entry of entries) {
+      if (entry.discarded || entry.type !== "user_message") continue;
+      if ((entry.meta as Record<string, unknown>)["inputKind"] === "user") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private _diffNames(before: Iterable<string>, after: Iterable<string>): { added: string[]; removed: string[] } {
     const beforeSet = new Set(before);
     const afterSet = new Set(after);
@@ -2658,6 +2713,8 @@ export class Session {
   }
 
   private _queueToolAvailabilityNotice(notice: ToolAvailabilityNotice): void {
+    if (!this._conversationStarted) return;
+
     const sections: string[] = [
       `Tool availability changed because ${notice.reason}.`,
       "This is normal runtime behavior; do not infer from this change alone that your earlier answer or reasoning was wrong. Use the skills and MCP tools currently available in this turn.",
@@ -2790,6 +2847,27 @@ export class Session {
       this.onMcpStatus(this._mcpManager.getServerStatuses());
     }
     return ok;
+  }
+
+  // Command-facing MCP mutation: acquire the turn lock so the connect/disconnect
+  // (and the ride-along notice it queues) cannot overlap a turn's tool snapshot.
+  // The bare reloadMcp/reconnectMcpServer stay lock-free on purpose — the reload
+  // TOOL (_execReload) already runs inside the turn lock, and _withTurnLock is
+  // not reentrant, so re-locking there would deadlock.
+  async reloadMcpFromCommand(reason: string): Promise<string> {
+    return this._withTurnLock(() => this.reloadMcp({ reason }));
+  }
+
+  async reconnectMcpServerFromCommand(serverName: string): Promise<boolean> {
+    return this._withTurnLock(() => this.reconnectMcpServer(serverName));
+  }
+
+  // The /mcp command warms up MCP status before showing the picker. That ensure
+  // can connect servers (mutating agent.tools), so it must serialize against
+  // turns just like the reload/reconnect variants — no MCP connection work on
+  // the command side may run concurrently with a turn's tool snapshot.
+  async ensureMcpReadyFromCommand(): Promise<void> {
+    return this._withTurnLock(() => this.ensureMcpReady());
   }
 
   private async _execReload(): Promise<ToolResult> {
@@ -3291,7 +3369,7 @@ export class Session {
   ): Promise<string> {
     this._lastTurnEndStatus = null;
     const inputKind = opts?.turnKind ?? "summarize";
-    const received = this._recordInputReceived(inputKind, displayText, content);
+    const received = this._beginActiveInput(inputKind, displayText, content);
     this._appendDeliveredUserMessage(
       received.inputIndex,
       received.inputId,
@@ -3549,7 +3627,7 @@ export class Session {
 
       this._lastTurnEndStatus = null;
       const displayText = instruction?.trim() ? `/compact ${instruction.trim()}` : "/compact";
-      this._recordInputReceived("compact", displayText, displayText);
+      this._beginActiveInput("compact", displayText, displayText);
       this._appendEntry(
         createStatus(
           this._nextLogId("status"),
@@ -4563,7 +4641,7 @@ export class Session {
       const displayText = userInput;
       // For the log entry, replace inline base64 images with image_ref file paths
       const logContent = this._extractAndSaveImages(userContent);
-      const received = this._recordInputReceived("user", displayText, logContent);
+      const received = this._beginActiveInput("user", displayText, logContent);
       this._appendDeliveredUserMessage(
         received.inputIndex,
         received.inputId,

@@ -148,10 +148,9 @@ export interface OpenTuiScreenProps {
   onStopShell?: (shellId: string) => void;
   /** Update toast state — null means hidden. */
   updateToast?: { phase: import("../overlays/update-toast.js").UpdateToastPhase; version: string } | null;
-  /** MCP connection failures — null means hidden. */
+  /** MCP connection failures — null means hidden. Dismissal (manual via Ctrl+L
+   * or auto-clear on recovery) is owned by the app; the screen just renders. */
   mcpFailures?: import("../overlays/mcp-toast.js").McpFailure[] | null;
-  /** Called when user dismisses or auto-dismiss fires on the MCP toast. */
-  onMcpDismiss?: () => void;
   /** Called when user clicks "Restart" in the update toast. */
   onUpdateRestart?: () => void;
   /** Called when user dismisses the update toast. */
@@ -259,7 +258,6 @@ export function OpenTuiScreen({
   onUpdateRestart,
   onUpdateDismiss,
   mcpFailures,
-  onMcpDismiss,
   usagePanel,
   usageData,
   onUsageDismiss,
@@ -557,12 +555,11 @@ export function OpenTuiScreen({
         />
       ) : null}
 
-      {mcpFailures && mcpFailures.length > 0 && onMcpDismiss ? (
+      {mcpFailures && mcpFailures.length > 0 ? (
         <McpToast
           failures={mcpFailures}
           theme={theme}
           terminalWidth={terminal.width}
-          onDismiss={onMcpDismiss}
         />
       ) : null}
 

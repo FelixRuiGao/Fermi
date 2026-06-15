@@ -697,7 +697,8 @@ export function OpenTuiApp({
       const failed = statuses
         .filter((s: any) => s.state === "failed")
         .map((s: any) => ({ name: s.name, error: s.error }));
-      if (failed.length > 0) setMcpFailures(failed);
+      // Reflect current state: show on failure, auto-clear once servers recover.
+      setMcpFailures(failed.length > 0 ? failed : null);
 
       // Hot-update /mcp picker if open
       setCommandPicker((prev) => {
@@ -1850,6 +1851,12 @@ export function OpenTuiApp({
   // "wait until the agent finishes" hint actually fires (otherwise the
   // default path would queue "/copy" as a user message to the LLM).
   const UI_ONLY_COMMANDS = new Set(["/agents", "/raw", "/sidebar", "/copy", "/new"]);
+  // Commands that mutate session runtime config (skills / MCP). They run as
+  // ordinary commands when idle — the Session serializes the actual reload
+  // against turns via its turn lock, so they need no UI "Working" state. While
+  // a turn is processing we only intercept them with a hint so they are not
+  // queued to the LLM as a user message.
+  const SESSION_CONFIG_COMMANDS = new Set(["/mcp", "/skills"]);
 
   const handleSubmit = useCallback(async (submittedValue: string) => {
     const input = submittedValue.trim();
@@ -1857,6 +1864,7 @@ export function OpenTuiApp({
 
     const cmdToken = input.startsWith("/") ? input.split(/\s/)[0] : "";
     const isUiOnlyCommand = Boolean(cmdToken && UI_ONLY_COMMANDS.has(cmdToken));
+    const isSessionConfigCommand = Boolean(cmdToken && SESSION_CONFIG_COMMANDS.has(cmdToken));
 
     // UI-only commands: always intercept, even when processing
     if (isUiOnlyCommand) {
@@ -1905,6 +1913,10 @@ export function OpenTuiApp({
     const isProcessing = processingRef.current;
 
     if (isProcessing) {
+      if (isSessionConfigCommand) {
+        showHint("Wait until the assistant finishes.");
+        return;
+      }
       if (queuedInputsRef.current.length > 0) {
         showHint("A message is already queued");
         return;
@@ -2824,9 +2836,10 @@ export function OpenTuiApp({
       return;
     }
 
-    // Ctrl+L: dismiss update toast
+    // Ctrl+L: dismiss transient toasts (update + MCP failure)
     if (event.name === "l" && event.ctrl) {
       setUpdateToast(null);
+      setMcpFailures(null);
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -3464,7 +3477,6 @@ export function OpenTuiApp({
         setUpdateToast(null);
       }}
       mcpFailures={mcpFailures}
-      onMcpDismiss={() => setMcpFailures(null)}
       usagePanel={usagePanel}
       usageData={usageData}
       onUsageDismiss={() => setUsagePanel(false)}
