@@ -133,12 +133,12 @@ function transformUser(entry: ReconciledConversationEntry): PresentationEntry {
   };
 }
 
-function transformThinking(entry: ReconciledConversationEntry, active: boolean): PresentationEntry {
+function transformThinking(entry: ReconciledConversationEntry, state: PresentationState): PresentationEntry {
   return {
     id: entry.id,
     contentVersion: entry.contentVersion,
     kind: "thinking",
-    state: active ? "active" : "done",
+    state,
     thinkingFullText: entry.entry.text,
   };
 }
@@ -580,7 +580,7 @@ export function presentationTransform(
         } else {
           thinkingState = "done";
         }
-        result.push(transformThinking(entry, thinkingState === "active"));
+        result.push(transformThinking(entry, thinkingState));
         i++;
         break;
       }

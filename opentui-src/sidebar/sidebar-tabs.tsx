@@ -10,7 +10,7 @@ export interface TabState {
   label: string;
   icon: string;
   closeable: boolean;
-  kind: "main" | "child" | "detail-thinking" | "detail-tool" | "detail-shell";
+  kind: "main" | "child" | "detail-tool" | "detail-shell";
   /** Which session this detail tab's entries come from: "main" or "child:{id}" */
   sourceSessionKey?: string;
   /** The entry id for detail tabs */

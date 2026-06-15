@@ -18,7 +18,7 @@ function PresentationEntryInner(
 
   const renderers = {
     user: () => <UserEntry entry={entry} colors={colors} />,
-    thinking: () => <ThinkingEntry entry={entry} colors={colors} onEntryClick={onEntryClick} />,
+    thinking: () => <ThinkingEntry entry={entry} colors={colors} />,
     tool_operation: () => (
       <ToolOperationEntry
         entry={entry}

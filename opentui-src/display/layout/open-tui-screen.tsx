@@ -15,7 +15,6 @@ import { VERSION } from "../../../src/version.js";
 import { GlowText } from "../glow-text.js";
 
 const ATTRS_BOLD = createTextAttributes({ bold: true });
-import { DetailThinkingTab } from "../../components/entry/detail-thinking-tab.js";
 import { DetailToolTab } from "../../components/entry/detail-tool-tab.js";
 import { DetailShellTab } from "../../components/entry/detail-shell-tab.js";
 import { InputArea } from "../../input/input-area.js";
@@ -265,9 +264,9 @@ export function OpenTuiScreen({
   const conversationContentWidth = Math.max(20, conversationColumnWidth - 6);
   const pickerMaxVisible = computePickerMaxVisible(terminal.height, theme.layout);
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
-  const isDetailTab = activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool" || activeTab?.kind === "detail-shell";
+  const isDetailTab = activeTab?.kind === "detail-tool" || activeTab?.kind === "detail-shell";
   // Detail entry lookup: live entries → frozenEntry fallback
-  const detailEntry = (activeTab?.kind === "detail-thinking" || activeTab?.kind === "detail-tool")
+  const detailEntry = activeTab?.kind === "detail-tool"
     ? (presentationEntries.find((entry) => activeTabId === `detail:${entry.id}`)
        ?? activeTab?.frozenEntry
        ?? null) as typeof presentationEntries[number] | null
@@ -492,9 +491,6 @@ export function OpenTuiScreen({
           {/* Detail tabs — own scrollbox. Conditional render is fine here:
               detail views don't need cross-switch state (they always show the
               same single entry; nothing to "remember"). */}
-          {detailEntry && activeTab?.kind === "detail-thinking" ? (
-            <DetailThinkingTab entry={detailEntry} colors={theme.colors} scrollRef={detailScrollRef} />
-          ) : null}
           {detailEntry && activeTab?.kind === "detail-tool" ? (
             <DetailToolTab
               entry={detailEntry}
