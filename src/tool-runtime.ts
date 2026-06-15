@@ -25,6 +25,7 @@ import {
   SUMMARIZE_CONTEXT_TOOL,
   ASK_TOOL,
   SEND_TOOL,
+  RELOAD_TOOL,
 } from "./tools/comm.js";
 import {
   executeTool,
@@ -128,6 +129,7 @@ export function ensureCommTools(
   if (capabilities.includeShowContextTool) wanted.push(SHOW_CONTEXT_TOOL);
   if (capabilities.includeSummarizeContextTool) wanted.push(SUMMARIZE_CONTEXT_TOOL);
   if (capabilities.includeAskTool) wanted.push(ASK_TOOL);
+  if (capabilities.includeReloadTool) wanted.push(RELOAD_TOOL);
   for (const toolDef of wanted) {
     if (!existing.has(toolDef.name)) {
       tools.push(toolDef);
@@ -168,7 +170,7 @@ export interface ExecutorDeps {
   commExecutors: Record<string, ToolExecutor>;
   /** Additional overrides (e.g. from constructor opts) */
   overrides?: Record<string, ToolExecutor>;
-  /** Called after a file write to check if AGENTS.md was modified */
+  /** Called after a file write (e.g. for custom post-write side effects). */
   onFileWrite?: (filePath: string) => void;
   /** Called after a file write to check if plan.md was modified */
   isPlanFile?: (filePath: string) => boolean;

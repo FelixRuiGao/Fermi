@@ -570,7 +570,16 @@ Ask the user 1-4 structured questions, each with 1-4 concrete options. The syste
 
 Invoke a skill by name to load specialized instructions. Skills are reusable prompt expansions for specific task types. Pass context via the `arguments` parameter.
 
-Skills are automatically discovered from skill directories — installing or removing a skill takes effect on the next turn without any manual reload step.
+After installing, editing, or removing a skill, call `reload` to apply changes.
+
+## `reload`
+
+Reload skills, MCP servers, and the system prompt from disk. Call after writing or editing:
+- `SKILL.md` files (install/update/remove skills)
+- `AGENTS.md` (persistent memory)
+- `settings.json` `mcp_servers` section (add/remove/change MCP servers)
+
+You can batch multiple writes then call reload once. Returns a summary of what changed.
 
 ---
 

@@ -51,7 +51,7 @@ const READ_TOOLS = new Set([
   "web_fetch", "web_search", "$web_search",
   "show_context", "summarize_context",
   "ask", "check_status", "await_event", "send",
-  "bash_output", "skill", "time",
+  "bash_output", "skill", "reload", "time",
   "kill_shell",
 ]);
 

@@ -222,3 +222,17 @@ export const SEND_TOOL: ToolDef = {
   summaryTemplate: "{agent} sent message to {to}",
   tuiPolicy: { partialReveal: { completeArgs: ["to"] } },
 };
+
+export const RELOAD_TOOL: ToolDef = {
+  name: "reload",
+  description:
+    "Reload skills, MCP servers, and the system prompt from disk. " +
+    "Call after writing or editing SKILL.md files, AGENTS.md, or MCP config (settings.json mcp_servers). " +
+    "Returns a summary of what changed.",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+  summaryTemplate: "{agent} is reloading configuration",
+  tuiPolicy: { partialReveal: "immediate" },
+};

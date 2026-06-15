@@ -7,6 +7,7 @@ export interface SessionCapabilities {
   includeSummarizeContextTool: boolean;
   includeAskTool: boolean;
   includeSkillTools: boolean;
+  includeReloadTool: boolean;
 }
 
 export const ROOT_SESSION_CAPABILITIES: SessionCapabilities = {
@@ -18,6 +19,7 @@ export const ROOT_SESSION_CAPABILITIES: SessionCapabilities = {
   includeSummarizeContextTool: true,
   includeAskTool: true,
   includeSkillTools: true,
+  includeReloadTool: true,
 };
 
 export const CHILD_SESSION_CAPABILITIES: SessionCapabilities = {
@@ -29,4 +31,5 @@ export const CHILD_SESSION_CAPABILITIES: SessionCapabilities = {
   includeSummarizeContextTool: false,
   includeAskTool: false,
   includeSkillTools: false,
+  includeReloadTool: false,
 };

@@ -159,6 +159,10 @@ import {
   loadArchiveFile,
   restoreArchiveToEntries,
   saveLog,
+  loadGlobalSettings,
+  loadLocalSettings,
+  mergeSettings,
+  settingsToConfigInputs,
   type GlobalTuiPreferences,
   type LogSessionMeta,
   type FermiSettings,
@@ -2366,14 +2370,11 @@ export class Session {
         ask: (args) => this._execAsk(args),
         skill: (args) => this._execSkill(args),
         send: (args) => this._execSend(args),
+        reload: () => this._execReload(),
         $web_search: (args) => toolBuiltinWebSearchPassthrough(args as Record<string, unknown>),
       },
       overrides: this._toolExecutorOverrides,
-      onFileWrite: (filePath) => {
-        if (this._isAgentsMdPath(filePath)) {
-          this._reloadPromptAndTools();
-        }
-      },
+      onFileWrite: undefined,
       isPlanFile: (filePath) => this._isPlanFilePath(filePath),
       onPlanFileWrite: () => this._refreshPlanState(),
       getApprovedExternalPrefixes: () => {
@@ -2540,6 +2541,84 @@ export class Session {
         `Skill directory: ${skill.dir}\n\n` +
         content,
     });
+  }
+
+  // ==================================================================
+  // reload tool executor
+  // ==================================================================
+
+  private async _execReload(): Promise<ToolResult> {
+    const report: string[] = [];
+
+    // 1. Reload skills + system prompt
+    const skillResult = this.reloadSkills();
+    report.push(
+      `Skills: ${skillResult.total} loaded` +
+      (skillResult.added.length ? `, +${skillResult.added.join(", ")}` : "") +
+      (skillResult.removed.length ? `, -${skillResult.removed.join(", ")}` : ""),
+    );
+
+    // 2. Reload AGENTS.md (already handled by _reloadPromptAndTools via _refreshSkills above,
+    //    but the prompt reassembly is the key part)
+    this._cachedSystemPrompt = this._assembleSystemPrompt();
+    this._promptSectionEstimates = null;
+    report.push("System prompt: rebuilt");
+
+    // 3. Reload MCP servers from settings
+    if (this._mcpManager) {
+      try {
+        const globalSettings = loadGlobalSettings();
+        const localSettings = loadLocalSettings(this._projectRoot);
+        const effective = Object.keys(localSettings).length > 0
+          ? mergeSettings(globalSettings, localSettings)
+          : globalSettings;
+        const { mcpServers } = settingsToConfigInputs(effective);
+
+        const mcpResult = await this._mcpManager.reconfigure(mcpServers);
+
+        // Re-register tools for all agents after reconfigure
+        this._mcpConnected = false;
+        await this._ensureMcp();
+
+        const changes: string[] = [];
+        if (mcpResult.added.length) changes.push(`+${mcpResult.added.join(", ")}`);
+        if (mcpResult.removed.length) changes.push(`-${mcpResult.removed.join(", ")}`);
+        if (mcpResult.changed.length) changes.push(`~${mcpResult.changed.join(", ")}`);
+
+        const allTools = this._mcpManager.getAllTools();
+        report.push(
+          `MCP: ${allTools.length} tool(s)` +
+          (changes.length ? ` (${changes.join("; ")})` : " (no changes)"),
+        );
+      } catch (err) {
+        report.push(`MCP: reload failed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      // Check if MCP servers were added to settings since session start
+      try {
+        const globalSettings = loadGlobalSettings();
+        const localSettings = loadLocalSettings(this._projectRoot);
+        const effective = Object.keys(localSettings).length > 0
+          ? mergeSettings(globalSettings, localSettings)
+          : globalSettings;
+        const { mcpServers } = settingsToConfigInputs(effective);
+
+        if (mcpServers.length > 0) {
+          const { MCPClientManager } = await import("./mcp-client.js");
+          this._mcpManager = new MCPClientManager(mcpServers) as unknown as MCPClientManager;
+          this._mcpConnected = false;
+          await this._ensureMcp();
+          const allTools = this._mcpManager!.getAllTools();
+          report.push(`MCP: initialized ${mcpServers.length} server(s), ${allTools.length} tool(s)`);
+        } else {
+          report.push("MCP: no servers configured");
+        }
+      } catch (err) {
+        report.push(`MCP: init failed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return new ToolResult({ content: report.join("\n") });
   }
 
   // ==================================================================
@@ -5445,21 +5524,6 @@ export class Session {
   // ==================================================================
   // AGENTS.md persistent memory
   // ==================================================================
-
-  /**
-   * Read AGENTS.md from user home (~/) and project root, concatenating both.
-   * Global file comes first, project file second.
-   */
-  /**
-   * Check if a file path refers to an AGENTS.md file (global or project).
-   * Used to auto-reload the system prompt cache after writes.
-   */
-  private _isAgentsMdPath(filePath: string): boolean {
-    const resolved = resolve(filePath);
-    const globalPath = join(getFermiHomeDir(), "AGENTS.md");
-    const projectPath = join(this._projectRoot, "AGENTS.md");
-    return resolved === resolve(globalPath) || resolved === resolve(projectPath);
-  }
 
   /** Check if a file path refers to the plan file (SESSION_ARTIFACTS/plan.md). */
   private _isPlanFilePath(filePath: string): boolean {

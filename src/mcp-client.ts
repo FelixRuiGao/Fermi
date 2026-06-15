@@ -456,6 +456,104 @@ export class MCPClientManager {
   }
 
   // ------------------------------------------------------------------
+  // Reconfigure — diff-based reload (add/remove/reconnect changed)
+  // ------------------------------------------------------------------
+
+  /**
+   * Apply a new set of server configs. Compared to the current set:
+   *   - Removed servers are disconnected and their tools unregistered.
+   *   - New servers are connected and their tools registered.
+   *   - Changed servers (different config) are disconnected then reconnected.
+   *   - Unchanged servers are left alone.
+   *
+   * Returns a summary of what happened.
+   */
+  async reconfigure(
+    newConfigs: MCPServerConfig[],
+  ): Promise<{ added: string[]; removed: string[]; changed: string[] }> {
+    const available = await ensureMcpSdk();
+    if (!available) {
+      return { added: [], removed: [], changed: [] };
+    }
+
+    const oldByName = this._configByName;
+    const newByName = new Map(newConfigs.map((c) => [c.name, c]));
+
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+
+    // 1. Remove servers no longer in config
+    for (const name of oldByName.keys()) {
+      if (!newByName.has(name)) {
+        removed.push(name);
+        await this._disconnectServer(name);
+      }
+    }
+
+    // 2. Add new or reconnect changed servers
+    for (const [name, cfg] of newByName) {
+      const old = oldByName.get(name);
+      if (!old) {
+        // New server
+        added.push(name);
+        this._serverState.set(name, "connecting");
+        try {
+          await this._connectServer(cfg);
+          this._serverState.set(name, "connected");
+          this._serverError.delete(name);
+        } catch (err) {
+          this._serverState.set(name, "failed");
+          this._serverError.set(name, err instanceof Error ? err.message : String(err));
+        }
+      } else if (!mcpConfigEqual(old, cfg)) {
+        // Config changed — reconnect
+        changed.push(name);
+        await this._disconnectServer(name);
+        this._serverState.set(name, "connecting");
+        try {
+          await this._connectServer(cfg);
+          this._serverState.set(name, "connected");
+          this._serverError.delete(name);
+        } catch (err) {
+          this._serverState.set(name, "failed");
+          this._serverError.set(name, err instanceof Error ? err.message : String(err));
+        }
+      }
+      // else: unchanged — skip
+    }
+
+    // 3. Update internal config references
+    this._configs = newConfigs;
+    this._configByName = newByName;
+    this._connected = this._clients.size > 0;
+
+    return { added, removed, changed };
+  }
+
+  /** Disconnect a server and clean up all its registrations. */
+  private async _disconnectServer(name: string): Promise<void> {
+    const oldTools = this._serverTools.get(name);
+    if (oldTools) {
+      for (const toolName of oldTools) {
+        this._toolDefs.delete(toolName);
+        this._toolServer.delete(toolName);
+        this._toolOriginal.delete(toolName);
+      }
+      this._serverTools.delete(name);
+    }
+
+    const transport = this._transports.get(name);
+    if (transport) {
+      try { await transport.close(); } catch { /* ignore */ }
+      this._transports.delete(name);
+    }
+    this._clients.delete(name);
+    this._serverState.delete(name);
+    this._serverError.delete(name);
+  }
+
+  // ------------------------------------------------------------------
   // Cleanup
   // ------------------------------------------------------------------
 
@@ -476,4 +574,19 @@ export class MCPClientManager {
     this._serverTools.clear();
     this._connected = false;
   }
+}
+
+/** Shallow comparison of two MCPServerConfig objects. */
+function mcpConfigEqual(a: MCPServerConfig, b: MCPServerConfig): boolean {
+  if (a.transport !== b.transport) return false;
+  if (a.command !== b.command) return false;
+  if (a.url !== b.url) return false;
+  if (a.args.length !== b.args.length || a.args.some((v, i) => v !== b.args[i])) return false;
+  const aKeys = Object.keys(a.env).sort();
+  const bKeys = Object.keys(b.env).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    if (aKeys[i] !== bKeys[i] || a.env[aKeys[i]] !== b.env[bKeys[i]]) return false;
+  }
+  return true;
 }
