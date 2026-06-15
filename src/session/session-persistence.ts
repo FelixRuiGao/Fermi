@@ -269,6 +269,52 @@ export function completeMissingToolResultsInLog(s: LogSurgery, fromIdx: number):
 }
 
 /**
+ * Drop reasoning only when the interrupted round has no durable assistant
+ * output yet, or when a partial tool-call argument stream made the whole
+ * assistant action non-sendable. Completed thinking paired with partial text
+ * is a valid prefix and must be preserved.
+ */
+export function discardInterruptedRoundReasoningInLog(
+  entries: readonly LogEntry[],
+  fromIdx: number,
+  interruptedTurnIndex: number,
+): void {
+  let latestRound: number | undefined;
+
+  for (let i = fromIdx; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.discarded || entry.turnIndex !== interruptedTurnIndex) continue;
+    if (entry.roundIndex !== undefined && (latestRound === undefined || entry.roundIndex > latestRound)) {
+      latestRound = entry.roundIndex;
+    }
+  }
+
+  if (latestRound === undefined) return;
+
+  let hasAssistantText = false;
+  let hasClosedToolCall = false;
+  let hasPartialToolCall = false;
+
+  for (let i = fromIdx; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.discarded || entry.turnIndex !== interruptedTurnIndex || entry.roundIndex !== latestRound) continue;
+    if (entry.type === "assistant_text") hasAssistantText = true;
+    if (entry.type === "tool_call" && entry.apiRole === "assistant") hasClosedToolCall = true;
+    if (entry.type === "tool_call" && entry.apiRole === null) hasPartialToolCall = true;
+  }
+
+  for (let i = fromIdx; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.discarded || entry.turnIndex !== interruptedTurnIndex || entry.roundIndex !== latestRound) continue;
+    if (entry.type !== "reasoning") continue;
+    const reasoningComplete = (entry.meta as Record<string, unknown>)["reasoningComplete"] === true;
+    if (hasPartialToolCall || (!reasoningComplete && !hasAssistantText && !hasClosedToolCall)) {
+      entry.discarded = true;
+    }
+  }
+}
+
+/**
  * Normalize a turn that ended without a work_end (crash / suspend): discard
  * dangling reasoning, complete missing tool_results, inject a recovery
  * system-message, and close the work span as interrupted.
@@ -293,31 +339,7 @@ export function normalizeInterruptedTurnInLog(s: LogSurgery, message: string): v
   if (turnStartIndex < 0 || interruptedTurnIndex < 0) return;
   s.activeLogEntryId = null;
 
-  let latestRound: number | undefined;
-  let latestRoundHasToolCall = false;
-
-  for (let i = turnStartIndex; i < s.entries.length; i++) {
-    const entry = s.entries[i];
-    if (entry.discarded || entry.turnIndex !== interruptedTurnIndex) continue;
-    if (entry.roundIndex !== undefined && (latestRound === undefined || entry.roundIndex > latestRound)) {
-      latestRound = entry.roundIndex;
-    }
-  }
-
-  if (latestRound !== undefined) {
-    for (let i = turnStartIndex; i < s.entries.length; i++) {
-      const entry = s.entries[i];
-      if (entry.discarded || entry.turnIndex !== interruptedTurnIndex || entry.roundIndex !== latestRound) continue;
-      if (entry.type === "tool_call" && entry.apiRole === "assistant") latestRoundHasToolCall = true;
-    }
-    if (!latestRoundHasToolCall) {
-      for (let i = turnStartIndex; i < s.entries.length; i++) {
-        const entry = s.entries[i];
-        if (entry.discarded || entry.turnIndex !== interruptedTurnIndex || entry.roundIndex !== latestRound) continue;
-        if (entry.type === "reasoning") entry.discarded = true;
-      }
-    }
-  }
+  discardInterruptedRoundReasoningInLog(s.entries, turnStartIndex, interruptedTurnIndex);
 
   const originalTurnCount = s.turnCount;
   s.turnCount = interruptedTurnIndex;

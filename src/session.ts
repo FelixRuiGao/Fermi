@@ -63,6 +63,7 @@ import {
 import {
   beginWorkIfNeededIn,
   completeMissingToolResultsInLog,
+  discardInterruptedRoundReasoningInLog,
   finishWorkInLog,
   normalizeInterruptedTurnInLog,
   parseRestoredState,
@@ -1005,6 +1006,31 @@ export class Session {
     } catch {
       // GC is best-effort; never let a failure surface to the user.
     }
+  }
+
+  private _appendInterruptionSystemMessage(
+    partialToolNames: readonly string[] = [],
+    compactWasInterrupted = false,
+  ): void {
+    const msgParts: string[] = ["Last turn was interrupted by the user."];
+    for (const name of partialToolNames) {
+      msgParts.push(`You tried to use tool \`${name}\` but the call was interrupted before completion. The tool call is not visible in your context because it was not fully transmitted.`);
+    }
+    if (compactWasInterrupted) {
+      msgParts.push("Context compaction was in progress and has been canceled due to this interruption.");
+    }
+    const interruptionContent = `<system-message>\n${msgParts.join("\n")}\n</system-message>`;
+    const interruptionCtxId = this._allocateContextId();
+    const interruptionEntry = createUserMessageEntry(
+      this._nextLogId("user_message"),
+      this._turnCount,
+      "",
+      interruptionContent,
+      interruptionCtxId,
+    );
+    interruptionEntry.tuiVisible = false;
+    interruptionEntry.displayKind = null;
+    this._appendEntry(interruptionEntry, false);
   }
 
   /**
@@ -3365,13 +3391,21 @@ export class Session {
       const turnSignalState = this._installCurrentTurnSignal(options?.signal);
       this._agentState = "working";
       this._beginWorkIfNeeded();
+      const logLenBeforeCompact = this._log.length;
       try {
         await this._doAutoCompact("before_turn", turnSignalState.signal, prompt);
         this._hintState = "none";
         this.onSaveRequest?.();
         this._finishCurrentWork("completed");
       } catch (err) {
-        if (!turnSignalState.signal.aborted) {
+        if (turnSignalState.signal.aborted || (err as { name?: string })?.name === "AbortError") {
+          for (let ci = logLenBeforeCompact; ci < this._log.length; ci++) {
+            this._log[ci].discarded = true;
+          }
+          this._appendInterruptionSystemMessage([], true);
+          this._recordSessionEvent("interrupted by user");
+          this._finishCurrentWork("interrupted");
+        } else {
           this._recordTurnFailure(err, turnSignalState.signal);
           this._finishCurrentWork("error");
         }
@@ -3969,6 +4003,7 @@ export class Session {
             this.onSaveRequest?.();
             finalText = textAccumulator.text.trim() || "";
             turnEndStatus = "interrupted";
+            reachedLimit = false;
             break;
           }
 
@@ -3984,6 +4019,7 @@ export class Session {
           this.onSaveRequest?.();
           finalText = textAccumulator.text.trim() || "";
           turnEndStatus = "interrupted";
+          reachedLimit = false;
           break;
         }
 
@@ -4108,9 +4144,12 @@ export class Session {
               for (let ci = logLenBefore; ci < this._log.length; ci++) {
                 this._log[ci].discarded = true;
               }
+              this._appendInterruptionSystemMessage([], true);
+              this._recordSessionEvent("interrupted by user");
               this.onSaveRequest?.();
               finalText = textAccumulator.text.trim() || "";
               turnEndStatus = "interrupted";
+              reachedLimit = false;
               break;
             }
             throw compactErr;
@@ -4379,18 +4418,7 @@ export class Session {
                 this._log[ci].discarded = true;
               }
               this._beginWorkIfNeeded();
-              const interruptionContent = "<system-message>\nLast turn was interrupted by the user.\nContext compaction was in progress and has been canceled due to this interruption.\n</system-message>";
-              const interruptionCtxId = this._allocateContextId();
-              const interruptionEntry = createUserMessageEntry(
-                this._nextLogId("user_message"),
-                this._turnCount,
-                "",
-                interruptionContent,
-                interruptionCtxId,
-              );
-              interruptionEntry.tuiVisible = false;
-              interruptionEntry.displayKind = null;
-              this._appendEntry(interruptionEntry, false);
+              this._appendInterruptionSystemMessage([], true);
               this._recordSessionEvent("interrupted by user");
               this._finishCurrentWork("interrupted");
               throw compactErr;
@@ -4512,35 +4540,8 @@ export class Session {
     // under the wrong turn.
     this._pendingSummaryEntries = [];
 
-    let latestRound: number | undefined;
-    let latestRoundHasToolCall = false;
-
-    for (let i = logLenBefore; i < this._log.length; i++) {
-      const e = this._log[i];
-      if (e.discarded) continue;
-      if (e.roundIndex !== undefined && (latestRound === undefined || e.roundIndex > latestRound)) {
-        latestRound = e.roundIndex;
-      }
-    }
-
-    if (latestRound !== undefined) {
-      for (let i = logLenBefore; i < this._log.length; i++) {
-        const e = this._log[i];
-        if (e.discarded || e.roundIndex !== latestRound) continue;
-        if (e.type === "tool_call" && e.apiRole === "assistant") latestRoundHasToolCall = true;
-      }
-    }
-
-    // Drop incomplete reasoning in the interrupted in-flight round only.
-    if (!activationCompleted && latestRound !== undefined && !latestRoundHasToolCall) {
-      for (let i = logLenBefore; i < this._log.length; i++) {
-        const e = this._log[i];
-        if (e.discarded) continue;
-        if (e.roundIndex !== latestRound) continue;
-        if (e.type === "reasoning") {
-          e.discarded = true;
-        }
-      }
+    if (!activationCompleted) {
+      discardInterruptedRoundReasoningInLog(this._log, logLenBefore, this._turnCount);
     }
 
     // Materialize any unsaved partial text from mid-activation streaming.
@@ -4582,25 +4583,7 @@ export class Session {
     // Build the interruption system-message (user role).
     this._recordSessionEvent("interrupted by user");
     const compactWasInterrupted = this._compactInProgress;
-    const msgParts: string[] = ["Last turn was interrupted by the user."];
-    for (const name of partialToolNames) {
-      msgParts.push(`You tried to use tool \`${name}\` but the call was interrupted before completion. The tool call is not visible in your context because it was not fully transmitted.`);
-    }
-    if (compactWasInterrupted) {
-      msgParts.push("Context compaction was in progress and has been canceled due to this interruption.");
-    }
-    const interruptionContent = `<system-message>\n${msgParts.join("\n")}\n</system-message>`;
-    const interruptionCtxId = this._allocateContextId();
-    const interruptionEntry = createUserMessageEntry(
-      this._nextLogId("user_message"),
-      this._turnCount,
-      "",
-      interruptionContent,
-      interruptionCtxId,
-    );
-    interruptionEntry.tuiVisible = false;
-    interruptionEntry.displayKind = null;
-    this._appendEntry(interruptionEntry, false);
+    this._appendInterruptionSystemMessage(partialToolNames, compactWasInterrupted);
   }
 
   /**

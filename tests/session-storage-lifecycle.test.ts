@@ -1138,7 +1138,7 @@ describe("session storage lifecycle", () => {
     }
   });
 
-  it("interruption cleanup drops incomplete reasoning, marks partial text, and closes pending tool calls", () => {
+  it("interruption cleanup preserves reasoning once assistant text has started", () => {
     const baseDir = makeTempDir("fermi-lifecycle-base-");
     const projectRoot = makeTempDir("fermi-lifecycle-project-");
     try {
@@ -1169,7 +1169,8 @@ describe("session storage lifecycle", () => {
       expect(interruptedText.content).toBe("partial");
 
       const reasoning = log.find((e) => e.id === "rs-001");
-      expect(reasoning.discarded).toBe(true);
+      expect(reasoning.discarded).toBeUndefined();
+      expect((session as any)._collectInterruptHints()).not.toContain("Thinking was discarded and not transmitted to the model.");
 
       const interruptedToolResult = log.find((e) => e.type === "tool_result" && e.meta?.toolCallId === "call-1");
       expect(interruptedToolResult).toBeTruthy();
@@ -1194,6 +1195,63 @@ describe("session storage lifecycle", () => {
         role: "user",
       });
       expect(String((apiMessages.at(-1) as any).content)).toContain("Last turn was interrupted by the user.");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("interruption cleanup drops reasoning that is still in progress", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      (session as any)._log = [
+        createSystemPrompt("sys-001", "prompt"),
+        createReasoning("rs-001", 1, 0, "thinking", "thinking", undefined, "ctx-r"),
+      ];
+
+      (session as any)._handleInterruption(1, "", { activationCompleted: false });
+
+      const reasoning = ((session as any)._log as any[]).find((e) => e.id === "rs-001");
+      expect(reasoning.discarded).toBe(true);
+      expect((session as any)._collectInterruptHints()).toContain("Thinking was discarded and not transmitted to the model.");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("interruption cleanup drops completed reasoning when tool arguments are incomplete", () => {
+    const baseDir = makeTempDir("fermi-lifecycle-base-");
+    const projectRoot = makeTempDir("fermi-lifecycle-project-");
+    try {
+      const store = new SessionStore({ baseDir, projectPath: projectRoot });
+      const session = makeSession(projectRoot, store);
+      (session as any)._turnCount = 1;
+      const reasoning = createReasoning("rs-001", 1, 0, "thinking", "thinking", undefined, "ctx-r");
+      (reasoning.meta as Record<string, unknown>).reasoningComplete = true;
+      (session as any)._log = [
+        createSystemPrompt("sys-001", "prompt"),
+        reasoning,
+        createToolCall(
+          "tc-partial",
+          1,
+          0,
+          "edit_file partial",
+          { id: "partial-1", name: "edit_file", rawArguments: "{\"path\":", parseError: "Incomplete arguments" },
+          { toolCallId: "partial-1", toolName: "edit_file", agentName: "Primary", contextId: "ctx-partial" },
+          null,
+        ),
+      ];
+
+      (session as any)._handleInterruption(1, "", { activationCompleted: false });
+
+      expect(reasoning.discarded).toBe(true);
+      expect((session as any)._collectInterruptHints()).toContain("Thinking was discarded and not transmitted to the model.");
+      expect((session as any)._collectInterruptHints()).toContain("Some tools had incomplete arguments and were not executed.");
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
       rmSync(projectRoot, { recursive: true, force: true });

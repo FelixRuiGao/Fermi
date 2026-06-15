@@ -9,6 +9,7 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: interrupting a turn now preserves completed thinking once the assistant has started writing normal text; thinking is discarded only if it was still in progress or if the assistant was cut off mid tool-call argument stream. Compact cancellations also clean up consistently now: interrupting automatic or manual `/compact` always records an interrupted turn cleanly and leaves a context note that compaction was canceled.
 - Fixed: the conversation flickered with a full-screen redraw at the end of every turn. When the assistant's last message finished, its rendered markdown left streaming mode, which re-finalized the trailing blocks and let the block snap from its streamed height down to a compact one; because the conversation view is sticky-to-bottom, that size change re-pinned the scroll offset and forced a full-viewport repaint on every turn. Assistant markdown now stays in streaming mode after the turn ends — the same approach opencode uses for assistant text — so the finalize/resnap (and the flicker) never runs.
 - Fixed: MCP tools broke prompt caching on the first two turns. The `skill` tool was reordered relative to MCP tools between turns, invalidating the provider's cached tools prefix.
 

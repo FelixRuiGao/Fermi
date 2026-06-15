@@ -46,6 +46,29 @@ describe("manual compact", () => {
       h.dispose();
     }
   });
+
+  it("manual compact interrupt closes work as interrupted", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    const h = makeScriptedSession({
+      rounds: [{ text: "continuation summary text" }],
+    });
+    try {
+      await expect(h.session.runManualCompact("", { signal: abortController.signal })).rejects.toMatchObject({
+        name: "AbortError",
+      });
+
+      const workEnd = h.session.log.find((e) => e.type === "work_end" && !e.discarded);
+      expect(workEnd?.meta.status).toBe("interrupted");
+      expect(h.internals._currentWorkId).toBeNull();
+      expect(h.session.log.some((e) =>
+        e.type === "user_message"
+        && String(e.content).includes("Context compaction was in progress and has been canceled"),
+      )).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
 });
 
 describe("messages arriving during compact (Q6)", () => {
@@ -156,6 +179,36 @@ describe("interrupted summarize_context (B4)", () => {
       expect(harness.session.log.filter((e) => e.type === "summary" && !e.discarded)).toHaveLength(0);
     } finally {
       harness.dispose();
+    }
+  });
+});
+
+describe("interrupted mid-turn compact", () => {
+  it("records compact cancellation context and interrupted work", async () => {
+    const h = makeScriptedSession({
+      rounds: [
+        { toolCalls: [{ id: "probe-1", name: "probe_tool", arguments: {} }] },
+      ],
+      toolExecutorOverrides: {
+        probe_tool: () => "ok",
+      },
+    });
+    h.session.permissionMode = "yolo";
+    h.internals._contextManager.thresholds.compact_mid_turn = 0.1;
+    h.internals._doAutoCompact = async () => {
+      throw new DOMException("Compact phase aborted.", "AbortError");
+    };
+    try {
+      await h.session.turn("trigger compact");
+
+      const workEnd = h.session.log.find((e) => e.type === "work_end" && !e.discarded);
+      expect(workEnd?.meta.status).toBe("interrupted");
+      expect(h.session.log.some((e) =>
+        e.type === "user_message"
+        && String(e.content).includes("Context compaction was in progress and has been canceled"),
+      )).toBe(true);
+    } finally {
+      h.dispose();
     }
   });
 });
