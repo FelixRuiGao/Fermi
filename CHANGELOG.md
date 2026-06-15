@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: MCP tools broke prompt caching on the first two turns. The `skill` tool was reordered relative to MCP tools between turns, invalidating the provider's cached tools prefix.
+
 ## v0.3.11
 
 - Added: `/mcp` and `/hooks` are now interactive picker commands. `/mcp` shows each server with live connection status (✓ green / ✗ red), and offers Reconnect, Disable/Enable, View tools drill-down, and Reload config — the picker hot-updates as servers finish connecting. `/hooks` lists each hook with Disable/Enable toggle and Reload hooks to pick up changes from disk without restarting the session.

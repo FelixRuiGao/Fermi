@@ -306,10 +306,17 @@ export async function registerMcpTools(
       if (!selectedTools.length) continue;
 
       const existingToolNames = new Set(agent.tools.map((t) => t.name));
-      for (const tool of selectedTools) {
-        if (existingToolNames.has(tool.name)) continue;
-        agent.tools.push(tool);
-        existingToolNames.add(tool.name);
+      const newTools = selectedTools.filter((t) => !existingToolNames.has(t.name));
+      if (!newTools.length) continue;
+
+      // Insert MCP tools before the "skill" tool (if present) so that
+      // _ensureSkillTool's filter-push-to-end pattern doesn't reorder
+      // the array on subsequent turns — which would break prompt caching.
+      const skillIdx = agent.tools.findIndex((t) => t.name === "skill");
+      if (skillIdx >= 0) {
+        agent.tools.splice(skillIdx, 0, ...newTools);
+      } else {
+        agent.tools.push(...newTools);
       }
     }
 
