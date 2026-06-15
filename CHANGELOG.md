@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.12
+
 - Added: skill and MCP availability changes now queue non-waking system notices for the next agent turn. Notices preserve the order of separate user operations, list enabled/disabled skills, and list concrete MCP tool names that became available or unavailable so the agent treats the change as normal runtime configuration instead of assuming its earlier reasoning was wrong.
 - Fixed: MCP reload now removes stale `mcp__*` tool schemas and executors after servers are removed or changed, and refreshes same-name schemas from the current MCP manager, so the agent no longer sees tools the current MCP configuration cannot execute correctly.
 - Fixed: enabling or disabling an MCP server (and toggling skills) no longer flashes a "Working" indicator in the input box — these are configuration changes, not agent turns. The actual MCP reload is now serialized against the conversation so it can't overlap a running turn.
