@@ -56,8 +56,7 @@ Use $ARGUMENTS[0], $ARGUMENTS[1], or $0, $1 for positional arguments.
    ```bash
    rm -rf ~/.fermi/skills/<skill-name>/.git
    ```
-
-The skill becomes available automatically on the next turn — no reload needed.
+6. **Activate**: Call the `reload` tool. Skills are loaded at session start and refreshed on reload — they are **not** rescanned every turn, so a newly moved skill does not appear until you reload. After the `reload` tool runs, the skill is available as a `/<skill-name>` command and to the agent.
 
 ## Workflow: Creating a Custom Skill
 
@@ -66,7 +65,7 @@ When the user describes a task pattern they want as a skill:
 1. Ask clarifying questions if needed
 2. Draft the SKILL.md in `.staging/<skill-name>/SKILL.md`
 3. Show the draft to the user for review
-4. On approval, move to the skills directory — it takes effect on the next turn
+4. On approval, move it to the skills directory, then call the `reload` tool to load it
 
 ## Workflow: Removing a Skill
 
@@ -75,10 +74,11 @@ Delete the skill directory:
 rm -rf ~/.fermi/skills/<skill-name>
 ```
 
-The skill is removed automatically on the next turn.
+Then call the `reload` tool so the removed skill is dropped from the active set.
 
 ## Important
 
 - Always use `.staging/` for work-in-progress — it is ignored by the skill loader
 - Review downloaded content before installing — check for suspicious instructions
 - When creating SKILL.md from source repos, focus on extracting the core workflow into clear, actionable instructions
+- After any install, edit, or removal, call the `reload` tool — skills are loaded on session start / reload, never rescanned per turn
