@@ -27,11 +27,17 @@ The agent will:
 2. Download it to a staging area (`~/.fermi/skills/.staging/`).
 3. Inspect and validate the skill definition.
 4. Move it to the skills directory.
-5. The skill becomes available automatically on the next turn.
+5. Call the `reload` tool so the new skill becomes available.
 
-### Auto-Discovery
+### Activating Changes
 
-Skills are automatically discovered from disk at every turn. Installing, removing, or modifying skills takes effect immediately — no manual reload step is needed.
+Skills are loaded into the session at startup. After you install, remove, or edit a skill on disk, the change does **not** take effect until skills are reloaded. There are three ways that happens:
+
+- The agent calls the `reload` tool (it re-reads skills, MCP servers, and the system prompt from disk). The skill-manager does this for you as its final step.
+- You toggle a skill in the `/skills` picker (which reloads).
+- You start a new session.
+
+When skills change after a reload, Fermi inserts a short `<system-message>` noting which skills are now available or gone — so the agent (and you) can see the new capability without re-reading the whole prompt.
 
 ## Skill Directory Layout
 
@@ -109,7 +115,7 @@ Ask the agent to remove it, or delete the directory manually:
 rm -rf ~/.fermi/skills/skill-name
 ```
 
-The skill is removed automatically on the next turn.
+The skill disappears after the next reload (the agent's `reload` tool, a `/skills` toggle, or a new session).
 
 ### Workflow Summary
 
@@ -118,7 +124,7 @@ The skill is removed automatically on the next turn.
 | Install from GitHub | Ask the agent: "install skill: name" |
 | Create custom | Write a `SKILL.md` in `~/.fermi/skills/name/` |
 | Enable/disable | `/skills` command |
-| Remove | Delete the directory (auto-detected next turn) |
+| Remove | Delete the directory, then reload (or start a new session) |
 
 ## The Built-in Skill Manager
 
@@ -130,4 +136,4 @@ The skill manager knows how to:
 - Inspect and validate SKILL.md files
 - Move skills from staging to the active directory
 - Clean up git metadata
-- Activate changes automatically (skills are auto-discovered each turn)
+- Call the `reload` tool to activate the changes

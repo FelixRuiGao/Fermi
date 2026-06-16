@@ -12,10 +12,12 @@ As context grows, the system injects guidance at two thresholds:
 
 | Level | Default trigger | What the agent sees |
 |-------|----------------|---------------------|
-| Level 1 | 60% of budget | A nudge to call `show_context` and consider summarizing older groups |
-| Level 2 | 80% of budget | A stronger prompt to summarize immediately before auto-compact triggers |
+| Level 1 | 50% of budget | A nudge to call `show_context` and consider summarizing older groups |
+| Level 2 | 75% of budget | A stronger prompt to summarize immediately before auto-compact triggers |
 
 Hysteresis prevents oscillation — once a hint fires, context must drop meaningfully before the hint can fire again.
+
+Tune (or disable) these triggers with the `/summarize_hint` command — `/summarize_hint on | off | <level1> <level2>`, where the two integers must satisfy `0 < level1 < level2 < 85`. The change persists in settings.
 
 ### 2. Agent-Initiated Summarization
 
@@ -106,7 +108,7 @@ Two `AGENTS.md` files are folded into the system prompt (so they're present ever
 - **`~/.fermi/AGENTS.md`** — Global preferences across all projects
 - **`<project>/AGENTS.md`** — Project-specific patterns and conventions
 
-They're read at session init and on reload (e.g. after editing `AGENTS.md` or running `/reload`). The agent reads these for context and can write to them to save long-term knowledge. Use AGENTS.md to store architectural decisions, coding conventions, known constraints, and preferred approaches.
+They're read at session init and whenever the agent's `reload` tool runs (e.g. after the agent edits `AGENTS.md`). The agent reads these for context and can write to them to save long-term knowledge. Use AGENTS.md to store architectural decisions, coding conventions, known constraints, and preferred approaches.
 
 ## Practical Tips
 

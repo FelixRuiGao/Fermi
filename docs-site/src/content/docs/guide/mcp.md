@@ -97,6 +97,10 @@ Once configured, MCP tools are available to the agent automatically. They appear
 
 You can also run `/mcp` inside Fermi to connect the configured servers on demand and list the discovered tools. This works before your first agent turn, which makes it a useful quick verification step.
 
+### Reloading After a Config Change
+
+You do not have to restart Fermi after editing your MCP config. The agent's `reload` tool re-reads the config and applies the difference — newly added servers connect, removed servers disconnect, and their `mcp__*` tool schemas are added or cleaned up in place. When servers change, Fermi inserts a `<system-message>` listing exactly which `mcp__server__tool` entries appeared or went away.
+
 ## Example: Adding a Database Tool
 
 ```json
@@ -109,4 +113,4 @@ You can also run `/mcp` inside Fermi to connect the configured servers on demand
 }
 ```
 
-After saving this to `~/.fermi/mcp.json` and restarting Fermi, run `/mcp` to verify the SQLite tools were discovered. The agent will then be able to call them during normal turns.
+After saving this to `~/.fermi/mcp.json`, run `/mcp` (or have the agent call `reload`) to connect the server and verify the SQLite tools were discovered — no full restart needed. The agent will then be able to call them during normal turns.

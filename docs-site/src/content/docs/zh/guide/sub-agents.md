@@ -26,9 +26,9 @@ spawn(id, task, mode, template?, template_path?, model_level?)
 | `id` | 是 | 唯一 agent ID |
 | `task` | 是 | 任务描述 |
 | `mode` | 是 | `oneshot`（单轮，返回结果）或 `persistent`（保持存活，接收消息） |
-| `template` | 否 | 内置模板：`explorer`、`executor`、`reviewer` |
-| `template_path` | 否 | 自定义模板目录路径 |
-| `model_level` | 否 | `high`、`medium` 或 `low`，从用户配置的层级中选择 |
+| `template` | 否 | 内置模板：`explorer`、`worker`、`reviewer` |
+| `template_path` | 否 | 自定义模板目录路径（相对于会话 artifacts 目录） |
+| `model_level` | 否 | `high`、`medium` 或 `low`，从用户配置的层级中选择（省略则继承父代理模型） |
 
 ## 模板
 
@@ -36,17 +36,17 @@ spawn(id, task, mode, template?, template_path?, model_level?)
 
 ### `explorer`
 
-只读。可以读文件、搜索、grep 和浏览，但不能编辑文件或运行破坏性命令。适合调查、代码评审和研究。
+只读（`read_only` 工具层级）。可以读文件、搜索、grep 和浏览，但不能编辑文件或运行破坏性命令。适合调查、代码评审和研究。
 
-### `executor`
+### `worker`
 
-面向任务。拥有文件编辑和 shell 访问权限，范围限定为完成特定任务。适合实现工作。
+通用代理，拥有文件编辑和 shell 访问权限（`reversible` 工具层级）。适合实现工作。
 
 ### `reviewer`
 
-验证模板。设计用于检查其他代理产出的工作。适合代码评审和正确性检查。
+以「全新视角」上下文评审其他代理所做的改动（`reversible` 工具层级）。会运行测试、检查范围，并返回结构化结论。适合代码评审和正确性检查。
 
-第四个模板 **`main`** 是主代理模板（你直接对话的顶层代理）。它不是生成目标，子代理使用 `explorer`、`executor` 或 `reviewer`。
+第四个模板 **`main`** 是主代理模板（你直接对话的顶层代理）。它不是生成目标，子代理使用 `explorer`、`worker` 或 `reviewer`。
 
 ## 代理模式
 
@@ -104,7 +104,7 @@ spawn(id="scout", template="explorer", mode="oneshot", model_level="low", task="
     └── system_prompt.md
 ```
 
-用户全局模板只能**新增**模板，不能覆盖内置的 `explorer` / `executor` / `reviewer` / `main` 模板（与内置名称冲突的目录会被跳过）。要覆盖内置模板，请将其放到**项目本地** `.fermi/agent_templates/`（项目根目录），该位置优先级最高。
+用户全局模板只能**新增**模板，不能覆盖内置的 `explorer` / `worker` / `reviewer` / `main` 模板（与内置名称冲突的目录会被跳过）。要覆盖内置模板，请将其放到**项目本地** `.fermi/agent_templates/`（项目根目录），该位置优先级最高。
 
 ## 实用建议
 

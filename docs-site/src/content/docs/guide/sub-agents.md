@@ -26,9 +26,9 @@ spawn(id, task, mode, template?, template_path?, model_level?)
 | `id` | Yes | Unique agent ID |
 | `task` | Yes | Task description |
 | `mode` | Yes | `oneshot` (single turn, returns result) or `persistent` (stays alive, receives messages) |
-| `template` | No | Built-in template: `explorer`, `executor`, `reviewer` |
-| `template_path` | No | Path to a custom template directory |
-| `model_level` | No | `high`, `medium`, or `low` — selects from user-configured tiers |
+| `template` | No | Built-in template: `explorer`, `worker`, `reviewer` |
+| `template_path` | No | Path to a custom template directory (relative to the session's artifacts dir) |
+| `model_level` | No | `high`, `medium`, or `low` — selects from user-configured tiers (omit to inherit the parent's model) |
 
 ## Templates
 
@@ -36,17 +36,17 @@ Three templates are spawnable via the `spawn` tool's `template` parameter:
 
 ### `explorer`
 
-Read-only. Can read files, search, grep, and browse — but cannot edit files or run destructive commands. Use for investigation, code review, and research.
+Read-only (`read_only` tool tier). Can read files, search, grep, and browse — but cannot edit files or run destructive commands. Use for investigation, code review, and research.
 
-### `executor`
+### `worker`
 
-Task-focused. Has file editing and shell access, scoped to completing a specific task. Use for implementation work.
+General-purpose agent with file editing and shell access (`reversible` tool tier). Use for implementation work.
 
 ### `reviewer`
 
-Verification template. Designed to check work produced by other agents. Use for code review and correctness checks.
+Reviews changes made by another agent with fresh-eyes context (`reversible` tool tier). Runs tests, checks scope, and returns a structured verdict. Use for code review and correctness checks.
 
-A fourth template, **`main`**, is the primary-agent template (the top-level agent you talk to). It is not a spawn target — sub-agents use `explorer`, `executor`, or `reviewer`.
+A fourth template, **`main`**, is the primary-agent template (the top-level agent you talk to). It is not a spawn target — sub-agents use `explorer`, `worker`, or `reviewer`.
 
 ## Agent Modes
 
@@ -104,7 +104,7 @@ Add new templates by placing directories in `~/.fermi/agent_templates/`:
     └── system_prompt.md
 ```
 
-User-global templates can only **add** new templates — they cannot override the bundled `explorer` / `executor` / `reviewer` / `main` templates (a directory that collides with a bundled name is skipped). To override a bundled template, place it in **project-local** `.fermi/agent_templates/` (in the project root), which takes highest priority.
+User-global templates can only **add** new templates — they cannot override the bundled `explorer` / `worker` / `reviewer` / `main` templates (a directory that collides with a bundled name is skipped). To override a bundled template, place it in **project-local** `.fermi/agent_templates/` (in the project root), which takes highest priority.
 
 ## Practical Tips
 

@@ -8,11 +8,13 @@ Slash commands are typed directly in the input during a session. They control co
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `/help` | | Show keyboard shortcuts |
+| `/help` | | Show commands and shortcuts |
 | `/model` | | Switch between configured models |
+| `/key` | | Add, replace, remove, or import a provider API key |
 | `/tier` | | Configure sub-agent model tiers (high/medium/low) |
 | `/permission` | | Set permission mode (read_only / reversible / yolo) |
 | `/summarize` | | Interactively summarize older context |
+| `/summarize_hint` | | Configure the two-tier summarize hints (on/off, trigger levels) |
 | `/compact` | | Full context reset with continuation summary |
 | `/rewind` | `/undo` | Rewind to a previous turn (reverts conversation + files) |
 | `/review` | | Review code changes (base branch / uncommitted / commit / custom) |
@@ -20,19 +22,25 @@ Slash commands are typed directly in the input during a session. They control co
 | `/new` | | Start a new session |
 | `/fork` | | Fork current session into a new branch |
 | `/rename` | | Rename current session |
+| `/shells` | | View and stop background shells |
+| `/usage` | `/context` | Show this session's token usage |
+| `/stat` | | Show all-time token statistics |
 | `/autoupdate` | | Toggle background update checks |
+| `/autocopy` | | Toggle copy-on-select (auto-copy a text selection) |
 | `/skills` | | Enable/disable skills (checkbox picker) |
-| `/mcp` | | Show MCP server status and tools |
+| `/mcp` | | Manage MCP servers and list tools |
 | `/agents` | | Toggle the agents panel |
 | `/todos` | | Toggle the todo panel |
 | `/theme` | | Set theme mode (auto / light / dark) |
 | `/diff` | | Set write/edit diff display (compact / full) |
 | `/codex` | | OpenAI ChatGPT OAuth login |
 | `/copilot` | | GitHub Copilot login |
-| `/hooks` | | Show registered hooks |
+| `/hooks` | | Manage registered hooks |
 | `/copy` | | Copy the agent's most recent text response |
 | `/raw` | `/md` | Toggle markdown raw/rendered mode |
 | `/quit` | `/exit` | Exit the application |
+
+Each enabled, user-invocable skill also appears as its own `/<skill-name>` command. Type `/` to see the full list — built-in commands and skills together.
 
 ## Context Commands
 
@@ -62,6 +70,18 @@ Full context reset with a continuation summary. Optionally provide instructions:
 ```
 
 After compact, the agent starts with a fresh context window containing only the continuation summary and AGENTS.md files.
+
+### `/summarize_hint`
+
+Configure the two automatic hints that nudge the agent to summarize as context fills up. Toggle them on/off, or set custom trigger percentages:
+
+```text
+/summarize_hint on
+/summarize_hint off
+/summarize_hint 50 75
+```
+
+The two integers are the Level 1 and Level 2 trigger percentages and must satisfy `0 < level1 < level2 < 85`. The setting persists. See [Context Management](/guide/context).
 
 ### `/rewind`
 
@@ -95,6 +115,10 @@ You can also pass instructions inline: `/review check for SQL injection risks`. 
 Opens a hierarchical picker showing all configured providers and models. Select one to switch immediately.
 
 For managed providers with missing API keys (Kimi, MiniMax, GLM, DeepSeek, Xiaomi, Qwen), selecting a model can prompt you to paste or import the key on the spot.
+
+### `/key`
+
+Manage a provider's API key directly — add, replace, remove, or import a detected external env var. Opens a picker of provider endpoints, then an action menu. Keys are stored in `~/.fermi/.env` (`0600`). This is the quickest way to rotate or fix a key without re-running `fermi init`.
 
 ### `/tier`
 
@@ -154,7 +178,7 @@ Give the current session a descriptive name for easier identification in the ses
 
 ### `/skills`
 
-Opens a checkbox picker to enable or disable installed skills. Skills are auto-discovered each turn from multiple roots — global (`~/.fermi/skills/`), project (`<project>/.fermi/skills/`), and the per-project store.
+Opens a checkbox picker to enable or disable installed skills. Skills are loaded from multiple roots — global (`~/.fermi/skills/`), project (`<project>/.fermi/skills/`), and the per-project store — and a toggle here reloads them immediately.
 
 ### `/mcp`
 
@@ -187,6 +211,23 @@ Copy the agent's most recent text response to the system clipboard.
 ### `/raw`
 
 Toggle between rendered markdown and raw markdown display. Also available as `/md`.
+
+### `/shells`
+
+View tracked background shells and stop them. Background shells come from `bash_background` or from a `bash` call that ran past its timeout and was handed off to the background.
+
+### `/usage` and `/stat`
+
+`/usage` (alias `/context`) shows the current session's token usage — how much of the context budget is consumed and the breakdown by category. `/stat` shows your all-time token statistics across every session.
+
+### `/autocopy`
+
+Toggle copy-on-select. When on, selecting text with the mouse automatically copies it to the clipboard (with a brief toast), so you don't need a separate copy step.
+
+```text
+/autocopy on
+/autocopy off
+```
 
 ## Keyboard Shortcuts
 

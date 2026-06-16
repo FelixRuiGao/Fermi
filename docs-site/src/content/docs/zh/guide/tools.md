@@ -2,7 +2,7 @@
 title: "工具参考"
 ---
 
-Fermi 提供 13 个内置工具和 8 个编排工具。额外工具来自[技能](/zh/guide/skills)和 [MCP 服务器](/zh/guide/mcp)。
+Fermi 提供 13 个内置工具和 9 个编排工具。额外工具来自[技能](/zh/guide/skills)和 [MCP 服务器](/zh/guide/mcp)。
 
 ## 内置工具（13）
 
@@ -21,7 +21,7 @@ Fermi 提供 13 个内置工具和 8 个编排工具。额外工具来自[技能
 
 | 工具 | 说明 |
 |------|------|
-| `bash` | 运行 shell 命令。10 分钟超时，每个 stream 200KB 输出上限。 |
+| `bash` | 运行 shell 命令，需提供必填 `timeout`（1–600 秒）。若命令未在时限内完成，会**移交给后台 shell**（不杀掉），而非截断输出。每个 stream 200KB 输出上限。 |
 | `bash_background` | 在后台运行 shell 命令。返回用于跟踪的 shell ID。 |
 | `bash_output` | 读取后台 shell 进程输出。 |
 | `kill_shell` | 杀掉运行中的后台 shell 进程。 |
@@ -39,7 +39,7 @@ Fermi 提供 13 个内置工具和 8 个编排工具。额外工具来自[技能
 | `web_search` | 搜索网页。可用时使用提供商原生搜索；客户端 fallback 返回带编号 URL、highlight 和可用 metadata 的结果。 |
 | `web_fetch` | 获取并读取 URL 内容。优先使用 Jina Reader，然后对 HTML 页面使用本地 Readability/Turndown fallback，返回可读页面内容。 |
 
-## 编排工具（8）
+## 编排工具（9）
 
 ### 上下文管理
 
@@ -63,6 +63,12 @@ Fermi 提供 13 个内置工具和 8 个编排工具。额外工具来自[技能
 | 工具 | 说明 |
 |------|------|
 | `ask` | 向用户提出 1-4 个结构化问题，每个问题 1-4 个选项。用于代理在继续前需要决策的场景。 |
+
+### 配置
+
+| 工具 | 说明 |
+|------|------|
+| `reload` | 从磁盘重新读取 skills、MCP 服务器和系统提示并按差异应用。代理在编辑 `SKILL.md`、`AGENTS.md` 或 MCP 配置后调用。返回变更摘要。 |
 
 ## 技能
 

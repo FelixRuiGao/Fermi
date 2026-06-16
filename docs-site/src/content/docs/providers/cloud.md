@@ -46,7 +46,7 @@ The key is stored as a managed slot in `~/.fermi/.env`.
 
 ## Kimi / Moonshot
 
-**Models:** Kimi K2.6, K2.5, K2 Instruct
+**Models:** Kimi K2.7 Code, K2.6, K2.5, K2 Instruct
 
 Available through three endpoint variants:
 
@@ -56,7 +56,7 @@ Available through three endpoint variants:
 | **Kimi-China** | `api.moonshot.cn` | `FERMI_KIMI_CN_API_KEY` | `MOONSHOT_API_KEY`, `KIMI_CN_API_KEY` |
 | **Kimi-Code** | `api.kimi.com/coding` | `FERMI_KIMI_CODE_API_KEY` | `KIMI_CODE_API_KEY` |
 
-::: warning
+:::caution
 The Kimi-Code endpoint is restricted to whitelisted agents. You may receive a 403 error. Use `kimi` or `kimi-cn` (standard API) instead.
 :::
 
@@ -66,7 +66,7 @@ The Kimi-Code endpoint is restricted to whitelisted agents. You may receive a 40
 
 ## GLM / Zhipu
 
-**Models:** GLM-5.1, GLM-5, GLM-5 Turbo, GLM-5V Turbo, GLM-4.7
+**Models:** GLM-5.1, GLM-5, GLM-5 Turbo, GLM-5V Turbo, GLM-4.7. The two coding endpoints additionally offer **GLM-5.2**.
 
 Available through four endpoint variants:
 
@@ -77,7 +77,7 @@ Available through four endpoint variants:
 | **GLM-China-Code** | `open.bigmodel.cn/api/coding` | `FERMI_GLM_CODE_API_KEY` | `GLM_CODE_API_KEY` |
 | **GLM-Global-Code** | `api.z.ai/api/coding` | `FERMI_GLM_INTL_CODE_API_KEY` | `GLM_INTL_CODE_API_KEY` |
 
-::: warning
+:::caution
 The GLM coding endpoints are restricted to whitelisted agents. Use `glm` or `glm-intl` (standard API) instead.
 :::
 
@@ -87,7 +87,7 @@ The GLM coding endpoints are restricted to whitelisted agents. Use `glm` or `glm
 
 ## MiniMax
 
-**Models:** MiniMax M2.5, M2.5 Highspeed, M2.7, M2.7 Highspeed
+**Models:** MiniMax M3, M2.5, M2.5 Highspeed, M2.7, M2.7 Highspeed
 
 Available through two endpoint variants:
 
@@ -112,7 +112,7 @@ The key is stored as a managed slot in `~/.fermi/.env`.
 
 ## Qwen / DashScope
 
-**Models:** Qwen3.6 Plus, Qwen3.7 Max
+**Models:** Qwen3.6 Plus, Qwen3.7 Plus, Qwen3.7 Max
 
 Available through three regional endpoint variants:
 

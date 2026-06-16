@@ -58,6 +58,7 @@ Type a task and press Enter. The agent will explore, plan, and execute.
 | Command | Description |
 |---------|-------------|
 | `/model` | Switch model/provider at runtime |
+| `/key` | Add, replace, remove, or import a provider API key |
 | `/summarize` | Compress older context to free space |
 | `/compact` | Full context reset with continuation summary |
 | `/rewind` | Roll back to a previous turn (alias: `/undo`) |
@@ -78,11 +79,11 @@ Fermi manages context through three cooperating layers:
 
 | Layer | Trigger | What happens |
 |-------|---------|--------------|
-| **Hint compression** | Context reaches ~60% / ~80% | System nudges the agent to summarize older segments |
+| **Hint compression** | Context reaches 50% / 75% | System nudges the agent to summarize older segments (two escalating hints) |
 | **Agent summarization** | Agent decides (or user runs `/summarize`) | Agent inspects context map, surgically compresses selected blocks |
-| **Auto-compact** | Context reaches ~85-90% | Full reset with continuation prompt — agent resumes seamlessly |
+| **Auto-compact** | 85% before a turn / 90% mid-turn | Full reset with continuation prompt — agent resumes seamlessly |
 
-In most sessions you will not need to intervene. The three layers handle it automatically.
+These trigger percentages are the defaults — tune them with `/summarize_hint`. In most sessions you will not need to intervene; the three layers handle it automatically.
 
 See [Context Management](/guide/context) for details.
 

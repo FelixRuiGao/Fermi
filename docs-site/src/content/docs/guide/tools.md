@@ -2,7 +2,7 @@
 title: "Tools Reference"
 ---
 
-Fermi provides 13 built-in tools and 8 orchestration tools. Additional tools come from [Skills](/guide/skills) and [MCP servers](/guide/mcp).
+Fermi provides 13 built-in tools and 9 orchestration tools. Additional tools come from [Skills](/guide/skills) and [MCP servers](/guide/mcp).
 
 ## Built-in Tools (13)
 
@@ -21,7 +21,7 @@ Fermi provides 13 built-in tools and 8 orchestration tools. Additional tools com
 
 | Tool | Description |
 |------|-------------|
-| `bash` | Run a shell command. 10-minute timeout, 200KB output cap per stream. |
+| `bash` | Run a shell command with a required `timeout` (1–600 s). If the command doesn't finish in time it is **handed off to a background shell** (not killed) rather than truncated. 200KB output cap per stream. |
 | `bash_background` | Run a shell command in the background. Returns a shell ID for tracking. |
 | `bash_output` | Read output from a background shell process. |
 | `kill_shell` | Kill a running background shell process. |
@@ -39,7 +39,7 @@ Fermi provides 13 built-in tools and 8 orchestration tools. Additional tools com
 | `web_search` | Search the web. Uses provider-native search when available; client-side fallback returns numbered URL results with highlights and metadata where available. |
 | `web_fetch` | Fetch and read the content of a URL. Uses Jina Reader first, then a local Readability/Turndown fallback for HTML pages, and returns readable page content. |
 
-## Orchestration Tools (8)
+## Orchestration Tools (9)
 
 ### Context Management
 
@@ -63,6 +63,12 @@ Fermi provides 13 built-in tools and 8 orchestration tools. Additional tools com
 | Tool | Description |
 |------|-------------|
 | `ask` | Ask the user 1–4 structured questions with 1–4 options each. Used when the agent needs a decision before proceeding. |
+
+### Configuration
+
+| Tool | Description |
+|------|-------------|
+| `reload` | Re-read skills, MCP servers, and the system prompt from disk and apply the difference. The agent calls this after editing a `SKILL.md`, `AGENTS.md`, or MCP config. Returns a summary of what changed. |
 
 ## Skills
 

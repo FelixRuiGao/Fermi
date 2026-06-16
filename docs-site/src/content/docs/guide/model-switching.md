@@ -16,7 +16,17 @@ The picker shows all configured providers and their models. Select one and the a
 
 For managed providers (Kimi, MiniMax, GLM, DeepSeek, Xiaomi, Qwen), if you select a model whose key is missing, Fermi can prompt you to import a detected external env var or paste the key directly.
 
-This is useful for:
+## Managing API Keys
+
+The `/model` flow prompts for a key only when one is missing. To manage keys directly — add, replace, remove, or import a provider's API key at any time — use `/key`:
+
+```text
+/key
+```
+
+It opens a picker of provider endpoints; choose one and then pick an action. Keys live in `~/.fermi/.env` (`0600` permissions). This is the easiest way to rotate a key or fix one that was entered incorrectly without re-running `fermi init`.
+
+The `/model` command itself is useful for:
 - Starting with a fast/cheap model for exploration, then switching to a stronger model for implementation
 - Moving to a cheaper model when the task becomes routine
 - Testing how different models handle the same context
@@ -37,8 +47,10 @@ After switching models, Fermi prompts you to select a thinking level (if the mod
 | **GLM** | off, on |
 | **Xiaomi (MiMo)** | off, on |
 | **Qwen** | off, on |
-| **MiniMax** | always on (not configurable) |
+| **MiniMax** | on (M3 also supports off) |
 | **GitHub Copilot** | follows the underlying model's levels |
+
+A few newer models differ from their provider's general pattern: **GLM-5.2** uses `high` / `max`, **Kimi K2.7 Code** is `on` only, and **Kimi K2 Instruct** has no thinking control. The picker always shows the exact levels each model supports.
 
 Higher reasoning depth produces more thorough analysis but uses more tokens and takes longer.
 

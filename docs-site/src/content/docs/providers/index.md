@@ -8,15 +8,15 @@ Fermi supports cloud APIs and local inference servers. Use `fermi init` to confi
 
 | Provider | Models | Auth |
 |----------|--------|------|
-| **Anthropic** | Claude Haiku 4.5, Sonnet 4.6, Opus 4.6 (+ 1M context variants), Opus 4.7 | `ANTHROPIC_API_KEY` |
+| **Anthropic** | Claude Haiku 4.5, Sonnet 4.6 (+ 1M context beta), Opus 4.6 (+ 1M context beta), Opus 4.7 | `ANTHROPIC_API_KEY` |
 | **OpenAI** | GPT-5.2, 5.2 Codex, 5.3 Codex, 5.4, 5.4 Mini, 5.4 Nano, 5.5 | `OPENAI_API_KEY` or OAuth |
 | **GitHub Copilot** | Fetched live from your plan's catalog — e.g. Claude Opus 4.8/4.7, Sonnet 4.6, GPT-5.3 Codex, 5.4, 5.4 Mini, 5.5, 5 Mini | `/copilot` device-flow login |
 | **DeepSeek** | V4 Flash, V4 Pro | Managed slot (`FERMI_DEEPSEEK_*`) |
-| **Kimi / Moonshot** | K2.6, K2.5, K2 Instruct (Global, China, Code variants) | Managed slots (`FERMI_KIMI_*`) |
-| **MiniMax** | M2.5, M2.5 Highspeed, M2.7, M2.7 Highspeed (Global, China) | Managed slots (`FERMI_MINIMAX_*`) |
-| **GLM / Zhipu** | GLM-5.1, 5, 5 Turbo, 5V Turbo, 4.7 (Global, China, Code variants) | Managed slots (`FERMI_GLM_*`) |
+| **Kimi / Moonshot** | K2.7 Code, K2.6, K2.5, K2 Instruct (Global, China, Code variants) | Managed slots (`FERMI_KIMI_*`) |
+| **MiniMax** | M3, M2.5, M2.5 Highspeed, M2.7, M2.7 Highspeed (Global, China) | Managed slots (`FERMI_MINIMAX_*`) |
+| **GLM / Zhipu** | GLM-5.2 (Code), 5.1, 5, 5 Turbo, 5V Turbo, 4.7 (China, Global, Code variants) | Managed slots (`FERMI_GLM_*`) |
 | **Xiaomi (MiMo)** | V2.5, V2.5 Pro | Managed slot (`FERMI_XIAOMI_*`) |
-| **Qwen / DashScope** | Qwen3.6 Plus, Qwen3.7 Max (China, Singapore, US regions) | Managed slots (`FERMI_QWEN_*`) |
+| **Qwen / DashScope** | Qwen3.6 Plus, Qwen3.7 Plus, Qwen3.7 Max (China, Singapore, US regions) | Managed slots (`FERMI_QWEN_*`) |
 | **OpenRouter** | Multi-vendor curated presets (Claude, GPT, Kimi, MiniMax, GLM, DeepSeek, Qwen, Xiaomi) + any custom model | `OPENROUTER_API_KEY` |
 | **Ollama** | Any local model (dynamic discovery) | — |
 | **oMLX** | Any local MLX model (dynamic discovery) | — |

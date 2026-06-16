@@ -27,11 +27,17 @@ You: install skill: apple-notes
 2. 下载到 staging 区域（`~/.fermi/skills/.staging/`）。
 3. 检查并验证技能定义。
 4. 移动到 skills 目录。
-5. 下一轮开始技能自动可用。
+5. 调用 `reload` 工具，使新技能可用。
 
-### 自动发现
+### 让变更生效
 
-技能会在每一轮自动从磁盘发现。安装、删除或修改技能会立即生效，不需要手动 reload。
+技能在会话启动时载入。在磁盘上安装、删除或编辑技能后，变更**不会**立即生效，需要重载技能。有三种方式触发重载：
+
+- 代理调用 `reload` 工具（它会从磁盘重新读取 skills、MCP 服务器和系统提示）。skill-manager 会在最后一步替你完成这步。
+- 你在 `/skills` 选择器中切换某个技能（这会触发重载）。
+- 你开启一个新会话。
+
+重载后技能发生变化时，Fermi 会插入一条简短的 `<system-message>`，说明哪些技能现在可用或已消失——这样代理（和你）无需重读整段提示就能看到新能力。
 
 ## 技能目录布局
 
@@ -109,7 +115,7 @@ If $ARGUMENTS refers to a specific file, read it first and then explain it.
 rm -rf ~/.fermi/skills/skill-name
 ```
 
-下一轮会自动识别该技能已被删除。
+技能会在下次重载后消失（代理的 `reload` 工具、`/skills` 切换，或新会话）。
 
 ### 工作流摘要
 
@@ -118,7 +124,7 @@ rm -rf ~/.fermi/skills/skill-name
 | 从 GitHub 安装 | 让代理执行："install skill: name" |
 | 创建自定义技能 | 在 `~/.fermi/skills/name/` 写入 `SKILL.md` |
 | 启用/禁用 | `/skills` 命令 |
-| 删除 | 删除目录（下一轮自动检测） |
+| 删除 | 删除目录，然后重载（或开启新会话） |
 
 ## 内置 Skill Manager
 
@@ -130,4 +136,4 @@ skill manager 知道如何：
 - 检查并验证 SKILL.md 文件
 - 将技能从 staging 移动到 active 目录
 - 清理 git metadata
-- 自动激活变更（技能每轮自动发现）
+- 调用 `reload` 工具使变更生效

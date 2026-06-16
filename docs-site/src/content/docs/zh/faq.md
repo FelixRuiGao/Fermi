@@ -93,9 +93,9 @@ fermi oauth
 
 三层协作：
 
-1. **提示压缩** — 上下文增长时系统提示代理总结（60%/80%）
+1. **提示压缩** — 上下文增长时系统提示代理总结（50%/75%）
 2. **代理发起总结** — 代理检查上下文地图，精确压缩选定块
-3. **自动 compact** — 接近限制时触发完整重置的安全网（85%/90%）
+3. **自动 compact** — 接近限制时触发完整重置的安全网（轮次开始前 85% / 轮次进行中 90%）
 
 完整说明见[上下文管理](/zh/guide/context)。
 
@@ -165,7 +165,7 @@ Fermi 找不到已配置提供商的 API key。可以：
 
 ### "Unknown provider 'X'"
 
-支持的提供商标识符：`anthropic`、`openai`、`openai-codex`、`copilot`、`openai-chat`、`ollama`、`omlx`、`lmstudio`、`kimi`、`kimi-cn`、`kimi-ai`、`kimi-code`、`glm`、`glm-intl`、`glm-code`、`glm-intl-code`、`minimax`、`minimax-cn`、`deepseek`、`xiaomi`、`qwen`、`qwen-intl`、`qwen-us`、`openrouter`。
+支持的提供商标识符：`anthropic`、`openai`、`openai-codex`、`copilot`、`ollama`、`omlx`、`lmstudio`、`kimi`、`kimi-cn`、`kimi-code`、`glm`、`glm-intl`、`glm-code`、`glm-intl-code`、`minimax`、`minimax-cn`、`deepseek`、`xiaomi`、`qwen`、`qwen-intl`、`qwen-us`、`openrouter`。
 
 ### Kimi/GLM coding 端点返回 403
 

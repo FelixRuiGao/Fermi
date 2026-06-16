@@ -52,10 +52,14 @@ User-editable settings file (JSONC format). Created manually or via `-c` overrid
 | `auto_update` | boolean \| `"notify"` | Background update checks against GitHub Releases. `true`: patch/minor auto-stage, major notify only. `"notify"`: notify only. `false`: disable checks. Toggle via `/autoupdate` or edit settings directly. |
 | `theme_mode` | string | TUI theme: `auto`, `light`, or `dark`. Default: `auto`. Set via `/theme`. |
 | `diff_display` | string | Write/edit diff rendering: `compact` or `full`. Default: `compact`. Set via `/diff`. |
+| `copy_on_select` | boolean | Auto-copy a mouse text selection to the clipboard. Default: true. Toggle via `/autocopy`. |
+| `summarize_hint` | object | Two-tier summarize hints: `{ enabled, level1, level2 }`. Set via `/summarize_hint`. |
 | `agent_models` | object | Per-template model pins for sub-agents. |
 | `providers` | object | Cloud env-var bindings and local provider config (base URL, context length). Auto-managed by `fermi init` and `/model`. |
 
 Override per-session via CLI: `fermi -c context_budget_percent=70`.
+
+**How global and project settings merge:** scalar values (e.g. `permission_mode`, `thinking_level`) — project replaces global; objects (`model_tiers`, `mcp_servers`) — merged per-key, project keys win; arrays (`disabled_skills`) — project replaces global entirely; `providers` — global only, any project-local `providers` value is ignored.
 
 The `providers` key (auto-managed by `fermi init` and `/model`) holds your provider/model selection and local provider settings; the active selection is also cached in `state/model-selection.json`. Prefer running `fermi init` or using `/model` over editing these by hand.
 
@@ -113,7 +117,7 @@ Add new sub-agent templates by placing directories here:
     └── system_prompt.md
 ```
 
-User-global templates can only **add** new templates — they cannot override the bundled `explorer` / `executor` / `reviewer` / `main` templates. To override a bundled template, place it in **project-local** `.fermi/agent_templates/` (in the project root), which takes highest priority.
+User-global templates can only **add** new templates — they cannot override the bundled `explorer` / `worker` / `reviewer` / `main` templates. To override a bundled template, place it in **project-local** `.fermi/agent_templates/` (in the project root), which takes highest priority.
 
 ## skills/
 
@@ -137,7 +141,7 @@ Two `AGENTS.md` files provide persistent memory across sessions:
 - **`~/.fermi/AGENTS.md`** — Global preferences across all projects
 - **`<project>/AGENTS.md`** — Project-specific patterns and conventions
 
-The global file lives inside `~/.fermi/`; the project file lives in the project root. Their contents are loaded into the system prompt (re-read at session init and on reload, e.g. after editing `AGENTS.md` or `/reload`), so they're present on every turn, and the agent can write to them.
+The global file lives inside `~/.fermi/`; the project file lives in the project root. Their contents are loaded into the system prompt (re-read at session init and whenever the agent's `reload` tool runs, e.g. after the agent edits `AGENTS.md`), so they're present on every turn, and the agent can write to them.
 
 ## CLI Flags
 
@@ -148,7 +152,7 @@ fermi --version           # Show version
 fermi --templates <path>  # Use a specific templates directory
 fermi --verbose           # Enable debug logging
 fermi -c key=value        # Override a setting for this session
-fermi --resume            # Resume the most recent session
+fermi --resume <id>       # Resume a specific session by ID
 fermi --model <id>        # Start with a specific model
 fermi --agent <template>  # Start with a specific agent template
 fermi update [--check]    # Stage the latest GitHub release for next restart

@@ -93,9 +93,9 @@ Yes. Use `/session` (or `/resume`) to pick from previous session logs and contin
 
 Three cooperating layers:
 
-1. **Hint compression** — system prompts the agent to summarize as context grows (60%/80%)
+1. **Hint compression** — system prompts the agent to summarize as context grows (50%/75%)
 2. **Agent-initiated summarization** — agent inspects context map and surgically compresses selected blocks
-3. **Auto-compact** — safety net that triggers a full reset near the limit (85%/90%)
+3. **Auto-compact** — safety net that triggers a full reset near the limit (85% before a turn / 90% mid-turn)
 
 See [Context Management](/guide/context) for the full explanation.
 
@@ -165,7 +165,7 @@ Fermi could not find the API key for a configured provider. Either:
 
 ### "Unknown provider 'X'"
 
-Supported provider identifiers: `anthropic`, `openai`, `openai-codex`, `copilot`, `openai-chat`, `ollama`, `omlx`, `lmstudio`, `kimi`, `kimi-cn`, `kimi-ai`, `kimi-code`, `glm`, `glm-intl`, `glm-code`, `glm-intl-code`, `minimax`, `minimax-cn`, `deepseek`, `xiaomi`, `qwen`, `qwen-intl`, `qwen-us`, `openrouter`.
+Supported provider identifiers: `anthropic`, `openai`, `openai-codex`, `copilot`, `ollama`, `omlx`, `lmstudio`, `kimi`, `kimi-cn`, `kimi-code`, `glm`, `glm-intl`, `glm-code`, `glm-intl-code`, `minimax`, `minimax-cn`, `deepseek`, `xiaomi`, `qwen`, `qwen-intl`, `qwen-us`, `openrouter`.
 
 ### Kimi/GLM coding endpoints return 403
 
