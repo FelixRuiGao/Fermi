@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.13
+
 - Added: `/key` command to manage provider API keys without editing files by hand. Pick a provider endpoint (group providers like Kimi/GLM/Qwen/MiniMax drill down to each region, which has its own key) and replace, remove, or import a detected key. Covers API-key and managed providers plus custom endpoints; OAuth providers stay on `/codex` and `/copilot`. Changes apply to the running session immediately. Removing a key whose value also comes from your shell environment now warns that it will reappear on next launch.
 - Changed: `fermi init` now configures the API key before listing models — after you pick a provider endpoint, it asks whether to keep the saved key or replace it, then shows that endpoint's models.
 - Changed: `fermi init` now supports Esc (and Ctrl+C) to go back exactly one step at any prompt; backing out of the first step cancels setup. The back hint is shown in each picker's help line.
