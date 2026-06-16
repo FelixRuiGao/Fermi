@@ -44,8 +44,6 @@ export const DARK_TOKENS: DisplayThemeTokens = {
     sidebarMaxWidth: 50,
     sidebarCollapsedWidth: 4,
     minTerminalWidthForSidebar: 120,
-    minTerminalWidthForLogoHeader: 72,
-    minTerminalHeightForLogoHeader: 28,
   },
   branding: {
     // ANSI Shadow figlet. Rendered in a single uniform accent color via

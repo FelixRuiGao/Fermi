@@ -293,10 +293,11 @@ export function OpenTuiScreen({
   const effectiveSidebarWidth = sidebarVisible ? sidebarWidth : 0;
   const pickerContentWidth = terminal.width - effectiveSidebarWidth - 10;
 
-  // Logo disappears once user sends the first message
+  // Logo disappears once user sends the first message. Shown at every
+  // terminal size — the welcome stage is centered and clamped below, so it
+  // stays readable on narrow terminals instead of being hidden outright.
   const hasUserMessage = presentationEntries.some((e) => e.kind === "user");
-  const showLogoInScroll = !hasUserMessage
-    && terminal.width >= theme.layout.minTerminalWidthForLogoHeader;
+  const showLogoInScroll = !hasUserMessage;
   // Welcome wordmark vertical placement, keyed to ABSOLUTE terminal
   // height (not the conversation viewport). The viewport shrinks when a
   // command/picker panel opens; anchoring to terminal height instead
@@ -608,8 +609,8 @@ export function OpenTuiScreen({
         >
           <GlowText
             text="Fermi Here."
-            fromColor="#c0d8fc"
-            toColor="#7a82e8"
+            fromColor={theme.colors.accent}
+            toColor={theme.colors.accent}
           />
           <box height={1} />
           <text fg={theme.colors.dim} content={welcomeMetaLine} />

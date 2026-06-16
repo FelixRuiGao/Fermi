@@ -53,8 +53,6 @@ export interface DisplayThemeLayoutTokens {
   sidebarMaxWidth: number;
   sidebarCollapsedWidth: number;
   minTerminalWidthForSidebar: number;
-  minTerminalWidthForLogoHeader: number;
-  minTerminalHeightForLogoHeader: number;
 }
 
 export interface DisplayThemeBrandingTokens {

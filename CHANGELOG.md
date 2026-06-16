@@ -10,6 +10,7 @@ Release notes. A missing or empty section fails CI.
 ## Unreleased
 
 - Changed: writing or editing the plan/todo file now appears in the conversation as a single `Update Todos` step instead of being dropped from the transcript entirely. Previously these operations were hidden (only the Todos panel reflected them), so when the file ever landed in the wrong place there was no on-screen sign anything had happened. The step suppresses the path, line-count suffix, and inline diff, since the Todos panel already shows the actual checkpoints.
+- Changed: the welcome screen wordmark now renders in your theme's accent color (and follows a custom accent if you've set one), instead of a fixed blue-violet. It also shows at every terminal width — previously it was hidden on terminals narrower than 72 columns.
 
 ## v0.3.13
 
