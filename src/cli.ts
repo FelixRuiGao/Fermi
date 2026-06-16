@@ -24,6 +24,7 @@ import {
   settingsToConfigInputs,
 } from "./persistence.js";
 import { loadDotenv } from "./dotenv.js";
+import { applySystemProxyToEnv } from "./system-proxy.js";
 import { getFermiHomeDir } from "./home-path.js";
 import { startBackgroundRegistryRefresh } from "./registry-fetch.js";
 import { checkForUpdates, applyStaged, setUpdateStateGetter, setRelaunchCallback } from "./update-check.js";
@@ -364,6 +365,15 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
   // Load ~/.fermi/.env before dispatching any subcommand so `init`
   // can detect previously saved keys and offer the expected reuse flow.
   (deps.loadDotenv ?? loadDotenv)(homeDir);
+
+  // Normalise the OS system proxy into HTTP(S)_PROXY before any fetch
+  // runs. Bun's fetch reads these env vars but ignores the Windows
+  // system proxy; without this an env-var-less proxy user hangs on
+  // blocked hosts (the symptom that surfaced as a stuck auto-update).
+  // Runs after dotenv so an explicit .env proxy still wins. Covers every
+  // path — update/init/server subcommands and the TUI — since it's
+  // before parseAsync dispatches.
+  applySystemProxyToEnv();
 
   await program.parseAsync(argv);
 

@@ -530,7 +530,7 @@ export function OpenTuiApp({
   }, [selectedChildId, session, openShellDetailTab]);
 
   const [hint, setHint] = useState<string | null>(null);
-  const [updateToast, setUpdateToast] = useState<{ phase: "downloading" | "staged" | "available"; version: string } | null>(null);
+  const [updateToast, setUpdateToast] = useState<{ phase: import("./display/overlays/update-toast.js").UpdateToastPhase; version?: string; error?: string } | null>(null);
   const [mcpFailures, setMcpFailures] = useState<import("./display/overlays/mcp-toast.js").McpFailure[] | null>(null);
   // Transient copy-on-select toast: a body string while visible, null when hidden.
   const [copyToast, setCopyToast] = useState<string | null>(null);
@@ -1411,7 +1411,14 @@ export function OpenTuiApp({
           clearInterval(poll);
           break;
         case "failed":
+          // Surface the failure instead of leaving a stale "Downloading..."
+          // toast frozen on screen (the bug that masked a hung download).
+          setUpdateToast({ phase: "failed", version: state.latestVersion, error: state.error });
+          stopped = true;
+          clearInterval(poll);
+          break;
         case "disabled":
+          setUpdateToast(null);
           stopped = true;
           clearInterval(poll);
           break;

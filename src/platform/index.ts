@@ -18,12 +18,14 @@ import { selectClipboard } from "./clipboard/index.js";
 import { selectBrowser } from "./browser/index.js";
 import { selectBinaryAsset } from "./binary-asset/index.js";
 import { selectOsCapabilities } from "./os-capabilities/index.js";
+import { selectSystemProxy } from "./system-proxy/index.js";
 
 export const shell = selectShell();
 export const clipboard = selectClipboard();
 export const browser = selectBrowser();
 export const binaryAsset = selectBinaryAsset();
 export const osCapabilities = selectOsCapabilities();
+export const systemProxy = selectSystemProxy();
 
 export type {
   ShellKind,
@@ -35,6 +37,8 @@ export type {
   BrowserProvider,
   BinaryAssetProvider,
   OsCapabilities,
+  SystemProxyConfig,
+  SystemProxyProvider,
   PlatformProviders,
 } from "./types.js";
 

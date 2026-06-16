@@ -7,11 +7,14 @@ import { ToastFrame } from "./toast-frame.js";
 
 const ATTRS_BOLD = createTextAttributes({ bold: true });
 
-export type UpdateToastPhase = "downloading" | "staged" | "available";
+export type UpdateToastPhase = "downloading" | "staged" | "available" | "failed";
 
 interface UpdateToastProps {
   phase: UpdateToastPhase;
-  version: string;
+  /** Target version. Optional: a failure before the version is known has none. */
+  version?: string;
+  /** Short failure reason, shown only when phase is "failed". */
+  error?: string;
   theme: DisplayTheme;
   onRestart: () => void;
   onDismiss: () => void;
@@ -20,6 +23,7 @@ interface UpdateToastProps {
 export function UpdateToast({
   phase,
   version,
+  error,
   theme,
   onRestart,
   onDismiss,
@@ -27,19 +31,27 @@ export function UpdateToast({
   const { colors } = theme;
 
   const isReady = phase === "staged";
-  const bodyLine1 = isReady
-    ? "A new version of Fermi downloaded."
-    : "A new version of Fermi detected.";
-  const bodyLine2 = isReady
-    ? undefined
-    : phase === "downloading"
+  const isFailed = phase === "failed";
+
+  let bodyLine1: string;
+  let bodyLine2: string | undefined;
+  if (isFailed) {
+    bodyLine1 = version ? `Couldn't download v${version}.` : "Update download failed.";
+    bodyLine2 = "Check your proxy / network, then run `fermi update`.";
+  } else if (isReady) {
+    bodyLine1 = "A new version of Fermi downloaded.";
+    bodyLine2 = undefined;
+  } else {
+    bodyLine1 = "A new version of Fermi detected.";
+    bodyLine2 = phase === "downloading"
       ? "Downloading update..."
-      : `Run \`fermi update\` to install.`;
+      : "Run `fermi update` to install.";
+  }
 
   return (
     <ToastFrame
-      title=" New Fermi "
-      titleColor={colors.accent}
+      title={isFailed ? " Update failed " : " New Fermi "}
+      titleColor={isFailed ? colors.red : colors.accent}
       borderColor={colors.dim}
       theme={theme}
       footer={[
@@ -49,6 +61,7 @@ export function UpdateToast({
     >
       <text fg={colors.text} content={bodyLine1} />
       {bodyLine2 ? <text fg={colors.text} content={bodyLine2} /> : null}
+      {isFailed && error ? <text fg={colors.dim} content={error} /> : null}
       {isReady ? (
         <box flexDirection="row">
           <text

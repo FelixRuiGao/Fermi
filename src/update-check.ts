@@ -259,16 +259,73 @@ async function fetchLatestRelease(): Promise<{ version: string; downloadUrl: str
   }
 }
 
+// Abort a download if no bytes arrive for this long. Bun's fetch has no
+// built-in stall timeout, so a connection that hangs with no progress
+// (a blocked host behind a proxy the process can't reach) would
+// otherwise wait forever — the bug that surfaced as a self-update stuck
+// at "Downloading update...". A stall watchdog (rather than a fixed
+// total timeout) still tolerates a slow-but-progressing large download.
+const DOWNLOAD_STALL_TIMEOUT_MS = 30_000;
+
+/**
+ * Download a URL into memory with a stall watchdog: the timer is armed
+ * before the request (so it also bounds connect/TTFB) and reset on every
+ * chunk; if it fires, the fetch is aborted. Returns the full body bytes.
+ */
+async function downloadToBytes(
+  url: string,
+  stallMs = DOWNLOAD_STALL_TIMEOUT_MS,
+): Promise<Uint8Array> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const armWatchdog = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(
+      () =>
+        controller.abort(
+          new Error(`Download stalled (no data for ${Math.round(stallMs / 1000)}s)`),
+        ),
+      stallMs,
+    );
+  };
+
+  armWatchdog();
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok || !resp.body) throw new Error(`Download failed: ${resp.status}`);
+
+    const reader = resp.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        total += value.length;
+        armWatchdog();
+      }
+    }
+
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function downloadAndStage(downloadUrl: string, home: string): Promise<void> {
   const staged = stagedDir(home);
   rmSync(staged, { recursive: true, force: true });
   mkdirSync(staged, { recursive: true });
 
-  const resp = await fetch(downloadUrl);
-  if (!resp.ok || !resp.body) throw new Error(`Download failed: ${resp.status}`);
-
   const tarball = join(staged, "update.tar.gz");
-  const bytes = new Uint8Array(await resp.arrayBuffer());
+  const bytes = await downloadToBytes(downloadUrl);
 
   const expectedHash = await fetchChecksumFile(downloadUrl);
   if (expectedHash) {
@@ -463,12 +520,14 @@ export function checkForUpdates(
   };
 
   void (async () => {
+    let latestVersion: string | undefined;
     try {
       const release = await fetchLatestRelease();
       if (!release) {
         state = { phase: "idle", currentVersion };
         return;
       }
+      latestVersion = release.version;
       writeCache({ lastCheck: Date.now(), latestVersion: release.version }, home);
       if (!compareVersions(currentVersion, release.version)) {
         state = { phase: "idle", currentVersion };
@@ -484,6 +543,7 @@ export function checkForUpdates(
       state = {
         phase: "failed",
         currentVersion,
+        latestVersion,
         error: err instanceof Error ? err.message : String(err),
       };
     }
@@ -606,6 +666,10 @@ export function getUpdateNotice(): string | null {
       return `v${state.latestVersion} available — run \`fermi update\``;
     case "downloading":
       return `Downloading v${state.latestVersion}...`;
+    case "failed":
+      return state.latestVersion
+        ? `Update to v${state.latestVersion} failed — check proxy/network`
+        : "Update check failed — check proxy/network";
     default:
       return null;
   }

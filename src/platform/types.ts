@@ -237,6 +237,37 @@ export interface OsCapabilities {
 }
 
 // --------------------------------------------------------------------
+// System proxy — OS-level proxy configuration that Bun's `fetch` does
+// NOT read on its own. Bun honours the HTTP_PROXY / HTTPS_PROXY env
+// vars, but on Windows it ignores the WinINET system proxy (Internet
+// Options → LAN Settings / the setting most VPN & proxy clients toggle).
+// This provider surfaces that config so startup code can normalise it
+// into the env vars, making every outbound fetch route through it.
+// --------------------------------------------------------------------
+
+export interface SystemProxyConfig {
+  /** Proxy URL for http:// targets, e.g. "http://127.0.0.1:7890". */
+  httpProxy?: string;
+  /** Proxy URL for https:// targets. */
+  httpsProxy?: string;
+  /** Comma-separated bypass list in NO_PROXY form, if any. */
+  noProxy?: string;
+}
+
+export interface SystemProxyProvider {
+  /** Identifier of the active implementation, for diagnostics. */
+  readonly id: string;
+
+  /**
+   * Read the OS-level proxy configuration. Returns null when no system
+   * proxy is configured, when the platform exposes nothing beyond the
+   * env vars Bun already reads (POSIX), or when the configuration can't
+   * be resolved statically (e.g. a Windows PAC `AutoConfigURL`).
+   */
+  getSystemProxy(): SystemProxyConfig | null;
+}
+
+// --------------------------------------------------------------------
 // Aggregate
 // --------------------------------------------------------------------
 
@@ -246,4 +277,5 @@ export interface PlatformProviders {
   browser: BrowserProvider;
   binaryAsset: BinaryAssetProvider;
   osCapabilities: OsCapabilities;
+  systemProxy: SystemProxyProvider;
 }

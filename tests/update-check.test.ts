@@ -362,7 +362,12 @@ describe("runUpdate", () => {
       if (url === "https://example.com/release.tar.gz") {
         return {
           ok: true,
-          body: {},
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(tarballBytes));
+              controller.close();
+            },
+          }),
           arrayBuffer: async () => toArrayBuffer(tarballBytes),
         };
       }

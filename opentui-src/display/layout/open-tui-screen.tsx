@@ -149,7 +149,7 @@ export interface OpenTuiScreenProps {
   /** Stop a background shell from the detail tab. */
   onStopShell?: (shellId: string) => void;
   /** Update toast state — null means hidden. */
-  updateToast?: { phase: import("../overlays/update-toast.js").UpdateToastPhase; version: string } | null;
+  updateToast?: { phase: import("../overlays/update-toast.js").UpdateToastPhase; version?: string; error?: string } | null;
   /** MCP connection failures — null means hidden. Dismissal (manual via Ctrl+L
    * or auto-clear on recovery) is owned by the app; the screen just renders. */
   mcpFailures?: import("../overlays/mcp-toast.js").McpFailure[] | null;
@@ -556,6 +556,7 @@ export function OpenTuiScreen({
           <UpdateToast
             phase={updateToast.phase}
             version={updateToast.version}
+            error={updateToast.error}
             theme={theme}
             onRestart={onUpdateRestart}
             onDismiss={onUpdateDismiss}
