@@ -761,6 +761,13 @@ export interface ToolLoopOptions {
   onToolCallPartial?: (callId: string, name: string, rawArguments: string) => void;
   /** Resolve whether a tool call should stay deferred, render, or stay hidden in the TUI. */
   resolveToolCallVisibility?: ResolveToolCallVisibilityCallback;
+  /**
+   * Returns true if a file path is the exact session plan file. When a
+   * write/edit targets it, the tool_call entry is tagged with
+   * `toolMetadata.planFileOperation` so the TUI relabels it as "Update Todos"
+   * (rather than matching by filename). Checked once the `path` arg is known.
+   */
+  isPlanFilePath?: (filePath: string) => boolean;
   /** Update an existing log entry in-place (for finalizing pending tool call entries). */
   updateEntry?: (entryId: string, patch: {
     apiRole?: LogEntry["apiRole"];
@@ -818,6 +825,7 @@ export async function asyncRunToolLoop(
     onRetryExhausted,
     onToolCallPartial: onToolCallPartialOpt,
     resolveToolCallVisibility,
+    isPlanFilePath,
     updateEntry,
     discardEntry,
   } = opts;
@@ -979,6 +987,11 @@ export async function asyncRunToolLoop(
       const contextId = pending.contextId ?? ensureRoundContextId();
       const display = generateToolCallDisplay(pending.name, args);
       const fmd = buildFileModifyData(pending);
+      // Tag the call entry as a plan-file op once its path is known to be the
+      // exact session plan file, so the TUI relabels it as "Update Todos" while
+      // it streams (the result carries the same flag once the write completes).
+      const callPath = typeof args.path === "string" ? args.path : "";
+      const isPlanCall = callPath !== "" && isPlanFilePath?.(callPath) === true;
       const meta = buildToolCallMeta(
         { toolCallId: callId, toolName: pending.name, agentName, contextId },
         {
@@ -988,6 +1001,7 @@ export async function asyncRunToolLoop(
           toolStreamLanguage: pending.streamLanguage,
           toolStreamMode: pending.streamMode,
           fileModifyData: fmd,
+          ...(isPlanCall ? { toolMetadata: { planFileOperation: true } } : {}),
         },
       );
       const entryTuiVisible = pending.tuiVisibility === "show";

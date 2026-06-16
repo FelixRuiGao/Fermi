@@ -4,9 +4,7 @@ import type {
   PresentationState,
   InlineResultData,
 } from "./types.js";
-import { basename } from "node:path";
 import type { FileModifyDisplayData } from "../../src/diff-hunk.js";
-import { PLAN_FILENAME } from "../../src/plan-state.js";
 import { getToolProfile, HIDDEN_TOOLS } from "./tool-profiles.js";
 
 // ------------------------------------------------------------------
@@ -65,42 +63,31 @@ function isToolResultInterrupted(entry: ReconciledConversationEntry): boolean {
   return entry.entry.text.startsWith("[Interrupted]");
 }
 
-/** File-mutating tools whose `path` arg should be checked for plan file targeting. */
-const FILE_MUTATING_TOOLS = new Set(["write_file", "edit_file"]);
-
 /**
  * Check if a tool_call + its optional result represent a plan file operation.
  *
  * Plan ops are relabeled in the transcript as a single "Update Todos"
  * pseudo-tool (path / diff suppressed, since the Todos panel shows the content).
  *
- * Two detection paths (earliest wins):
- *  1. **Streaming** — the tool_call args contain `path` whose basename is
- *     `plan.md`. Available as soon as the args are streamed in, so the TUI can
- *     relabel the operation immediately instead of waiting for execution to finish.
- *  2. **Post-execution** — the tool_result metadata has `planFileOperation: true`,
- *     set by `withPlanHook` in session.ts after the file write completes.
+ * Detection is by the authoritative `planFileOperation` metadata flag, which the
+ * runtime sets only for the exact session plan file (SESSION_ARTIFACTS/plan.md),
+ * never by filename — a file merely named `plan.md` elsewhere is NOT matched.
+ * The flag is stamped on the tool_call entry once its `path` arg is known (so the
+ * TUI can relabel during streaming, before the write finishes) and on the
+ * tool_result entry after the write completes.
  */
 function isPlanFileOperation(
   callEntry: ReconciledConversationEntry,
   resultEntry: ReconciledConversationEntry | null,
 ): boolean {
-  // Path 1: early detection from tool_call args (works during streaming)
-  const toolName = getToolName(callEntry);
-  if (FILE_MUTATING_TOOLS.has(toolName)) {
-    const args = getToolArgs(callEntry);
-    const filePath = typeof args.path === "string" ? args.path : "";
-    if (filePath && basename(filePath) === PLAN_FILENAME) return true;
-  }
+  const callMeta = getMeta(callEntry);
+  if ((callMeta.toolMetadata as Record<string, unknown> | undefined)?.planFileOperation === true) return true;
 
-  // Path 2: post-execution metadata flag (authoritative, set by session.ts)
   if (resultEntry) {
     const resultMeta = (resultEntry.entry.meta as Record<string, unknown>) ?? {};
     const toolMetadata = resultMeta.toolMetadata as Record<string, unknown> | undefined;
     if (toolMetadata?.planFileOperation === true) return true;
   }
-  const callMeta = getMeta(callEntry);
-  if ((callMeta.toolMetadata as Record<string, unknown> | undefined)?.planFileOperation === true) return true;
 
   return false;
 }

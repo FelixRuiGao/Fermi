@@ -5357,6 +5357,7 @@ export class Session {
       onRetryExhausted: emitRetryExhausted,
       onToolCallPartial: onToolCallPartialCb,
       resolveToolCallVisibility: this._resolveToolCallVisibility,
+      isPlanFilePath: (filePath) => this._isPlanFilePath(filePath),
       updateEntry: updateEntryFn,
       discardEntry: discardEntryFn,
     });
@@ -5783,17 +5784,17 @@ export class Session {
     return resolve(filePath) === resolve(planPath);
   }
 
-  private _resolveToolCallVisibility: ResolveToolCallVisibilityCallback = ({
-    toolName,
-    toolArgs,
-  }) => {
-    if (toolName !== "edit_file" && toolName !== "write_file") {
-      return undefined;
-    }
-    const filePath = typeof toolArgs.path === "string" ? toolArgs.path : "";
-    if (filePath && this._isPlanFilePath(filePath)) {
-      return "hide";
-    }
+  /**
+   * Hook to override a tool call's TUI visibility. Returning "hide" suppresses
+   * the call entirely — the runtime "hide" machinery is retained for future use,
+   * but nothing uses it right now.
+   *
+   * Plan-file writes/edits are intentionally NOT hidden: they stay visible and
+   * the presentation layer relabels them as an "Update Todos" step (clean on
+   * success, with the error reason on failure). They are detected by exact path
+   * via `isPlanFilePath` (see the asyncRunWithMessages wiring), not by filename.
+   */
+  private _resolveToolCallVisibility: ResolveToolCallVisibilityCallback = () => {
     return undefined;
   };
 
