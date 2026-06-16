@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: the agent sometimes wrote its plan/todo file to the project root instead of the session artifacts directory, so the TUI Todos panel stayed empty and checkpoints never reached you. The system prompt named the bare filename `plan.md` several times up front (with no path) but only stated the actual location once, far away in the tool docs — so the model defaulted to the working directory. The planning step no longer names the file at all (it just says to externalize multi-phase work as a live todo list), and the Plan File section now leads with an imperative to create it at the artifacts path, calling out that a `plan.md` written anywhere else is invisible to the TUI.
+
 ## v0.3.12
 
 - Fixed: the conversation flickered with a full-screen redraw at the end of every turn. When the assistant's last message finished, its rendered markdown ran a finalize pass that re-snapped the trailing block's height; because the conversation is pinned to the bottom, that size change re-anchored the scroll and forced a full-viewport repaint every turn. Assistant markdown now stays in streaming render mode after a turn ends (so there's no finalize re-snap), and the streaming height reservation is scoped to only the actively-streaming message — completed messages settle at their true height, with no per-turn repaint.

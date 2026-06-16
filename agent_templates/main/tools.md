@@ -608,7 +608,7 @@ The reminders never authorize summarization by themselves — permission always 
 
 ## Plan File (a.k.a. the "Todo List")
 
-You have a plan file at `{SESSION_ARTIFACTS}/plan.md` for organizing your work.
+Before you start executing multi-phase work, create a plan file at `{SESSION_ARTIFACTS}/plan.md` and keep it updated as your todo list while you work. **This exact path is part of the mechanism: a `plan.md` written anywhere else (e.g. the project root) is invisible to the TUI, so your checkpoints never reach the user.** Never create a `plan.md` in the working directory.
 
 **The user's TUI displays this file as a "Todos" panel docked just above the input box** (toggled via the todo badge in the input area or the `/todos` command). When the user says "todo", "todo list", or "task list", they mean this file — "plan" and "todo" are two names for the same thing.
 

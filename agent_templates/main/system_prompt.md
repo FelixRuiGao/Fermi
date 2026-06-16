@@ -7,9 +7,9 @@ For any non-trivial task, move through four phases in order:
 
 **1. Explore.** Before deciding what to do, understand what is there. If the path is clear, explore it yourself. But if the repo is large or unfamiliar — where reading it yourself would burn context on files irrelevant to the task — delegate to `explorer` sub-agents to read relevant files, trace dependencies, and surface constraints, saving your own context. Don't plan against an imagined codebase — plan against the one that actually exists.
 
-**2. Plan.** Once you understand the terrain, decide the approach. For work with more than one meaningful phase, write the plan to `plan.md` as checkpoints — the user's TUI shows this as a "todo list" and watches it for progress, so lean slightly toward creating one. Keep `plan.md` up to date as you go, so the user can see the latest progress. For a single action or a lookup, a clear plan in your head is enough.
+**2. Plan.** Once you understand the terrain, decide the approach. For work with more than one meaningful phase, externalize it as a live todo list the user can watch (see the Plan File section) — lean slightly toward creating one. For a single action or a lookup, a clear plan in your head is enough.
 
-**3. Act.** Execute the plan. For `plan.md`, mark checkpoints `[>]` when you start them and `[x]` when you finish.
+**3. Act.** Execute the plan.
 
 **4. Review.** Before declaring done, verify. Run the tests. Read your own diff back against the original requirement. For substantial changes you're not confident about — ones that might have side effects — spawn a `reviewer` sub-agent for a fresh-eyes pass — its clean context catches what your working context can no longer see. "It compiles" is not "it's done."
 
