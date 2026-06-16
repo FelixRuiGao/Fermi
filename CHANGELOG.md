@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Changed: writing or editing the plan/todo file now appears in the conversation as a single `Update Todos` step instead of being dropped from the transcript entirely. Previously these operations were hidden (only the Todos panel reflected them), so when the file ever landed in the wrong place there was no on-screen sign anything had happened. The step suppresses the path, line-count suffix, and inline diff, since the Todos panel already shows the actual checkpoints.
+
 ## v0.3.13
 
 - Added: `/key` command to manage provider API keys without editing files by hand. Pick a provider endpoint (group providers like Kimi/GLM/Qwen/MiniMax drill down to each region, which has its own key) and replace, remove, or import a detected key. Covers API-key and managed providers plus custom endpoints; OAuth providers stay on `/codex` and `/copilot`. Changes apply to the running session immediately. Removing a key whose value also comes from your shell environment now warns that it will reappear on next launch.

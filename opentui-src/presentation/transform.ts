@@ -71,10 +71,13 @@ const FILE_MUTATING_TOOLS = new Set(["write_file", "edit_file"]);
 /**
  * Check if a tool_call + its optional result represent a plan file operation.
  *
+ * Plan ops are relabeled in the transcript as a single "Update Todos"
+ * pseudo-tool (path / diff suppressed, since the Todos panel shows the content).
+ *
  * Two detection paths (earliest wins):
  *  1. **Streaming** — the tool_call args contain `path` whose basename is
  *     `plan.md`. Available as soon as the args are streamed in, so the TUI can
- *     suppress display immediately instead of waiting for execution to finish.
+ *     relabel the operation immediately instead of waiting for execution to finish.
  *  2. **Post-execution** — the tool_result metadata has `planFileOperation: true`,
  *     set by `withPlanHook` in session.ts after the file write completes.
  */
@@ -546,13 +549,10 @@ export function presentationTransform(
     const entry = entries[i];
     const kind = entry.entry.kind;
 
-    // 1. Skip hidden tools and plan file operations
+    // 1. Skip hidden tools
     if (kind === "tool_call") {
       const toolName = getToolName(entry);
-      const callId = getToolCallId(entry);
-      const pairedResult = callId ? resultByCallId.get(callId) ?? null : null;
-      const isPlanOp = isPlanFileOperation(entry, pairedResult);
-      if (HIDDEN_TOOLS.has(toolName) || isPlanOp) {
+      if (HIDDEN_TOOLS.has(toolName)) {
         i++;
         continue;
       }
@@ -603,6 +603,18 @@ export function presentationTransform(
           ? resultByCallId.get(callId) ?? null
           : null;
         const toolOp = buildToolOperation(callEntry, resultEntry, activeEntryId);
+
+        // Plan-file writes/edits render as a single "Update Todos" pseudo-tool.
+        // The Todos panel already shows the content, so suppress the path, the
+        // line-count suffix, and the inline diff, and relabel the operation.
+        if (isPlanFileOperation(callEntry, resultEntry)) {
+          toolOp.toolDisplayName = "Update Todos";
+          toolOp.toolText = "";
+          toolOp.toolSuffix = "";
+          toolOp.toolInlineResult = null;
+          toolOp.toolResultFullText = undefined;
+          toolOp.fileModifyData = undefined;
+        }
 
         // Fold pre-associated summary entries into the summarize_context tool's inline result
         if (callToolName === "summarize_context" && callId) {
