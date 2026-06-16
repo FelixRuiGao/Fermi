@@ -8,6 +8,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as readline from "node:readline";
 import { select, input, confirm } from "@inquirer/prompts";
 import { getFermiHomeDir } from "./home-path.js";
 import {
@@ -35,9 +36,22 @@ import {
 import {
   ensureManagedProviderCredential,
   type CredentialPromptAdapter,
+  type CredentialSlot,
+  resolveCredentialSlot,
+  isCredentialConfigured,
+  credentialImportCandidates,
+  currentCredentialKey,
+  maskKey,
+  setCredentialKey,
 } from "./provider-credential-flow.js";
+import { providerCredentialKind } from "./managed-provider-credentials.js";
 import { Config, getThinkingLevels, getTierEligibleThinkingLevels } from "./config.js";
-import { buildModelPickerTree, labelModelPickerNode, type ModelPickerTreeNode } from "./model-picker-tree.js";
+import {
+  buildModelPickerTree,
+  buildCredentialEndpointTree,
+  labelModelPickerNode,
+  type ModelPickerTreeNode,
+} from "./model-picker-tree.js";
 import { createModelTierEntry, parseProviderModelTarget } from "./model-selection.js";
 import { describeModel } from "./model-presentation.js";
 
@@ -76,6 +90,96 @@ function isUserCancel(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   return (err as any).name === "ExitPromptError" ||
     (err as any).code === "ERR_USE_AFTER_CLOSE";
+}
+
+// ------------------------------------------------------------------
+// Esc-aware prompt layer + linear navigation.
+//
+// Every interactive screen returns its value or BACK. Esc (and Ctrl+C) abort
+// the active prompt and the navigator steps back exactly one screen; backing
+// out of the first screen cancels the wizard. "Go back" is never a thrown
+// exception that crosses more than one screen boundary, so it cannot
+// over-rewind. inquirer's own cleanup runs on abort (screen.done in its
+// finally), so the terminal is restored before the next prompt renders.
+// ------------------------------------------------------------------
+
+const BACK = Symbol("wizard-back");
+type Back = typeof BACK;
+
+function isAbortPromptError(err: unknown): boolean {
+  return !!err && typeof err === "object" && (err as any).name === "AbortPromptError";
+}
+
+async function withEscBack<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T | Back> {
+  const controller = new AbortController();
+  const stdin = process.stdin;
+  readline.emitKeypressEvents(stdin);
+  const onKey = (_str: string | undefined, key: { name?: string } | undefined) => {
+    if (key?.name === "escape") controller.abort();
+  };
+  stdin.on("keypress", onKey);
+  try {
+    return await run(controller.signal);
+  } catch (err) {
+    if (isAbortPromptError(err) || isUserCancel(err)) return BACK;
+    throw err;
+  } finally {
+    stdin.removeListener("keypress", onKey);
+  }
+}
+
+interface SelectStepChoice {
+  name: string;
+  value: string;
+}
+
+/** Append "Esc/Ctrl+C back" to the select help line (next to navigate/select). */
+const ansiBold = (s: string) => `\x1b[1m${s}\x1b[22m`;
+const ansiDim = (s: string) => `\x1b[2m${s}\x1b[22m`;
+const ESC_BACK_SELECT_THEME = {
+  style: {
+    keysHelpTip: (keys: [string, string][]) =>
+      [...keys, ["Esc/Ctrl+C", "back"] as [string, string]]
+        .map(([key, action]) => `${ansiBold(key)} ${ansiDim(action)}`)
+        .join(ansiDim(" • ")),
+  },
+};
+
+async function selectStep(opts: { message: string; choices: SelectStepChoice[] }): Promise<string | Back> {
+  return withEscBack((signal) =>
+    select({ message: opts.message, choices: opts.choices, theme: ESC_BACK_SELECT_THEME }, { signal }),
+  );
+}
+
+async function inputStep(opts: { message: string; default?: string }): Promise<string | Back> {
+  return withEscBack((signal) => input({ message: opts.message, default: opts.default }, { signal }));
+}
+
+async function confirmStep(opts: { message: string; default?: boolean }): Promise<boolean | Back> {
+  return withEscBack((signal) => confirm({ message: opts.message, default: opts.default }, { signal }));
+}
+
+/** Drill-down tree picker. Esc pops one level; Esc at the root returns BACK. */
+async function selectTreeStep(nodes: ModelPickerTreeNode[], message: string): Promise<string | Back> {
+  const stack: Array<{ message: string; nodes: ModelPickerTreeNode[] }> = [{ message, nodes }];
+  while (stack.length > 0) {
+    const current = stack[stack.length - 1];
+    const choices = current.nodes.map((node) => ({ name: labelModelPickerNode(node), value: node.id }));
+    const picked = await selectStep({ message: current.message, choices });
+    if (picked === BACK) {
+      stack.pop();
+      if (stack.length === 0) return BACK;
+      continue;
+    }
+    const node = current.nodes.find((n) => n.id === picked);
+    if (!node) continue;
+    if (node.children && node.children.length > 0) {
+      stack.push({ message: node.label, nodes: node.children });
+      continue;
+    }
+    return node.value;
+  }
+  return BACK;
 }
 
 function createInitPromptAdapter(): CredentialPromptAdapter {
@@ -231,47 +335,6 @@ function buildWizardModelPickerTree(
   });
 }
 
-async function stepSelectModelTreeValue(
-  nodes: ModelPickerTreeNode[],
-  message: string,
-): Promise<string | undefined> {
-  const stack: Array<{ message: string; nodes: ModelPickerTreeNode[] }> = [{ message, nodes }];
-
-  while (stack.length > 0) {
-    const current = stack[stack.length - 1];
-    const choices = [
-      ...(stack.length > 1 ? [{ name: "← Back", value: "__back__" }] : []),
-      ...current.nodes.map((node) => ({
-        name: labelModelPickerNode(node),
-        value: node.id,
-      })),
-    ];
-
-    const picked = await select({
-      message: current.message,
-      choices,
-    });
-
-    if (picked === "__back__") {
-      stack.pop();
-      continue;
-    }
-
-    const selectedNode = current.nodes.find((node) => node.id === picked);
-    if (!selectedNode) continue;
-    if (selectedNode.children && selectedNode.children.length > 0) {
-      stack.push({
-        message: selectedNode.label,
-        nodes: selectedNode.children,
-      });
-      continue;
-    }
-    return selectedNode.value;
-  }
-
-  return undefined;
-}
-
 async function stepPickTierModelFromTree(
   configuredProviders: Map<string, ProviderEntry>,
   tierName: "high" | "medium" | "low",
@@ -282,11 +345,8 @@ async function stepPickTierModelFromTree(
     });
     if (tree.length === 0) return undefined;
 
-    const picked = await stepSelectModelTreeValue(
-      tree,
-      `  ${tierName} tier: Select model`,
-    );
-    if (!picked) return undefined;
+    const picked = await selectTreeStep(tree, `  ${tierName} tier: Select model`);
+    if (picked === BACK) return undefined;
 
     if (picked.endsWith(":__discover__")) {
       const providerId = picked.split(":")[0];
@@ -510,146 +570,271 @@ async function stepConfigureProvider(provider: ProviderPreset): Promise<Provider
 }
 
 // ------------------------------------------------------------------
-// Step: Provider & Model Picker (interactive loop)
+// Staged model-config flow: endpoint → API key → model. Each stage returns
+// "next" or BACK; the linear driver steps back exactly one stage on BACK.
 // ------------------------------------------------------------------
 
-async function stepProviderModelPicker(): Promise<{
-  selection: ModelSelection;
+interface WizardCtx {
   providers: Map<string, ProviderEntry>;
-}> {
-  const providers = createInitialWizardProviders();
-  let currentSelection: ModelSelection | undefined;
+  selectedProviderId?: string;
+  modelSelection?: ModelSelection;
+  /** True when the endpoint's configure stage already picked the model (local). */
+  modelPickedDuringConfigure: boolean;
+  thinkingLevel?: string;
+  tierConfig?: Record<string, ModelTierEntry>;
+}
 
+interface WizardStage {
+  name: string;
+  applicable?: (ctx: WizardCtx) => boolean;
+  run: (ctx: WizardCtx) => Promise<"next" | Back>;
+}
+
+/**
+ * Run stages in order. BACK steps to the previous *applicable* stage (skipping
+ * inapplicable ones in both directions). Backing out of the first stage returns
+ * false (caller decides whether that means "cancel" or "re-show check-existing").
+ */
+async function runStages(stages: WizardStage[], ctx: WizardCtx): Promise<boolean> {
+  let i = 0;
+  while (i < stages.length) {
+    const stage = stages[i];
+    if (stage.applicable && !stage.applicable(ctx)) { i++; continue; }
+    const outcome = await stage.run(ctx);
+    if (outcome === BACK) {
+      let j = i - 1;
+      while (j >= 0 && stages[j].applicable && !stages[j].applicable!(ctx)) j--;
+      if (j < 0) return false;
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return true;
+}
+
+function endpointDisplayLabel(providerId: string): string {
+  const preset = PROVIDER_PRESETS.find((p) => p.id === providerId);
+  if (preset) {
+    return describeModel({ providerId, selectionKey: providerId, modelId: providerId }).providerLabel
+      ?? preset.subLabel ?? preset.name;
+  }
+  return loadGlobalSettings().providers?.[providerId]?.label ?? providerId;
+}
+
+/**
+ * Find the *provider* node (the one whose children are models/vendors) for an
+ * endpoint. Matches kind "provider" so a group node sharing its id with its
+ * first sub-provider (e.g. the "kimi" group vs the "kimi" endpoint) doesn't
+ * shadow the real endpoint.
+ */
+function findProviderNode(nodes: ModelPickerTreeNode[], id: string): ModelPickerTreeNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id && node.kind === "provider") return node;
+    if (node.children) {
+      const found = findProviderNode(node.children, id);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/** Model (or vendor→model) children for one endpoint, minus action nodes. */
+function modelChoicesForProvider(
+  providers: Map<string, ProviderEntry>,
+  providerId: string,
+): ModelPickerTreeNode[] {
+  const tree = buildWizardModelPickerTree(providers, undefined, { includeLocalDiscoverActions: false });
+  const node = findProviderNode(tree, providerId);
+  if (!node?.children) return [];
+  return node.children.filter((child) => child.kind !== "action");
+}
+
+/** Endpoint → API key sub-flow. Screen A (keep/replace/import); Screen B (paste). */
+async function runKeySubflow(slot: CredentialSlot): Promise<"done" | Back> {
   while (true) {
-    const tree = buildWizardModelPickerTree(providers, undefined, {
-      includeLocalDiscoverActions: true,
-    });
-    const picked = await stepSelectModelTreeValue(tree, "Select a model");
+    const configured = isCredentialConfigured(slot);
+    const candidates = credentialImportCandidates(slot);
+    const choices: SelectStepChoice[] = [];
+    if (configured) {
+      const cur = currentCredentialKey(slot);
+      choices.push({ name: `Keep current key (${cur ? maskKey(cur) : "saved"})`, value: "keep" });
+      choices.push({ name: "Replace with a new key", value: "replace" });
+    } else {
+      choices.push({ name: "Paste a key", value: "replace" });
+    }
+    for (const candidate of candidates) {
+      choices.push({ name: `Import detected ${candidate.envVar}`, value: `import:${candidate.envVar}` });
+    }
 
-    if (!picked) continue;
-
-    if (picked.endsWith(":__discover__")) {
-      const providerId = picked.split(":")[0];
-      const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === providerId);
-      if (!preset) {
-        throw new Error(`Unknown local provider preset: ${providerId}`);
-      }
-      console.log();
-      const result = await stepConfigureProvider(preset);
-      if (!result.skipped) {
-        providers.set(result.providerId, result.providerEntry);
-        if (result.providerEntry.model) {
-          return {
-            selection: {
-              configName: `${result.providerId}:${result.providerEntry.model}`,
-              providerId: result.providerId,
-              selectionKey: result.providerEntry.model,
-              modelId: result.providerEntry.model,
-            },
-            providers,
-          };
-        }
+    const action = await selectStep({ message: `${slot.label}: API key`, choices });
+    if (action === BACK) return BACK;
+    if (action === "keep") return "done";
+    if (action.startsWith("import:")) {
+      const candidate = candidates.find((c) => `import:${c.envVar}` === action);
+      if (candidate) {
+        setCredentialKey(slot, candidate.value);
+        return "done";
       }
       continue;
     }
 
-    const modelSelection = resolveWizardModelSelection(picked);
-    const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === modelSelection.providerId);
-    if (preset && !isProviderConfigured(preset, providers)) {
-      console.log();
-      const result = await stepConfigureProvider(preset);
-      if (result.skipped) continue;
-      providers.set(result.providerId, result.providerEntry);
+    // action === "replace" → paste screen; Esc here returns to the menu above.
+    let backedOut = false;
+    while (true) {
+      const pasted = await inputStep({ message: `${slot.label}: Paste API key` });
+      if (pasted === BACK) { backedOut = true; break; }
+      if (pasted.trim() === "") continue;
+      setCredentialKey(slot, pasted.trim());
+      return "done";
     }
-
-    return { selection: modelSelection, providers };
+    if (backedOut) continue;
   }
 }
 
-// ------------------------------------------------------------------
-// Step: Thinking level selection
-// ------------------------------------------------------------------
+async function stageSelectEndpoint(ctx: WizardCtx): Promise<"next" | Back> {
+  const tree = buildCredentialEndpointTree(
+    { session: createWizardPickerSession(ctx.providers) },
+    { includeOAuthAndLocal: true },
+  );
+  const picked = await selectTreeStep(tree, "Select a provider");
+  if (picked === BACK) return BACK;
+  ctx.selectedProviderId = picked;
+  return "next";
+}
 
-async function stepSelectThinkingLevel(modelId: string, label: string): Promise<string | undefined> {
+async function stageConfigureEndpoint(ctx: WizardCtx): Promise<"next" | Back> {
+  const providerId = ctx.selectedProviderId!;
+  ctx.modelSelection = undefined;
+  ctx.modelPickedDuringConfigure = false;
+
+  const preset = PROVIDER_PRESETS.find((p) => p.id === providerId);
+  const kind = providerCredentialKind(providerId);
+
+  // OAuth / local providers keep the existing multi-prompt sub-flow.
+  if (preset && (preset.localServer || kind === "oauth")) {
+    let result: ProviderConfigResult;
+    try {
+      console.log();
+      result = await stepConfigureProvider(preset);
+    } catch (err) {
+      if (isUserCancel(err)) return BACK;
+      throw err;
+    }
+    if (result.skipped) return BACK;
+    ctx.providers.set(result.providerId, result.providerEntry);
+    if (result.providerEntry.model) {
+      ctx.modelSelection = {
+        configName: `${result.providerId}:${result.providerEntry.model}`,
+        providerId: result.providerId,
+        selectionKey: result.providerEntry.model,
+        modelId: result.providerEntry.model,
+      };
+      ctx.modelPickedDuringConfigure = true;
+    }
+    return "next";
+  }
+
+  // Keyed provider (env / managed / custom) → key sub-flow.
+  const slot = resolveCredentialSlot(providerId, { label: endpointDisplayLabel(providerId) });
+  if (!slot) {
+    ctx.providers.set(providerId, {});
+    return "next";
+  }
+  const outcome = await runKeySubflow(slot);
+  if (outcome === BACK) return BACK;
+  ctx.providers.set(providerId, { api_key_env: slot.envVar });
+  return "next";
+}
+
+async function stageSelectModel(ctx: WizardCtx): Promise<"next" | Back> {
+  const providerId = ctx.selectedProviderId!;
+  const choices = modelChoicesForProvider(ctx.providers, providerId);
+  if (choices.length === 0) {
+    console.log("  No models available for this endpoint.\n");
+    return BACK;
+  }
+  const picked = await selectTreeStep(choices, `${endpointDisplayLabel(providerId)}: Select model`);
+  if (picked === BACK) return BACK;
+  ctx.modelSelection = resolveWizardModelSelection(picked);
+  return "next";
+}
+
+async function stageThinkingLevel(ctx: WizardCtx): Promise<"next" | Back> {
+  const modelId = ctx.modelSelection?.modelId;
+  if (!modelId) { ctx.thinkingLevel = undefined; return "next"; }
   const levels = getThinkingLevels(modelId);
-  if (levels.length === 0) return undefined;
-
-  // Main-agent picker: offer all native levels, plus a synthetic "off" if neither
-  // "off" nor "none" is already in the list. Tier picker uses its own helper —
-  // see stepConfigureTiers below.
-  const choices: Array<{ name: string; value: string }> = [];
-  if (!levels.includes("off") && !levels.includes("none")) {
-    choices.push({ name: "off", value: "off" });
-  }
-  for (const level of levels) {
-    choices.push({ name: level, value: level });
-  }
-
-  const selected = await select({
-    message: `${label}: Thinking level`,
-    choices,
-  });
-
-  return selected;
+  if (levels.length === 0) { ctx.thinkingLevel = undefined; return "next"; }
+  const choices: SelectStepChoice[] = [];
+  if (!levels.includes("off") && !levels.includes("none")) choices.push({ name: "off", value: "off" });
+  for (const level of levels) choices.push({ name: level, value: level });
+  const sel = await selectStep({ message: "Main model: Thinking level", choices });
+  if (sel === BACK) return BACK;
+  ctx.thinkingLevel = sel;
+  return "next";
 }
 
-// ------------------------------------------------------------------
-// Step: Configure sub-agent tiers
-// ------------------------------------------------------------------
-
-async function stepConfigureTiers(
-  mainProviders: Map<string, ProviderEntry>,
-): Promise<Record<string, ModelTierEntry> | undefined> {
-  const wantTiers = await confirm({
+async function stageConfigureTiers(ctx: WizardCtx): Promise<"next" | Back> {
+  const want = await confirmStep({
     message: "Configure sub-agent model tiers? (Skip = all inherit main model)",
     default: false,
   });
+  if (want === BACK) return BACK;
+  if (!want) { ctx.tierConfig = undefined; return "next"; }
+  ctx.tierConfig = await collectTiers(ctx.providers);
+  return "next";
+}
 
-  if (!wantTiers) return undefined;
+// ------------------------------------------------------------------
+// Sub-agent tier collection (after the top-level "configure tiers?" confirm)
+// ------------------------------------------------------------------
 
+async function collectTiers(
+  mainProviders: Map<string, ProviderEntry>,
+): Promise<Record<string, ModelTierEntry> | undefined> {
   const tiers: Record<string, ModelTierEntry> = {};
-
-  for (const tierName of ["high", "medium", "low"] as const) {
-    const skipTier = await confirm({
-      message: `  ${tierName} tier: Configure? (No = inherit main model)`,
-      default: false,
-    });
-
-    if (!skipTier) continue;
-
-    const picked = await stepPickTierModelFromTree(mainProviders, tierName);
-    if (!picked) {
-      console.log("    No configured providers with models available. Skipping.\n");
-      continue;
-    }
-
-    // Tier-eligible levels exclude native "off" / "none" — sub-agent tiers
-    // always have thinking enabled.
-    let thinkingLevel: string;
-    if (getThinkingLevels(picked.modelId).length === 0) {
-      thinkingLevel = "none";
-    } else {
-      const eligible = getTierEligibleThinkingLevels(picked.modelId);
-      if (eligible.length === 0) {
-        console.log(`    Model has no eligible thinking levels (only off/none). Skipping ${tierName} tier.\n`);
-        continue;
-      }
-      const picked2 = await select({
-        message: `  ${tierName} tier: Thinking level (required)`,
-        choices: eligible.map((l) => ({ name: l, value: l })),
+  try {
+    for (const tierName of ["high", "medium", "low"] as const) {
+      const want = await confirmStep({
+        message: `  ${tierName} tier: Configure? (No = inherit main model)`,
+        default: false,
       });
-      if (!picked2) {
-        console.log(`    No thinking level selected for ${tierName} tier. Skipping.\n`);
+      if (want === BACK) break;
+      if (!want) continue;
+
+      const picked = await stepPickTierModelFromTree(mainProviders, tierName);
+      if (!picked) {
+        console.log("    No model selected. Skipping.\n");
         continue;
       }
-      thinkingLevel = picked2;
-    }
 
-    tiers[tierName] = createModelTierEntry({
-      provider: picked.providerId,
-      selectionKey: picked.selectionKey,
-      modelId: picked.modelId,
-    }, thinkingLevel);
+      // Tier-eligible levels exclude native "off" / "none" — sub-agent tiers
+      // always have thinking enabled.
+      let thinkingLevel: string;
+      if (getThinkingLevels(picked.modelId).length === 0) {
+        thinkingLevel = "none";
+      } else {
+        const eligible = getTierEligibleThinkingLevels(picked.modelId);
+        if (eligible.length === 0) {
+          console.log(`    Model has no eligible thinking levels (only off/none). Skipping ${tierName} tier.\n`);
+          continue;
+        }
+        const lvl = await selectStep({
+          message: `  ${tierName} tier: Thinking level (required)`,
+          choices: eligible.map((l) => ({ name: l, value: l })),
+        });
+        if (lvl === BACK) continue;
+        thinkingLevel = lvl;
+      }
+
+      tiers[tierName] = createModelTierEntry({
+        provider: picked.providerId,
+        selectionKey: picked.selectionKey,
+        modelId: picked.modelId,
+      }, thinkingLevel);
+    }
+  } catch (err) {
+    if (!isUserCancel(err)) throw err;
   }
 
   return Object.keys(tiers).length > 0 ? tiers : undefined;
@@ -666,14 +851,14 @@ const SEARCH_API_OPTIONS = [
   { env: "BRAVE_SEARCH_API_KEY",  name: "Brave Search", url: "https://brave.com/search/api/",  free: "$5 credit" },
 ] as const;
 
-async function stepConfigureWebSearch(): Promise<void> {
+async function stageWebSearch(_ctx: WizardCtx): Promise<"next" | Back> {
   const configured = SEARCH_API_OPTIONS.find(({ env }) => process.env[env]?.trim());
   if (configured) {
     console.log(`  ✓ Web search: ${configured.name} (${configured.env} detected)\n`);
-    return;
+    return "next";
   }
 
-  const choice = await select({
+  const choice = await selectStep({
     message: "Web search: Paste an API key for better results (strongly recommended)",
     choices: [
       ...SEARCH_API_OPTIONS.map((opt) => ({
@@ -684,17 +869,17 @@ async function stepConfigureWebSearch(): Promise<void> {
     ],
   });
 
+  if (choice === BACK) return BACK;
   if (choice === "skip") {
     console.log("  Using built-in search (Exa → Parallel → DuckDuckGo).\n");
-    return;
+    return "next";
   }
 
   const selected = SEARCH_API_OPTIONS.find(({ env }) => env === choice)!;
   console.log(`\n  Sign up at ${selected.url} and copy your API key.\n`);
 
-  const key = await input({
-    message: `Paste your ${selected.env}`,
-  });
+  const key = await inputStep({ message: `Paste your ${selected.env}` });
+  if (key === BACK) return BACK;
 
   if (key.trim()) {
     setDotenvKey(selected.env, key.trim());
@@ -702,20 +887,12 @@ async function stepConfigureWebSearch(): Promise<void> {
   } else {
     console.log("  Skipped. You can set it later in ~/.fermi/.env\n");
   }
+  return "next";
 }
 
 // ------------------------------------------------------------------
-// Main wizard — state machine with back support
+// Main wizard — linear stage driver with single-step Esc back
 // ------------------------------------------------------------------
-
-const enum Step {
-  CHECK_EXISTING,
-  SELECT_MODEL,
-  THINKING_LEVEL,
-  CONFIGURE_TIERS,
-  WEB_SEARCH,
-  WRITE,
-}
 
 export async function runInitWizard(): Promise<WizardResult> {
   const homeDir = getFermiHomeDir();
@@ -730,94 +907,51 @@ export async function runInitWizard(): Promise<WizardResult> {
   console.log("  ╔══════════════════════════════════════╗");
   console.log("  ║       Welcome to Fermi Setup!        ║");
   console.log("  ╚══════════════════════════════════════╝");
-  console.log("  (Ctrl+C to go back, double Ctrl+C to quit)\n");
+  console.log("  (Esc or Ctrl+C: go back one step; back out of the first step to cancel)\n");
 
-  let step: Step = hasExisting ? Step.CHECK_EXISTING : Step.SELECT_MODEL;
+  const ctx: WizardCtx = {
+    providers: createInitialWizardProviders(),
+    modelPickedDuringConfigure: false,
+  };
 
-  // State accumulated across steps
-  let modelSelection: ModelSelection | undefined;
-  let configuredProviders = new Map<string, ProviderEntry>();
-  let thinkingLevel: string | undefined;
-  let tierConfig: Record<string, ModelTierEntry> | undefined;
+  const stages: WizardStage[] = [
+    { name: "endpoint", run: stageSelectEndpoint },
+    { name: "configure", run: stageConfigureEndpoint },
+    { name: "model", applicable: (c) => !c.modelPickedDuringConfigure, run: stageSelectModel },
+    { name: "thinking", run: stageThinkingLevel },
+    { name: "tiers", run: stageConfigureTiers },
+    { name: "websearch", run: stageWebSearch },
+  ];
 
-  while (step !== Step.WRITE) {
-    try {
-      switch (step) {
-        case Step.CHECK_EXISTING: {
-          console.log("  Existing configuration found.");
-          const useExisting = await confirm({
-            message: "Use existing configuration?",
-            default: true,
-          });
-          if (useExisting) {
-            console.log("\n  ✓ Using existing configuration.\n");
-            return { homeDir };
-          }
-          step = Step.SELECT_MODEL;
-          break;
-        }
-
-        case Step.SELECT_MODEL: {
-          const result = await stepProviderModelPicker();
-          modelSelection = result.selection;
-          configuredProviders = result.providers;
-          step = Step.THINKING_LEVEL;
-          break;
-        }
-
-        case Step.THINKING_LEVEL: {
-          if (modelSelection) {
-            thinkingLevel = await stepSelectThinkingLevel(
-              modelSelection.modelId,
-              "Main model",
-            );
-          }
-          step = Step.CONFIGURE_TIERS;
-          break;
-        }
-
-        case Step.CONFIGURE_TIERS: {
-          tierConfig = await stepConfigureTiers(configuredProviders);
-          step = Step.WEB_SEARCH;
-          break;
-        }
-
-        case Step.WEB_SEARCH: {
-          await stepConfigureWebSearch();
-          step = Step.WRITE;
-          break;
-        }
+  while (true) {
+    if (hasExisting) {
+      const use = await confirmStep({ message: "Existing configuration found. Use it?", default: true });
+      if (use === BACK) {
+        console.log("\n  Setup cancelled.\n");
+        process.exit(0);
       }
-    } catch (err) {
-      if (!isUserCancel(err)) throw err;
-
-      // Back navigation
-      switch (step) {
-        case Step.CHECK_EXISTING:
-          console.log("\n  Setup cancelled.\n");
-          process.exit(0);
-          break;
-        case Step.SELECT_MODEL:
-          if (hasExisting) {
-            step = Step.CHECK_EXISTING;
-          } else {
-            console.log("\n  Setup cancelled.\n");
-            process.exit(0);
-          }
-          break;
-        case Step.THINKING_LEVEL:
-          step = Step.SELECT_MODEL;
-          break;
-        case Step.CONFIGURE_TIERS:
-          step = Step.THINKING_LEVEL;
-          break;
-        case Step.WEB_SEARCH:
-          step = Step.CONFIGURE_TIERS;
-          break;
+      if (use) {
+        console.log("\n  ✓ Using existing configuration.\n");
+        return { homeDir };
       }
-      console.log();
     }
+
+    const completed = await runStages(stages, ctx);
+    if (completed) break;
+
+    // Backed out of the first stage.
+    if (hasExisting) {
+      console.log();
+      continue; // re-show "use existing?"
+    }
+    console.log("\n  Setup cancelled.\n");
+    process.exit(0);
   }
+
+  const modelSelection = ctx.modelSelection;
+  const configuredProviders = ctx.providers;
+  const thinkingLevel = ctx.thinkingLevel;
+  const tierConfig = ctx.tierConfig;
 
   // ------------------------------------------------------------------
   // Build and save settings

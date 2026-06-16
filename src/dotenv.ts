@@ -95,3 +95,35 @@ export function setDotenvKey(key: string, value: string, homeDir?: string): void
   // Also set in current process so subsequent wizard steps can detect it
   process.env[key] = value;
 }
+
+/**
+ * Remove a key from ~/.fermi/.env and from the current process env.
+ *
+ * Note: this only removes what Fermi controls. If the same variable is also
+ * exported in the user's shell, it will reappear on the next launch (loadDotenv
+ * won't re-add it, but the shell value is already in the environment). Callers
+ * that surface removal to the user should say so for shell-sourced keys.
+ */
+export function unsetDotenvKey(key: string, homeDir?: string): void {
+  const path = envFilePath(homeDir ?? getFermiHomeDir());
+
+  if (existsSync(path)) {
+    let lines: string[];
+    try {
+      lines = readFileSync(path, "utf-8").split("\n");
+    } catch {
+      lines = [];
+    }
+    const kept = lines.filter((line) => {
+      const trimmed = line.trim();
+      return !(trimmed.startsWith(`${key}=`));
+    });
+    if (kept.length !== lines.length) {
+      const content = kept.join("\n").trimEnd() + "\n";
+      writeFileSync(path, content, { mode: 0o600 });
+    }
+  }
+
+  // Remove from the live process so the running session reflects the change.
+  delete process.env[key];
+}

@@ -42,12 +42,14 @@ import {
 } from "./managed-provider-credentials.js";
 import {
   ensureManagedProviderCredential,
+  runCredentialManageFlow,
+  customProviderEnvVar,
   type CredentialPromptAdapter,
   type PromptSecretRequest,
   type PromptSelectRequest,
 } from "./provider-credential-flow.js";
 import { resolveSkillContent, type SkillMeta } from "./skills/loader.js";
-import { buildModelPickerTree, toCommandPickerOptions, type ModelPickerTreeContext } from "./model-picker-tree.js";
+import { buildModelPickerTree, buildCredentialEndpointTree, toCommandPickerOptions, type ModelPickerTreeContext } from "./model-picker-tree.js";
 import { describeModel, formatCurrentModelScopedLabel, getCurrentModelDescriptor } from "./model-presentation.js";
 import { hasOAuthTokens, isTokenExpiring, readOAuthAccessToken, clearOAuthTokens, ensureFreshToken } from "./auth/openai-oauth.js";
 import { hasGitHubTokens, clearGitHubTokens } from "./auth/github-copilot-oauth.js";
@@ -1035,6 +1037,82 @@ async function cmdModel(ctx: CommandContext, args: string): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------------
+// /key command — manage provider API keys (replace / remove / import)
+// ------------------------------------------------------------------
+
+function keyOptions(ctx: CommandOptionsContext): CommandOption[] {
+  return toCommandPickerOptions(
+    buildCredentialEndpointTree({ session: ctx.session }),
+  ) as CommandOption[];
+}
+
+/** Re-resolve runtime model configs after a provider's key changed. */
+function applyCredentialChange(ctx: CommandContext, providerId: string): void {
+  ctx.session.config?.invalidateModelsByProvider?.(providerId);
+  if (ctx.session.primaryAgent?.modelConfig?.provider === providerId) {
+    ctx.session.reloadCurrentModelConfig?.();
+  }
+  ctx.autoSave();
+}
+
+/**
+ * /key command: replace / remove / import the API key of a provider endpoint.
+ * Covers env + managed registry providers and custom providers; OAuth and local
+ * providers are excluded (OAuth uses /codex /copilot).
+ */
+async function cmdKey(ctx: CommandContext, args: string): Promise<void> {
+  const adapter = createCommandPromptAdapter(ctx);
+  if (!adapter || !ctx.promptCommandPicker) {
+    ctx.showMessage("API key management is not available in this UI.");
+    return;
+  }
+
+  let providerId = args.trim();
+  if (!providerId) {
+    const picked = await ctx.promptCommandPicker(
+      keyOptions({ session: ctx.session, store: ctx.store }),
+      { title: "Manage API key" },
+    );
+    providerId = picked?.value ?? "";
+    if (!providerId) {
+      ctx.showMessage("Cancelled.");
+      return;
+    }
+  }
+
+  const settings = loadGlobalSettings(ctx.fermiHomeDir);
+  const label = settings.providers?.[providerId]?.label;
+
+  try {
+    const result = await runCredentialManageFlow(providerId, adapter, {
+      homeDir: ctx.fermiHomeDir,
+      label,
+    });
+
+    if (result.status === "skipped") {
+      ctx.showMessage("No changes made.");
+      return;
+    }
+
+    applyCredentialChange(ctx, providerId);
+
+    if (result.status === "removed") {
+      let msg = `Removed the saved key for ${result.label}.`;
+      if (result.shellMayResurface) {
+        msg += `\nNote: ${result.envVar} may still be exported in your shell — `
+          + "it will be used again on next launch. To fully disable, unset it in your shell.";
+      }
+      ctx.showMessage(msg);
+    } else {
+      const verb = result.source === "imported" ? "Imported" : "Updated";
+      ctx.showMessage(`${verb} the API key for ${result.label}.`);
+    }
+  } catch (e) {
+    ctx.showMessage(`Failed to manage API key: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /**
  * Local provider discovery sub-flow for /model.
  * Scans the server, lets user pick a model, registers it, and switches.
@@ -1396,9 +1474,8 @@ async function cmdAddCustomProvider(ctx: CommandContext): Promise<boolean> {
   const entry: ProviderEntry = { custom: true, label, base_url: baseUrl, protocol: protocol as ProviderEntry["protocol"], models: added };
   let apiKeyRef = "local";
   if (apiKey) {
-    const envVar = `FERMI_CUSTOM_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_KEY`;
+    const envVar = customProviderEnvVar(providerId);
     setDotenvKey(envVar, apiKey, ctx.fermiHomeDir);
-    process.env[envVar] = apiKey;
     entry.api_key = `\${${envVar}}`;
     apiKeyRef = `\${${envVar}}`;
   }
@@ -1449,9 +1526,8 @@ async function cmdManageCustomProvider(ctx: CommandContext, providerId: string):
     }
     let apiKeyField = entry.api_key;
     if (newKey) {
-      const envVar = `FERMI_CUSTOM_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_KEY`;
+      const envVar = customProviderEnvVar(providerId);
       setDotenvKey(envVar, newKey, ctx.fermiHomeDir);
-      process.env[envVar] = newKey;
       apiKeyField = `\${${envVar}}`;
     }
     const updated: ProviderEntry = { ...entry, base_url: newBaseUrl, ...(apiKeyField ? { api_key: apiKeyField } : {}) };
@@ -2262,6 +2338,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/summarize_hint", description: "Configure two-tier summarize hints (on/off, trigger levels)", handler: cmdSummarizeHint });
   registry.register({ name: "/shells", description: "View and stop background shells", handler: cmdShells });
   registry.register({ name: "/model", description: "Switch model", handler: cmdModel, options: modelOptions });
+  registry.register({ name: "/key", description: "Manage provider API keys", handler: cmdKey, options: keyOptions, pickerTitle: "Manage API key" });
   registry.register({ name: "/tier", description: "Configure sub-agent model tiers", handler: cmdTier, options: tierOptions });
   registry.register({ name: "/quit", description: "Exit the application", handler: cmdQuit, aliases: ["/exit"] });
   registry.register({ name: "/skills", description: "Manage installed skills", handler: cmdSkills, options: skillsOptions, checkboxMode: true });

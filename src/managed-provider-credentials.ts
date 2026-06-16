@@ -29,6 +29,23 @@ const SPEC_BY_PROVIDER = new Map(
   MANAGED_PROVIDER_CREDENTIAL_SPECS.map((spec) => [spec.providerId, spec] as const),
 );
 
+/** Credential kind per provider, derived from the registry (single source). */
+export type ProviderCredentialKind = "env" | "managed" | "oauth" | "local";
+
+const CREDENTIAL_KIND_BY_PROVIDER = new Map<string, ProviderCredentialKind>(
+  EFFECTIVE_PROVIDER_SPECS.map((spec) => [spec.id, spec.credential.kind] as const),
+);
+
+/**
+ * The credential kind of a registry provider, or undefined for providers not in
+ * the registry (e.g. user-defined custom providers).
+ */
+export function providerCredentialKind(
+  providerId: string,
+): ProviderCredentialKind | undefined {
+  return CREDENTIAL_KIND_BY_PROVIDER.get(providerId);
+}
+
 export interface DetectedCredentialCandidate {
   envVar: string;
   value: string;
