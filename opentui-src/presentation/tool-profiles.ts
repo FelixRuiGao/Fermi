@@ -177,6 +177,12 @@ export const TOOL_PROFILES: Record<string, ToolDisplayProfile> = {
     text: () => "",
     inlineResult: false,
   },
+  skill: {
+    category: "observe",
+    displayName: "Skill",
+    text: (args) => str(args.name),
+    inlineResult: false,
+  },
   await_event: {
     category: "orchestrate",
     displayName: "Wait",
