@@ -11,6 +11,7 @@ Release notes. A missing or empty section fails CI.
 
 - Changed: writing or editing the plan/todo file now appears in the conversation as a single `Update Todos` step instead of being dropped from the transcript entirely. Previously these operations were hidden (only the Todos panel reflected them), so when the file ever landed in the wrong place there was no on-screen sign anything had happened. The step suppresses the path, line-count suffix, and inline diff, since the Todos panel already shows the actual checkpoints. The relabel applies as soon as the target path is known while the call is still streaming, so a plan write is shown as `Update Todos` from the start and never briefly flashes as a regular `Write`/`Edit` with a diff before correcting itself. Detection is by the exact session plan-file path, so a file merely named `plan.md` elsewhere is unaffected.
 - Changed: the welcome screen wordmark now renders in your theme's accent color (and follows a custom accent if you've set one), instead of a fixed blue-violet. It also shows at every terminal width — previously it was hidden on terminals narrower than 72 columns.
+- Changed: Fermi now replies in the language you write in, matching your most recent message, instead of defaulting to English. Code, commands, identifiers, file paths, and established technical terms are kept as-is — only the surrounding prose follows your language.
 
 ## v0.3.13
 
