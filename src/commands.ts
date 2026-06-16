@@ -1649,6 +1649,43 @@ async function cmdAutoUpdate(ctx: CommandContext, args: string): Promise<void> {
 }
 
 // ------------------------------------------------------------------
+// /autocopy — toggle copy-on-select (auto-copy a drag selection)
+// ------------------------------------------------------------------
+
+function autoCopyOptions(_ctx: CommandOptionsContext): CommandOption[] {
+  const current = loadGlobalSettings().copy_on_select !== false;
+  return [
+    { label: current ? "On (current)" : "On", value: "on" },
+    { label: current ? "Off" : "Off (current)", value: "off" },
+  ];
+}
+
+async function cmdAutoCopy(ctx: CommandContext, args: string): Promise<void> {
+  const hint = ctx.showHint ?? ctx.showMessage;
+  let choice = args.trim().toLowerCase();
+
+  if (!choice && ctx.promptCommandPicker) {
+    const picked = await ctx.promptCommandPicker(
+      autoCopyOptions({ session: ctx.session, store: ctx.store }),
+    );
+    if (!picked) return;
+    choice = picked.value;
+  }
+
+  if (choice === "on" || choice === "off") {
+    const enabled = choice === "on";
+    persistSettingsPatch({ copy_on_select: enabled }, ctx.fermiHomeDir);
+    // Magic message — the TUI intercepts and flips React state without restart.
+    ctx.showMessage(`__copy_on_select__:${enabled ? "on" : "off"}`);
+    hint(`Copy-on-select: ${enabled ? "ON" : "OFF"}`);
+    return;
+  }
+
+  const current = loadGlobalSettings().copy_on_select !== false;
+  ctx.showMessage(`Copy-on-select is ${current ? "ON" : "OFF"}.\nUsage: /autocopy on | off`);
+}
+
+// ------------------------------------------------------------------
 // /rename — set a custom session title
 // ------------------------------------------------------------------
 
@@ -2245,6 +2282,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/usage", description: "Show session token usage", handler: cmdUsage, aliases: ["/context"] });
   registry.register({ name: "/stat", description: "Show all-time token statistics", handler: cmdStat });
   registry.register({ name: "/autoupdate", description: "Toggle automatic update checks", handler: cmdAutoUpdate });
+  registry.register({ name: "/autocopy", description: "Toggle copy-on-select (auto-copy a text selection)", handler: cmdAutoCopy });
   registry.register({ name: "/review", description: "Review code changes", handler: cmdReview });
   return registry;
 }

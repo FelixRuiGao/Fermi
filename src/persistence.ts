@@ -605,6 +605,8 @@ export interface FermiSettings {
   theme_mode?: "auto" | "light" | "dark";
   /** Inline write/edit diff display mode. Default: "compact". */
   diff_display?: "compact" | "full";
+  /** Copy-on-select: auto-copy a drag selection to the clipboard. Default: true. */
+  copy_on_select?: boolean;
 
   // -- Permissions --
   /** Default permission mode: "read_only" | "reversible" | "yolo". */

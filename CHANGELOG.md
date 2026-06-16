@@ -9,7 +9,11 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Added: `/key` command to manage provider API keys without editing files by hand. Pick a provider endpoint (group providers like Kimi/GLM/Qwen/MiniMax drill down to each region, which has its own key) and replace, remove, or import a detected key. Covers API-key and managed providers plus custom endpoints; OAuth providers stay on `/codex` and `/copilot`. Changes apply to the running session immediately. Removing a key whose value also comes from your shell environment now warns that it will reappear on next launch.
+- Changed: `fermi init` now configures the API key before listing models — after you pick a provider endpoint, it asks whether to keep the saved key or replace it, then shows that endpoint's models.
+- Changed: `fermi init` now supports Esc (and Ctrl+C) to go back exactly one step at any prompt; backing out of the first step cancels setup. The back hint is shown in each picker's help line.
 - Fixed: the agent sometimes wrote its plan/todo file to the project root instead of the session artifacts directory, so the TUI Todos panel stayed empty and checkpoints never reached you. The system prompt named the bare filename `plan.md` several times up front (with no path) but only stated the actual location once, far away in the tool docs — so the model defaulted to the working directory. The planning step no longer names the file at all (it just says to externalize multi-phase work as a live todo list), and the Plan File section now leads with an imperative to create it at the artifacts path, calling out that a `plan.md` written anywhere else is invisible to the TUI.
+- Added: text you select with the mouse now auto-copies to the clipboard when you finish the drag (copy-on-select), with a brief "Copied" toast in the top-right corner; the highlight stays so you can re-copy. Toggle it with `/autocopy` (default on); Cmd/Ctrl+C still works too.
 
 ## v0.3.12
 

@@ -85,6 +85,8 @@ export interface OpenTuiRuntime {
   themeModePref: "auto" | "light" | "dark";
   /** Persisted global preference for inline write/edit diff display. */
   diffDisplay: "compact" | "full";
+  /** Persisted global preference for copy-on-select. Default: true. */
+  copyOnSelect: boolean;
 }
 
 export async function bootstrapOpenTuiRuntime(opts?: {
@@ -273,6 +275,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
 
   const themeModePref: "auto" | "light" | "dark" = settings.theme_mode ?? "auto";
   const diffDisplay: "compact" | "full" = globalSettings.diff_display === "full" ? "full" : "compact";
+  const copyOnSelect: boolean = globalSettings.copy_on_select !== false;
 
   return {
     session,
@@ -281,5 +284,6 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     verbose,
     themeModePref,
     diffDisplay,
+    copyOnSelect,
   };
 }

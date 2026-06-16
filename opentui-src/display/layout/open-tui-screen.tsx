@@ -46,6 +46,8 @@ import { HorizontalTabBar } from "./horizontal-tab-bar.js";
 import { shortenPath } from "../utils/format.js";
 import { UpdateToast } from "../overlays/update-toast.js";
 import { McpToast } from "../overlays/mcp-toast.js";
+import { CopyToast } from "../overlays/copy-toast.js";
+import { ToastStack } from "../overlays/toast-frame.js";
 import { UsagePanel } from "../overlays/usage-panel.js";
 import { StatPanel } from "../overlays/stat-panel.js";
 
@@ -151,6 +153,9 @@ export interface OpenTuiScreenProps {
   /** MCP connection failures — null means hidden. Dismissal (manual via Ctrl+L
    * or auto-clear on recovery) is owned by the app; the screen just renders. */
   mcpFailures?: import("../overlays/mcp-toast.js").McpFailure[] | null;
+  /** Copy-on-select toast body — null means hidden. The ~2s auto-dismiss
+   * timer is owned by the app; the screen just renders. */
+  copyToast?: string | null;
   /** Called when user clicks "Restart" in the update toast. */
   onUpdateRestart?: () => void;
   /** Called when user dismisses the update toast. */
@@ -258,6 +263,7 @@ export function OpenTuiScreen({
   onUpdateRestart,
   onUpdateDismiss,
   mcpFailures,
+  copyToast,
   usagePanel,
   usageData,
   onUsageDismiss,
@@ -544,24 +550,23 @@ export function OpenTuiScreen({
       {inputAreaElement}
       {overlaysBlock}
 
-      {updateToast && onUpdateRestart && onUpdateDismiss ? (
-        <UpdateToast
-          phase={updateToast.phase}
-          version={updateToast.version}
-          theme={theme}
-          terminalWidth={terminal.width}
-          onRestart={onUpdateRestart}
-          onDismiss={onUpdateDismiss}
-        />
-      ) : null}
+      <ToastStack terminalWidth={terminal.width}>
+        {updateToast && onUpdateRestart && onUpdateDismiss ? (
+          <UpdateToast
+            phase={updateToast.phase}
+            version={updateToast.version}
+            theme={theme}
+            onRestart={onUpdateRestart}
+            onDismiss={onUpdateDismiss}
+          />
+        ) : null}
 
-      {mcpFailures && mcpFailures.length > 0 ? (
-        <McpToast
-          failures={mcpFailures}
-          theme={theme}
-          terminalWidth={terminal.width}
-        />
-      ) : null}
+        {mcpFailures && mcpFailures.length > 0 ? (
+          <McpToast failures={mcpFailures} theme={theme} />
+        ) : null}
+
+        {copyToast ? <CopyToast message={copyToast} theme={theme} /> : null}
+      </ToastStack>
 
       {usagePanel && onUsageDismiss ? (
         <UsagePanel
