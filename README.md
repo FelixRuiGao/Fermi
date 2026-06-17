@@ -10,7 +10,7 @@
   English | <a href="./README.zh-CN.md">中文</a>
 </p>
 <p align="center">
-  <a href="https://github.com/FelixRuiGao/Fermi/releases/latest"><img alt="Release" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FFelixRuiGao%2FFermi%2Fmain%2Fpackage.json&amp;label=release&amp;query=%24.version&amp;color=ea7233&amp;prefix=v&amp;style=flat-square" /></a>
+  <a href="https://github.com/FelixRuiGao/Fermi/releases/latest"><img alt="Release" src="https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/FelixRuiGao/Fermi/main/package.json&label=release&query=$.version&color=ea7233&prefix=v&style=flat-square" /></a>
   <a href="https://felixruigao.github.io/Fermi/"><img alt="Docs" src="https://img.shields.io/badge/docs-website-4b4bf0?style=flat-square" /></a>
   <a href="https://github.com/anomalyco/opentui"><img alt="OpenTUI" src="https://img.shields.io/badge/built%20on-OpenTUI-7c3aed?style=flat-square" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" /></a>
