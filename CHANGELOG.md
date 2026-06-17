@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+- Fixed: in the terminal input box, clicking into the trailing cell of a double-width grapheme (CJK/emoji) no longer leaves the terminal cursor anchored inside that glyph. Fermi now snaps the terminal cursor used by Ghostty/IME to the grapheme boundary, preventing Chinese IME preedit/candidate UI from overlapping with text that should be covered.
+
 ## v0.3.14
 
 - Changed: writing or editing the plan/todo file now appears in the conversation as a single `Update Todos` step instead of being dropped from the transcript entirely. Previously these operations were hidden (only the Todos panel reflected them), so when the file ever landed in the wrong place there was no on-screen sign anything had happened. The step suppresses the path, line-count suffix, and inline diff, since the Todos panel already shows the actual checkpoints. The relabel applies as soon as the target path is known while the call is still streaming, so a plan write is shown as `Update Todos` from the start and never briefly flashes as a regular `Write`/`Edit` with a diff before correcting itself. Detection is by the exact session plan-file path, so a file merely named `plan.md` elsewhere is unaffected. If such a write or edit fails, the error reason stays visible rather than being suppressed along with the diff.

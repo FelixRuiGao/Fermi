@@ -10,6 +10,43 @@ import type { SyntaxStyle } from "../syntax-style.js"
 
 const BrandedEditBufferRenderable: unique symbol = Symbol.for("@opentui/core/EditBufferRenderable")
 
+type SegmenterLike = {
+  segment(input: string): Iterable<{ segment: string }>
+}
+
+type IntlWithOptionalSegmenter = typeof Intl & {
+  Segmenter?: new (locale?: string, options?: { granularity?: "grapheme" }) => SegmenterLike
+}
+
+const graphemeSegmenter = (() => {
+  const Segmenter = (Intl as IntlWithOptionalSegmenter).Segmenter
+  return Segmenter ? new Segmenter(undefined, { granularity: "grapheme" }) : null
+})()
+
+function splitGraphemes(text: string): string[] {
+  if (!text) return []
+  if (!graphemeSegmenter) return Array.from(text)
+  return Array.from(graphemeSegmenter.segment(text), (part) => part.segment)
+}
+
+function normalizeDisplayColumnToGraphemeBoundary(text: string, col: number): number {
+  if (col <= 0 || !text) return col
+
+  let currentCol = 0
+  for (const grapheme of splitGraphemes(text)) {
+    const width = Bun.stringWidth(grapheme)
+    const nextCol = currentCol + Math.max(0, width)
+
+    if (col > currentCol && col < nextCol) {
+      return currentCol
+    }
+
+    currentCol = nextCol
+  }
+
+  return col
+}
+
 export type EditorCapture = "escape" | "navigate" | "submit" | "tab"
 
 export interface EditorTraits {
@@ -1062,8 +1099,9 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     const visualCursor = this.editorView.getVisualCursor()
     const screenX = this._screenX
     const screenY = this._screenY
+    const normalizedVisualCol = this.normalizeCursorVisualColumn(visualCursor)
 
-    const cursorX = screenX + visualCursor.visualCol + 1 // +1 for 1-based terminal coords
+    const cursorX = screenX + normalizedVisualCol + 1 // +1 for 1-based terminal coords
     const cursorY = screenY + visualCursor.visualRow + 1 // +1 for 1-based terminal coords
 
     // Hide cursor if it's outside the textarea's own bounds.
@@ -1091,6 +1129,17 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
 
     this._ctx.setCursorPosition(cursorX, cursorY, true)
     this._ctx.setCursorStyle({ ...this._cursorStyle, color: this._cursorColor })
+  }
+
+  private normalizeCursorVisualColumn(visualCursor: VisualCursor): number {
+    const line = this.plainText.split("\n")[visualCursor.logicalRow] ?? ""
+    const normalizedLogicalCol = normalizeDisplayColumnToGraphemeBoundary(line, visualCursor.logicalCol)
+    if (normalizedLogicalCol === visualCursor.logicalCol) {
+      return visualCursor.visualCol
+    }
+
+    const delta = visualCursor.logicalCol - normalizedLogicalCol
+    return Math.max(0, visualCursor.visualCol - delta)
   }
 
   public focus(): void {
