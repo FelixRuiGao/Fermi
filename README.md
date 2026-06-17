@@ -67,7 +67,7 @@ Three layers prevent context from ever silently overflowing:
 
 ```
 Context usage ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-               ▲ 60%            ▲ 80%       ▲ 85%    ▲ 90%
+               ▲ 50%            ▲ 75%       ▲ 85%    ▲ 90%
                hint L1          hint L2     compact   compact
                (nudge)          (urgent)   (before    (mid-
                                             turn)     turn)
@@ -94,7 +94,7 @@ The agent spawns parallel workers with their own context windows:
 spawn(id="auth-check", template="explorer", mode="oneshot", model_level="low", task="...")
 ```
 
-- **Templates:** `explorer` (read-only), `executor` (task-focused), `reviewer` (verification)
+- **Templates:** `explorer` (read-only), `worker` (file + shell access), `reviewer` (fresh-eyes verification)
 - **Model tiers:** Assign high/medium/low models via `/tier` — save cost on simple tasks
 - **Modes:** `oneshot` (run once, return result) or `persistent` (stays alive, receives messages)
 
@@ -109,7 +109,7 @@ spawn(id="auth-check", template="explorer", mode="oneshot", model_level="low", t
 
 ## Providers
 
-Anthropic · OpenAI · GitHub Copilot · DeepSeek · Kimi · MiniMax · GLM · Xiaomi · OpenRouter · Ollama · oMLX · LM Studio
+Anthropic · OpenAI · GitHub Copilot · DeepSeek · Kimi · MiniMax · GLM · Qwen · Xiaomi · OpenRouter · Ollama · oMLX · LM Studio
 
 Cloud or local, your choice. Switch at runtime with `/model`. `fermi init` handles setup.
 
@@ -117,7 +117,7 @@ Cloud or local, your choice. Switch at runtime with `/model`. `fermi init` handl
 
 ## Key Commands
 
-`/model` switch model · `/summarize` compress context · `/compact` full reset · `/rewind` undo turns + files · `/permission` safety mode · `/tier` sub-agent models · `/session` resume · `/fork` branch session · `/skills` manage skills · `/mcp` MCP tools
+`/model` switch model · `/key` manage API keys · `/summarize` compress context · `/compact` full reset · `/rewind` undo turns + files · `/permission` safety mode · `/tier` sub-agent models · `/session` resume · `/fork` branch session · `/skills` manage skills · `/mcp` MCP tools
 
 [Full command reference →](https://felixruigao.github.io/Fermi/guide/commands)
 
