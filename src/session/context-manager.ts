@@ -20,14 +20,14 @@ export type HintState = "none" | "level1_sent" | "level2_sent";
 function HINT_LEVEL1_PROMPT(pct: string, level2Pct: string): string {
   return `[SYSTEM: Context usage has reached ${pct}. This is the first-level reminder — a second will arrive at ${level2Pct}. No immediate action is required:
 - If the task is mostly done, you may simply ignore this notice.
-- If a large part of the task remains and the user has NOT already stated a summarization policy (in AGENTS.md or earlier in this conversation), consider asking the user (the \`ask\` tool fits well): (1) whether you may summarize older context with \`summarize_context\` as the session grows, and (2) whether you may choose the timing yourself. The user may not be familiar with this mechanism — briefly explain that summarizing turns already-consumed tool outputs and finished exploration into shorter summaries while keeping their own messages intact, and mention they can also do it manually anytime with /summarize.
-Never summarize on your own without granted or standing permission. After handling this notice, continue your work.]`;
+- Otherwise, if you've reached a natural breakpoint, this is a good moment to summarize older context with \`summarize_context\` — fold already-consumed tool outputs and finished exploration into shorter summaries, keeping anything later steps may need. The user's own messages are never the target, and any summarization preference the user has stated still applies.
+After handling this notice, continue your work.]`;
 }
 
 function HINT_LEVEL2_PROMPT(pct: string): string {
   return `[SYSTEM: Context usage has reached ${pct} — second-level reminder. When the window fills up, auto-compact will rewrite the whole conversation into a single summary, which is far more lossy than targeted summarization.
-- If the remaining work is small, just finish it — no need to ask anything.
-- If substantial work remains: with permission already granted (in this conversation or AGENTS.md), now is a good time to act — inspect with \`show_context\`, then \`summarize_context\` consumed tool results, finished exploration, and completed subtasks. Without permission, you are advised to ask the user for a summarization policy now — but if they previously declined, respect that and do not ask again.]`;
+- If the remaining work is small, just finish it.
+- If substantial work remains, now is a good time to act: inspect with \`show_context\`, then \`summarize_context\` consumed tool results, finished exploration, and completed subtasks. Preserve anything later steps may reference — don't gut tool results. The user's own messages are off-limits, and any summarization preference the user has stated still applies.]`;
 }
 
 export interface ContextManagerDeps {

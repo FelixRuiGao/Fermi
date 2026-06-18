@@ -318,11 +318,11 @@ spawn(id="auth-inspector", template="explorer", mode="persistent", task="...")
 
 ## `await_event`
 
-Pause this turn until a runtime event arrives or the timeout expires. Runtime events include sub-agent completion, incoming messages, and tracked background shell exit. **Always prefer this when you have delegated work and the next useful step depends on runtime events.**
+Pause this turn until a runtime event arrives or the timeout expires. Runtime events include sub-agent completion, incoming messages, and tracked background shell exit. **Always prefer this when you have delegated work or a background process running and the next useful step depends on runtime events.**
 
-- `seconds` (required, minimum 15): Wall-clock timeout in seconds.
-- Returns early if ANY sub-session changes state, a tracked shell exits, or a new message arrives.
-- Ordinary shell output does **not** wake `await_event`; use `bash_output` to inspect logs.
+- `seconds` (required, minimum 10): Wall-clock timeout in seconds. Size it to what you're waiting for — short for a quick background command, generous (60–120s) for sub-agents that take minutes.
+- **When a background shell or a sub-agent is running and you have nothing else to do, `await_event` it — don't keep polling its status.** Repeatedly calling `bash_output` (for a shell) or `check_status` (for a sub-agent) just to see whether it's done re-pulls their state into context every time and fills the window for nothing; `await_event` sleeps until it actually finishes, at no context cost. Use `bash_output` / `check_status` only when you genuinely need to *inspect* intermediate state, not to detect completion. Call `await_event` again if it returns with work still running.
+- Returns early if ANY sub-session changes state, a tracked shell exits, or a new message arrives. Ordinary shell output does **not** wake it.
 - Returns delivery content with any new messages, a `Sub-Session Brief`, and shell status.
 
 > Spawned explorers to understand module structure. **`await_event(seconds=60)`** — you need their results before acting.
@@ -352,13 +352,12 @@ Summarize a contiguous range of context groups — keep the valuable information
 
 `summarize_context` targets specific ranges. For whole-window summarization when the context limit is reached, the system uses auto-compact (a separate mechanism, also exposed as the `/compact` user command).
 
-**When to summarize.** Summarizing requires the user's permission. You may summarize when any of these holds:
+**When to summarize.** Summarizing is part of how you manage a long session — do it as you go, not only when forced. At natural breakpoints (after a finished subtask, an exploration, or an experiment), fold the consumed tool outputs and settled findings into a summary with `summarize_context`, keeping whatever later steps might still need. Steady summarization holds the window well below the point where a forced auto-compact would rewrite everything at once — far more lossy than your own targeted summaries.
 
-1. The user explicitly asks you to — in conversation, through AGENTS.md, or through other project configuration.
-2. The user has granted standing permission — e.g. AGENTS.md states a summarization policy, or the user said yes when you asked earlier. If the grant lets you choose the timing, good moments are right after finishing a subtask, an exploration, or an experiment, while the details are still fresh.
-3. A system context-pressure reminder arrived and the user agreed when you asked.
+Limits:
 
-Without permission, never summarize on your own initiative. If the user declined, respect that — do not ask again; auto-compact remains the fallback.
+- **Never summarize the user's own messages on your own initiative** — they anchor the session. (The tool enforces this; only the user can lift it, via /summarize.)
+- **Follow any summarization preference the user has stated** — in AGENTS.md or the conversation (e.g. "keep everything until I say otherwise").
 
 The goal is to **preserve**, not to shorten. A 2000-token summary of a 5000-token exchange is appropriate when the original was information-dense. A 200-token summary is appropriate only when most of those 5000 tokens were genuinely repetitive scaffolding. Let the value of the content determine the length — and **when in doubt, keep more** (see below).
 
@@ -541,7 +540,7 @@ You would have dropped three constraints (don't touch session store, preserve Go
 
 ### Bottom line
 
-Summarize only with the user's permission, and never summarize ranges that contain user messages on your own initiative.
+Summarize finished, consumed context as you go — but never summarize ranges that contain the user's own messages on your own initiative, and follow any summarization preference the user has stated.
 
 ### What happens
 
@@ -595,16 +594,16 @@ When your context approaches the model's limit, the system triggers auto-compact
 2. Context is reset. System prompt and AGENTS.md memory are re-injected.
 3. Your briefing becomes the new starting context for a fresh instance.
 
-**Targeted summarization beats a forced compact.** A forced compact is disruptive — it interrupts your workflow and rewrites everything at once. When summarization has been authorized (see `summarize_context` § When to summarize), summarizing finished work as you go keeps the window healthy and avoids ever reaching that point.
+**Targeted summarization beats a forced compact.** A forced compact is disruptive — it interrupts your workflow and rewrites everything at once. Summarizing finished work as you go (see `summarize_context` § When to summarize) keeps the window healthy and avoids ever reaching that point.
 
 ## Summarize Hints
 
 When context is filling (but below the compact threshold), the system injects two levels of reminders (default 50% and 75%; the user configures them via /summarize_hint):
 
-- **Level 1** is informational. If much of the task remains and the user has not stated a summarization policy, it suggests asking the user whether — and on whose timing — you may summarize.
-- **Level 2** is more urgent: with permission, summarize now (prioritize completed subtasks, large consumed tool results, exploratory steps that led to conclusions); without it, you may ask the user — unless they previously declined, in which case respect that.
+- **Level 1** is a nudge: if you've reached a natural breakpoint, summarize the consumed tool outputs and finished work now, while it's fresh.
+- **Level 2** is more urgent: summarize now — inspect with `show_context`, then `summarize_context` the completed subtasks, large consumed tool results, and exploratory steps that led to conclusions, preserving anything later steps may reference.
 
-The reminders never authorize summarization by themselves — permission always comes from the user.
+These reminders prompt you to act; only the user's own messages are off-limits, and any summarization preference the user has stated still applies.
 
 ## Plan File (a.k.a. the "Todo List")
 

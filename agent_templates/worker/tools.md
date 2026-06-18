@@ -219,8 +219,8 @@ Fetch content from a URL and return it as readable text. Uses Jina Reader first,
 
 `await_event(seconds)`
 
-Pause until a new runtime event arrives or the timeout expires.
+Pause until a runtime event arrives or the timeout expires.
 
-- `seconds` (required, minimum 15): Wall-clock timeout in seconds.
-- Returns early when a new message arrives.
-- After sending a request to a persistent sub-agent, call `await_event` — do not loop `send`.
+- `seconds` (required, minimum 10): Wall-clock timeout in seconds. Size it to what you're waiting for — short for a quick background command, longer for one that runs minutes.
+- **When a background command you started is running and you have nothing else to do, `await_event` it — don't keep polling `bash_output`.** Repeatedly reading `bash_output` just to see whether it's done re-pulls its output into context every time and fills your window for nothing; `await_event` sleeps until the shell exits, at no context cost. Use `bash_output` only to *inspect* intermediate output, not to detect completion. Call `await_event` again if it returns with the shell still running.
+- Returns early when a tracked background shell exits or a new message arrives. Ordinary shell output does **not** wake it.

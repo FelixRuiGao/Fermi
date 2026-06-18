@@ -77,8 +77,7 @@ Fetch content from a URL and return it as readable text. Uses Jina Reader first,
 
 `await_event(seconds)`
 
-Pause until a new runtime event arrives or the timeout expires.
+Pause until a new runtime event arrives (e.g. an incoming message) or the timeout expires.
 
-- `seconds` (required, minimum 15): Wall-clock timeout in seconds.
+- `seconds` (required, minimum 10): Wall-clock timeout in seconds.
 - Returns early when a new message arrives.
-- After sending a request to a persistent sub-agent, call `await_event` — do not loop `send`.
