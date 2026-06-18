@@ -1,6 +1,7 @@
 import { existsSync, openSync, writeSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { format as formatLog } from "node:util";
 
 import {
   getFermiAssistantRenderer,
@@ -11,6 +12,18 @@ import {
   writeFermiOpenTuiDiag,
 } from "./forked/core/lib/diagnostic.js";
 import type { OpenTuiRuntime } from "./bootstrap.js";
+
+// Write straight to the real stderr fd (2), bypassing both the
+// process.stderr.write patch and the console.* redirect installed during
+// bootstrap. Used for fatal errors that must still reach the user's terminal
+// after the TUI has been torn down.
+function writeRealStderr(msg: string): void {
+  try {
+    writeSync(2, Buffer.from(msg, "utf8"));
+  } catch {
+    /* nothing else we can do */
+  }
+}
 
 interface ParsedArgs {
   templates?: string;
@@ -156,6 +169,24 @@ export async function launchTui(): Promise<void> {
     return true;
   }) as typeof process.stderr.write;
 
+  // Bun implements console.* natively, writing straight to the underlying fd —
+  // these do NOT route through the process.stderr.write patch above, so any
+  // first-party console.error/log/warn would paint over the TUI. (OpenTUI's own
+  // console capture is off via consoleMode: "disabled".) Redirect every console
+  // method into the same stderr.log so console output never corrupts the display.
+  const redirectConsole = (level: string) => (...args: any[]): void => {
+    try {
+      writeSync(stderrLogFd, Buffer.from(`[${level}] ${formatLog(...args)}\n`, "utf8"));
+    } catch {
+      /* best effort */
+    }
+  };
+  console.log = redirectConsole("log");
+  console.info = redirectConsole("info");
+  console.warn = redirectConsole("warn");
+  console.error = redirectConsole("error");
+  console.debug = redirectConsole("debug");
+
   const useThread = resolveRendererThreadSetting();
   writeFermiOpenTuiDiag("main.bootstrap", {
     verbose: args.verbose,
@@ -234,7 +265,7 @@ export async function launchTui(): Promise<void> {
     });
     killShellsSync();
     cleanupTerminalAfterFatal();
-    console.error("Fatal OpenTUI error:", err);
+    writeRealStderr(`Fatal OpenTUI error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
     process.exit(1);
   };
 
@@ -522,7 +553,7 @@ if (isDirectEntry()) {
       writeFermiOpenTuiDiag("main.catch", {
         error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : String(err),
       });
-      console.error("Fatal OpenTUI error:", err);
+      writeRealStderr(`Fatal OpenTUI error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
       process.exit(1);
     });
 }
