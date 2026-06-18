@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.3.15
+
 - Changed: Fermi now summarizes finished, already-consumed context (large tool outputs, completed exploration, settled findings) on its own initiative as a long session grows, instead of holding off until you explicitly authorize it. This keeps the context window healthy and makes a forced, more-lossy auto-compact far less likely on long tasks. Your own messages are never summarized on Fermi's initiative, an explicit instruction not to summarize (in AGENTS.md or the conversation) is still honored, and summaries remain reversible by rewind.
 - Changed: Fermi now leans on `await_event` to wait for a background command or sub-agent to finish, instead of repeatedly polling its output/status — which used to refill the context window with redundant re-reads and bring on the context limit sooner. The minimum `await_event` timeout was also lowered from 15s to 10s so short background waits don't overshoot.
 - Fixed: after an automatic context compaction, the self-briefing the model writes to resume work is now more reliable — especially when compaction triggers right after you send a new message (the common boundary case). Both compaction prompts now end with an explicit "what to do first" instruction and both forbid the model from starting the actual work while it writes the briefing; previously only the mid-task variant did either, so a boundary compaction could hand the resumed instance a vague summary with no clear next step (and your just-typed request had already been folded into that summary). The two prompts were also resynced so they differ only where they genuinely must — whether a tool call was interrupted mid-step.
