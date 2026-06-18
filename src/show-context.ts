@@ -7,7 +7,7 @@
  * messages, preserving prompt cache.
  */
 
-import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
+import { countTokens } from "./token-count.js";
 import type { LogEntry } from "./log-entry.js";
 import { buildActiveContextView, type ActiveContextGroup } from "./active-context.js";
 
@@ -61,7 +61,7 @@ export function estimateEntryTokens(entry: LogEntry): number {
       text = serializeContent(entry.content);
       break;
   }
-  return gptEncode(text).length;
+  return countTokens(text);
 }
 
 function serializeContent(content: unknown): string {
@@ -266,7 +266,7 @@ function formatToolResultBrief(toolName: string, resultStr: string): string {
     case "bash_output": {
       const exitMatch = resultStr.match(/exit (?:code |status )?(\d+)/i);
       const exitCode = exitMatch ? exitMatch[1] : null;
-      const size = formatTokens(gptEncode(resultStr).length);
+      const size = formatTokens(countTokens(resultStr));
       return exitCode !== null ? `exit ${exitCode}, ${size} output` : `${size} output`;
     }
     case "grep": {
@@ -317,7 +317,7 @@ function formatToolResultBrief(toolName: string, resultStr: string): string {
       return brief.length > 40 ? `${brief.slice(0, 40)}...` : brief;
     }
     default:
-      return `${formatTokens(gptEncode(resultStr).length)} output`;
+      return `${formatTokens(countTokens(resultStr))} output`;
   }
 }
 

@@ -196,7 +196,7 @@ import {
   type ContextThresholds,
   validateSummarizeHintLevels,
 } from "./settings.js";
-import { encode as gptEncode } from "gpt-tokenizer/model/gpt-5";
+import { countTokens } from "./token-count.js";
 // ------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------
@@ -429,7 +429,7 @@ export class Session {
   // repeated usage-panel renders don't rescan the log.
   private _usageStatsCache: { logLen: number; stats: UsageStats } | null = null;
 
-  // Per-section gptEncode estimates of the system prompt. Invalidated only
+  // Per-section token-count estimates of the system prompt. Invalidated only
   // when the prompt is reassembled (_reloadPromptAndTools / _resetTransientState).
   private _promptSectionEstimates: { systemPrompt: number; tools: number; agentsMd: number; skills: number } | null = null;
 
@@ -3202,29 +3202,29 @@ export class Session {
     let estToolDocs = 0;
     if (recipe) {
       const layers = getPromptLayers(recipe);
-      estSystemPrompt = gptEncode(layers.roleBody).length + gptEncode(layers.knowledge).length;
-      estToolDocs = gptEncode(layers.toolDocs).length;
+      estSystemPrompt = countTokens(layers.roleBody) + countTokens(layers.knowledge);
+      estToolDocs = countTokens(layers.toolDocs);
     } else {
-      estSystemPrompt = gptEncode(this.primaryAgent.systemPrompt).length;
+      estSystemPrompt = countTokens(this.primaryAgent.systemPrompt);
     }
 
     // Tool schemas (ToolDef[] serialized as provider would)
     let estToolSchemas = 0;
     for (const tool of this.primaryAgent.tools) {
       if (tool.name === "skill") continue; // counted separately
-      estToolSchemas += gptEncode(
+      estToolSchemas += countTokens(
         JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }),
-      ).length;
+      );
     }
 
     // AGENTS.md
     const agentsMdText = readAgentsMemory(this._projectRoot);
-    const estAgentsMd = agentsMdText ? gptEncode(agentsMdText).length : 0;
+    const estAgentsMd = agentsMdText ? countTokens(agentsMdText) : 0;
 
     // Skill tool (description embeds the skill listing)
     const skillDef = buildSkillToolDef(this._skills);
     const estSkills = skillDef
-      ? gptEncode(JSON.stringify({ name: skillDef.name, description: skillDef.description, parameters: skillDef.parameters })).length
+      ? countTokens(JSON.stringify({ name: skillDef.name, description: skillDef.description, parameters: skillDef.parameters }))
       : 0;
 
     // Tools = tool docs (inline in prompt) + tool schemas (API tools[])
@@ -4663,7 +4663,7 @@ export class Session {
     if (this._capabilities.includeSpawnTool && !this._compactInProgress) {
       const { budget } = this._contextBudgetInfo();
       if (budget > 0) {
-        const estimatedTokens = this._lastInputTokens + gptEncode(userInput).length;
+        const estimatedTokens = this._lastInputTokens + countTokens(userInput);
         const beforeTurnRatio = this._thresholds.compact_before_turn / 100;
         if (estimatedTokens > beforeTurnRatio * budget) {
           const logLenBefore = this._log.length;

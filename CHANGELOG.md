@@ -10,6 +10,7 @@ Release notes. A missing or empty section fails CI.
 ## Unreleased
 
 - Changed: Fermi now defaults to brevity in its replies — it skips preamble/postamble (restating the request, "here's what I'll do next," recapping what it just did) while still posting progress notes on long-running work and speaking up with substantive objections. It also no longer stalls for confirmation it doesn't need on investigative tasks like analyzing a problem or diagnosing a bug, where the goal is to reach a conclusion rather than change anything.
+- Fixed: `show_context` (and the in-app token/usage estimates) no longer crash with "Disallowed special token found" when the conversation contains literal special-token strings — e.g. `<|im_start|>`/`<|im_end|>` markers leaking in from a Qwen chat template via shell output or read files. Token counts now treat such substrings as ordinary text.
 - Fixed: in the terminal input box, clicking into the trailing cell of a double-width grapheme (CJK/emoji) no longer leaves the terminal cursor anchored inside that glyph. Fermi now snaps the terminal cursor used by Ghostty/IME to the grapheme boundary, preventing Chinese IME preedit/candidate UI from overlapping with text that should be covered.
 
 ## v0.3.14
