@@ -170,18 +170,18 @@ export function InitWizard() {
           <p style={{ marginBottom: 12, opacity: 0.7 }}>
             Select a provider to get started:
           </p>
-          <div className="provider-list">
+          <div className="option-list">
             {providers
               .filter((p) => !p.isLocal)
               .map((p) => (
                 <div
                   key={p.id}
-                  className={`provider-item ${p.configured ? "configured" : ""}`}
+                  className={`option-item ${p.configured ? "configured" : ""}`}
                   onClick={() => handleProviderSelect(p)}
                 >
                   <div>
-                    <div className="provider-name">{p.name}</div>
-                    <div className="provider-status">
+                    <div className="option-name">{p.name}</div>
+                    <div className="option-status">
                       {p.configured ? "✓ Configured" : p.isOAuth ? "Login required" : `${p.envVar}`}
                     </div>
                   </div>
@@ -242,14 +242,14 @@ export function InitWizard() {
       {step === "thinking" && (
         <div className="init-step">
           <p style={{ marginBottom: 8, opacity: 0.7 }}>Thinking level:</p>
-          <div className="provider-list">
+          <div className="option-list">
             {[...(thinkingLevels.includes("off") ? [] : ["off"]), ...thinkingLevels].map((level) => (
               <div
                 key={level}
-                className="provider-item"
+                className="option-item"
                 onClick={() => handleThinkingSelect(level)}
               >
-                <span className="provider-name">{level}</span>
+                <span className="option-name">{level}</span>
               </div>
             ))}
           </div>
@@ -261,16 +261,16 @@ export function InitWizard() {
           <p style={{ marginBottom: 8, opacity: 0.7 }}>
             Web search API key (recommended for better results):
           </p>
-          <div className="provider-list">
+          <div className="option-list">
             {searchOptions.map((opt) => (
               <div
                 key={opt.env}
-                className={`provider-item ${opt.configured ? "configured" : ""} ${selectedSearch === opt.env ? "configured" : ""}`}
+                className={`option-item ${opt.configured ? "configured" : ""} ${selectedSearch === opt.env ? "configured" : ""}`}
                 onClick={() => setSelectedSearch(opt.env)}
               >
                 <div>
-                  <div className="provider-name">{opt.name}</div>
-                  <div className="provider-status">
+                  <div className="option-name">{opt.name}</div>
+                  <div className="option-status">
                     {opt.configured ? "✓ Configured" : `${opt.free} free → ${opt.url}`}
                   </div>
                 </div>

@@ -30,7 +30,21 @@ const webviewConfig = {
   },
   loader: {
     ".css": "text",
+    ".md": "text",
   },
+};
+
+/** Integration test bundle (runs inside the VS Code extension host). */
+const testConfig = {
+  entryPoints: ["src/test/extension.test.ts"],
+  bundle: true,
+  platform: "node",
+  target: "node20",
+  outfile: "out/test/extension.test.cjs",
+  format: "cjs",
+  external: ["vscode", "mocha"],
+  sourcemap: true,
+  minify: false,
 };
 
 if (isWatch) {
@@ -42,6 +56,7 @@ if (isWatch) {
   await Promise.all([
     esbuild.build(extensionConfig),
     esbuild.build(webviewConfig),
+    esbuild.build(testConfig),
   ]);
   console.log("Build complete.");
 }

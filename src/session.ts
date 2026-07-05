@@ -2577,13 +2577,19 @@ export class Session {
   /**
    * Return all skills from disk (both enabled and disabled) for UI display.
    */
-  getAllSkillNames(): { name: string; description: string; enabled: boolean }[] {
+  getAllSkillNames(): { name: string; description: string; enabled: boolean; userInvocable: boolean }[] {
     const allOnDisk = loadSkillsMulti(this._skillRoots);
     return [...allOnDisk.values()].map((s) => ({
       name: s.name,
       description: s.description,
       enabled: !this._disabledSkills.has(s.name),
+      userInvocable: s.userInvocable,
     }));
+  }
+
+  /** Look up one skill's full metadata (used by the server RPC that backs GUI skill slash commands). */
+  getSkillMeta(name: string): SkillMeta | null {
+    return loadSkillsMulti(this._skillRoots).get(name) ?? null;
   }
 
   /** Enable or disable a skill by name. Call reloadSkills() afterwards. */

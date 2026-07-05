@@ -5,8 +5,54 @@
  */
 
 import * as vscode from "vscode";
+import { spawnSync } from "child_process";
+import { basename } from "path";
 import { showDiff } from "./diff-bridge.js";
+import { readGitBranch } from "./git-info.js";
 import type { ExtToWebviewMessage, WebviewToExtMessage } from "./types.js";
+
+function workspaceDir(): string | null {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+}
+
+function git(args: string[], cwd: string): string {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? (result.stdout ?? "") : "";
+}
+
+/** Other branches to review against, deduped like the TUI's /review picker. */
+function gitBranchList(cwd: string): string[] {
+  const current = git(["branch", "--show-current"], cwd).trim();
+  const branches = git(["branch", "-a", "--format=%(refname:short)"], cwd)
+    .split("\n").map((l) => l.trim()).filter(Boolean)
+    .filter((b) => b !== current && !b.endsWith("/HEAD"));
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const b of branches) {
+    const short = b.replace(/^origin\//, "");
+    if (!seen.has(short)) {
+      seen.add(short);
+      deduped.push(b);
+    }
+  }
+  return deduped;
+}
+
+function gitCommitList(cwd: string): Array<{ sha: string; subject: string }> {
+  return git(["log", "--oneline", "-20"], cwd)
+    .split("\n").map((l) => l.trim()).filter(Boolean)
+    .map((line) => {
+      const spaceIdx = line.indexOf(" ");
+      return spaceIdx > 0
+        ? { sha: line.slice(0, spaceIdx), subject: line.slice(spaceIdx + 1) }
+        : { sha: line, subject: "" };
+    });
+}
 
 export interface WebviewBackend {
   request(method: string, params?: unknown): Promise<unknown>;
@@ -103,6 +149,61 @@ export async function handleWebviewMessage(
       }
     }
     respond({ ok: true });
+    return;
+  }
+  if (msg.method === "__ext.searchFiles") {
+    const p = msg.params as { query?: string };
+    const q = (p?.query ?? "").replace(/[{}[\]]/g, "");
+    try {
+      const uris = await vscode.workspace.findFiles(
+        q ? `**/*${q}*` : "**/*",
+        "**/{node_modules,.git,dist,out,build}/**",
+        20,
+      );
+      respond(uris.map((u) => vscode.workspace.asRelativePath(u)).sort((a, b) => a.length - b.length));
+    } catch {
+      respond([]);
+    }
+    return;
+  }
+  if (msg.method === "__ext.gitBranches") {
+    const dir = workspaceDir();
+    respond(dir ? gitBranchList(dir) : []);
+    return;
+  }
+  if (msg.method === "__ext.gitLog") {
+    const dir = workspaceDir();
+    respond(dir ? gitCommitList(dir) : []);
+    return;
+  }
+  if (msg.method === "__ext.getContext") {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    respond({
+      workspaceName: folder ? basename(folder.uri.fsPath) : null,
+      branch: folder ? readGitBranch(folder.uri.fsPath) : null,
+    });
+    return;
+  }
+  if (msg.method === "__ext.openFile") {
+    const p = msg.params as { path: string; line?: number };
+    try {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      const isAbsolute = p.path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p.path);
+      const uri = isAbsolute
+        ? vscode.Uri.file(p.path)
+        : folder
+          ? vscode.Uri.joinPath(folder.uri, p.path)
+          : vscode.Uri.file(p.path);
+      const options: vscode.TextDocumentShowOptions = { preview: true };
+      if (typeof p.line === "number" && p.line > 0) {
+        const pos = new vscode.Position(p.line - 1, 0);
+        options.selection = new vscode.Range(pos, pos);
+      }
+      await vscode.window.showTextDocument(uri, options);
+      respond({ ok: true });
+    } catch (err: any) {
+      respondError(err.message);
+    }
     return;
   }
   if (msg.method === "vscode.showDiff") {

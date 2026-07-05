@@ -85,6 +85,8 @@ describe("protocol handshake", () => {
         "turnLifecycle",
         "waitingStatus",
         "crashEvent",
+        "injectedTurn",
+        "invokeSkill",
       ]);
       expect(PROTOCOL_VERSION).toBe(1);
       expect(meta.capabilities).toEqual(PROTOCOL_CAPABILITIES);

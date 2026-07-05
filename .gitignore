@@ -56,3 +56,4 @@ docs-site/dist/
 
 # Remote model-registry signing private key — never commit
 fermi-registry-key*.pem
+vscode/.vscode-test/

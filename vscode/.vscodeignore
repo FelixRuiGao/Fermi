@@ -6,3 +6,7 @@ tsconfig.json
 esbuild.mjs
 **/*.map
 *.vsix
+tests/**
+.vscode-test.mjs
+.vscode-test/**
+out/test/**

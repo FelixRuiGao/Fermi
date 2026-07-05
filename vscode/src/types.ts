@@ -78,14 +78,50 @@ export interface SessionStatus {
   permissionMode: string;
 }
 
+/** Mirrors src/ask.ts PendingAskUi — the wire shape of ask.pending events. */
 export interface AskPayload {
   id: string;
-  kind: string;
+  kind: "agent_question" | "approval";
+  createdAt: string;
   summary: string;
-  toolName?: string;
-  command?: string;
-  questions?: unknown[];
-  choices?: Array<{ label: string; description?: string }>;
+  source: {
+    agentId: string;
+    agentName?: string;
+    toolName?: string;
+    turnId?: string;
+  };
+  payload: Record<string, unknown>;
+  options: string[];
+}
+
+/** Mirrors src/ask.ts AgentQuestionItem / AgentQuestionOption. */
+export interface AgentQuestionOption {
+  label: string;
+  description?: string;
+  kind: "normal" | "custom_input" | "discuss_further";
+  systemAdded?: boolean;
+}
+
+export interface AgentQuestionItem {
+  question: string;
+  options: AgentQuestionOption[];
+}
+
+export interface AgentQuestionAnswer {
+  questionIndex: number;
+  selectedOptionIndex: number;
+  answerText: string;
+  note?: string;
+}
+
+/** Approval payload (src/ask.ts ApprovalRequest["payload"]). */
+export interface ApprovalPayload {
+  toolCallId: string;
+  toolName: string;
+  toolSummary: string;
+  permissionClass: string;
+  offers: Array<{ type: string; label: string; scope?: string; rule?: Record<string, unknown> }>;
+  persistentWarning?: string;
 }
 
 export interface ModelDescriptor {
@@ -101,7 +137,56 @@ export interface SessionListItem {
   sessionId: string;
   path: string;
   title?: string;
-  lastActive?: string;
+  summary?: string;
+  lastActiveAt?: string;
+  turns?: number;
+}
+
+/** Mirrors src/plan-state.ts PlanCheckpoint. */
+export interface PlanCheckpoint {
+  text: string;
+  status: "pending" | "active" | "done";
+}
+
+/** Mirrors Session.getAllSkillNames() items (userInvocable absent on older binaries). */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  enabled: boolean;
+  userInvocable?: boolean;
+}
+
+/** Mirrors Session.getRewindTargets() items. */
+export interface RewindTarget {
+  turnIndex: number;
+  entryIndex: number;
+  preview: string;
+  timestamp: number;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  filesReverted: boolean;
+}
+
+/** Mirrors Session.getSummarizeTargets() items. */
+export interface SummarizeTarget {
+  kind: "turn" | "summary";
+  turnIndex: number;
+  preview: string;
+  timestamp: number;
+  contextId?: string;
+}
+
+/** Mirrors src/background-shell-manager.ts BackgroundShellSnapshot. */
+export interface ShellSnapshot {
+  id: string;
+  command: string;
+  cwd: string;
+  status: "running" | "exited" | "failed" | "killed";
+  exitCode: number | null;
+  elapsedSeconds: number;
+  recentOutput: string[];
+  logPath: string;
 }
 
 export interface ProviderPresetInfo {

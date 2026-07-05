@@ -1,50 +1,34 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store.js";
 import { renderMarkdown } from "../markdown/renderer.js";
-import { ToolCallEntry, toolViewFromProjection, toolViewFromRawEntries, type ToolCallView } from "./ToolCallEntry.js";
+import { buildBlocks, isTurnEnd, type Block } from "../model.js";
+import { WorkGroup, renderWorkItem } from "./WorkGroup.js";
+import { Home } from "./Home.js";
+import { InfoCards } from "./InfoCards.js";
 import { Spinner } from "./Spinner.js";
-import type { ConversationEntry, LogEntry } from "../../src/types.js";
+import { IconArrowDown, IconCopy, IconCheck, IconWarning, IconChevronRight, IconAgent } from "./icons.js";
+import { rpcRequest } from "../vscode-api.js";
+import type { ConversationEntry } from "../../src/types.js";
 
 // ---------------------------------------------------------------------------
-// Primary path: server-projected ConversationEntry[] (capability "projectedLog").
-// The server runs the canonical TUI projection; this component only renders.
+// The server runs the canonical projection (capability "projectedLog"); this
+// component groups the entry stream into prose blocks and collapsed work runs.
+// Legacy raw-log rendering was removed — pre-Phase-3 binaries get an update
+// prompt instead (the extension ships an auto-installer).
 // ---------------------------------------------------------------------------
 
-type ProjectedItem =
-  | { type: "entry"; entry: ConversationEntry }
-  | { type: "tool"; view: ToolCallView };
+// ── Prose renderers ──
 
-function buildProjectedItems(entries: ConversationEntry[]): ProjectedItem[] {
-  // The projection orders each tool_call directly before its tool_result,
-  // matched via meta.toolCallId. Index results first to stay robust if that
-  // adjacency ever loosens.
-  const resultByCallId = new Map<string, ConversationEntry>();
-  for (const e of entries) {
-    if (e.kind !== "tool_result") continue;
-    const callId = e.meta?.toolCallId;
-    if (typeof callId === "string") resultByCallId.set(callId, e);
-  }
-
-  const items: ProjectedItem[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    if (entry.kind === "tool_result") continue; // rendered with its call
-    if (entry.kind === "tool_call") {
-      const callId = entry.meta?.toolCallId;
-      const result = typeof callId === "string"
-        ? resultByCallId.get(callId)
-        : (entries[i + 1]?.kind === "tool_result" ? entries[i + 1] : undefined);
-      items.push({ type: "tool", view: toolViewFromProjection(entry, result) });
-      continue;
-    }
-    items.push({ type: "entry", entry });
-  }
-  return items;
-}
-
-function UserMessage({ text, queued }: { text: string; queued?: boolean }) {
+function UserMessage({ entry }: { entry: ConversationEntry }) {
+  const text = entry.text;
+  const isLong = text.length > 280 || text.split("\n").length >= 5;
+  const cls = [
+    "message message-user",
+    isLong ? "message-user-long" : "",
+    entry.queued ? "message-queued" : "",
+  ].filter(Boolean).join(" ");
   return (
-    <div className={queued ? "message message-user message-queued" : "message message-user"}>
+    <div className={cls}>
       <div className="bubble">{text}</div>
     </div>
   );
@@ -52,232 +36,241 @@ function UserMessage({ text, queued }: { text: string; queued?: boolean }) {
 
 function AssistantMessage({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text || ""), [text]);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+
   return (
     <div className="message message-assistant">
       <div className="content" dangerouslySetInnerHTML={{ __html: html }} />
-    </div>
-  );
-}
-
-function ThinkingMessage({ text }: { text: string }) {
-  const [expanded, setExpanded] = React.useState(false);
-  return (
-    <div className="thinking-block">
-      <div className="thinking-header" onClick={() => setExpanded(!expanded)}>
-        <span>{expanded ? "▾" : "▸"}</span>
-        <span>✦ Thinking</span>
+      <div className="msg-actions">
+        <button className="msg-action-btn" onClick={handleCopy} title="Copy as markdown">
+          {copied ? <IconCheck size={12} /> : <IconCopy size={12} />}
+        </button>
       </div>
-      {expanded && <div className="thinking-body">{text}</div>}
     </div>
   );
 }
 
-function AgentResultMessage({ text, fullText }: { text: string; fullText?: string }) {
-  const [expanded, setExpanded] = React.useState(false);
-  const expandable = Boolean(fullText && fullText !== text);
+function AgentResultRow({ entry }: { entry: ConversationEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  const full = entry.fullText && entry.fullText !== entry.text ? entry.fullText : null;
   return (
-    <div className="agent-status" onClick={expandable ? () => setExpanded(!expanded) : undefined}>
-      🔀 Agent complete: {expanded && fullText ? fullText : (text?.slice(0, 120) || "(no output)")}
-      {expandable && !expanded && " …"}
+    <div className="agent-row">
+      <div className="agent-row-header" onClick={full ? () => setExpanded(!expanded) : undefined}>
+        <IconAgent size={12} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: expanded ? "normal" : "nowrap" }}>
+          {entry.text || "Agent complete"}
+        </span>
+        {full && (
+          <IconChevronRight
+            size={10}
+            style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : undefined, transition: "transform 120ms ease-out" }}
+          />
+        )}
+      </div>
+      {expanded && full && <div className="agent-row-body">{full}</div>}
     </div>
   );
 }
 
-function ErrorBlock({ text }: { text: string }) {
-  return <div className="error-block">⚠ {text}</div>;
-}
-
-function StatusLine({ text, dim }: { text: string; dim?: boolean }) {
-  return <div className={dim ? "agent-status agent-status-dim" : "agent-status"}>{text}</div>;
+function ErrorRow({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const firstLine = text.split("\n")[0];
+  const hasMore = text.length > firstLine.length || firstLine.length > 160;
+  const shown = firstLine.length > 160 ? firstLine.slice(0, 160) + "…" : firstLine;
+  return (
+    <div className="error-row">
+      <div
+        className="error-row-header"
+        onClick={hasMore ? () => setExpanded(!expanded) : undefined}
+        style={hasMore ? { cursor: "pointer" } : undefined}
+      >
+        <span className="err-icon"><IconWarning size={13} /></span>
+        <span>{shown}</span>
+      </div>
+      {expanded && <div className="error-row-detail">{text}</div>}
+    </div>
+  );
 }
 
 function Divider({ label }: { label: string }) {
-  return <div className="transcript-divider">— {label} —</div>;
+  return <div className="transcript-divider">{label}</div>;
 }
 
-function renderProjectedItem(item: ProjectedItem, index: number) {
-  if (item.type === "tool") {
-    return <ToolCallEntry key={item.view.key} view={item.view} />;
+function TurnEndLine({ entry }: { entry: ConversationEntry }) {
+  const turnEnd = entry.meta?.turnEndStatus as string;
+  const ms = entry.meta?.elapsedMs;
+  const elapsed = typeof ms === "number" && ms > 0 ? `${(ms / 1000).toFixed(1)}s` : "";
+  if (turnEnd === "interrupted") {
+    return <div className="turn-end-line">interrupted{elapsed ? ` · ${elapsed}` : ""}</div>;
   }
-  const entry = item.entry;
-  const key = entry.id ?? `ce-${index}`;
+  if (turnEnd === "error") {
+    return <div className="turn-end-line" style={{ color: "var(--f-error)" }}>failed{elapsed ? ` · ${elapsed}` : ""}</div>;
+  }
+  if (!elapsed) return null;
+  return <div className="turn-end-line">✓ {elapsed}</div>;
+}
+
+function renderBlock(block: Block, index: number, opts: { liveWork: boolean; running: boolean }) {
+  if (block.type === "work") {
+    if (opts.liveWork) {
+      return (
+        <div key={`live-${index}`} className="work-group">
+          {block.items.map((item, i) => renderWorkItem(item, i, opts.running))}
+        </div>
+      );
+    }
+    const key = block.items[0]?.type === "tool"
+      ? `wg-${(block.items[0] as { view: { key: string } }).view.key}`
+      : `wg-${index}`;
+    return <WorkGroup key={key} items={block.items} />;
+  }
+
+  const entry = block.entry;
+  const key = entry.id ?? `b-${index}`;
   switch (entry.kind) {
     case "user":
-      return <UserMessage key={key} text={entry.text} queued={entry.queued} />;
+      return <UserMessage key={key} entry={entry} />;
     case "assistant":
       return <AssistantMessage key={key} text={entry.text} />;
-    case "reasoning":
-      return <ThinkingMessage key={key} text={entry.text} />;
     case "agent_result":
-      return <AgentResultMessage key={key} text={entry.text} fullText={entry.fullText} />;
+      return <AgentResultRow key={key} entry={entry} />;
     case "error":
-      return <ErrorBlock key={key} text={entry.text} />;
+      return <ErrorRow key={key} text={entry.text} />;
     case "interrupted_marker":
       return <Divider key={key} label="Interrupted" />;
     case "compact_mark":
       return <Divider key={key} label={entry.text || "Context compacted"} />;
-    case "status": {
-      // work_end/turn_end project as empty-text status entries carrying
-      // turnEndStatus/elapsedMs in meta — render the turn summary instead of
-      // a blank line.
-      const turnEnd = entry.meta?.turnEndStatus;
-      if (typeof turnEnd === "string") {
-        const ms = entry.meta?.elapsedMs;
-        const elapsed = typeof ms === "number" && ms > 0 ? ` · ${(ms / 1000).toFixed(1)}s` : "";
-        const label = turnEnd === "interrupted"
-          ? `⏹ Interrupted${elapsed}`
-          : turnEnd === "error"
-            ? `⚠ Turn ended with an error${elapsed}`
-            : `✓ Done${elapsed}`;
-        return <StatusLine key={key} text={label} dim />;
-      }
-      if (!entry.text.trim()) return null;
-      return <StatusLine key={key} text={entry.text} dim={entry.dim} />;
-    }
-    case "progress":
-    case "sub_agent_rollup":
-    case "sub_agent_done":
-      if (!entry.text.trim()) return null;
-      return <StatusLine key={key} text={entry.text} dim={entry.dim} />;
-    default:
-      return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Legacy path: raw LogEntry[] + webview-side pairing, for binaries without
-// the projectedLog capability. Delete when a minimum binary version with
-// Phase-3 protocol can be assumed.
-// ---------------------------------------------------------------------------
-
-interface PairedToolCall {
-  call: LogEntry;
-  result?: LogEntry;
-}
-
-function buildLegacyItems(entries: LogEntry[]): Array<LogEntry | PairedToolCall> {
-  const visible = entries.filter((e) => !e.discarded && e.tuiVisible !== false);
-  const resultByCallId = new Map<string, LogEntry>();
-
-  for (const e of visible) {
-    if (e.type === "tool_result") {
-      const callId = e.meta?.toolCallId as string | undefined;
-      if (callId) resultByCallId.set(callId, e);
-    }
-  }
-
-  const items: Array<LogEntry | PairedToolCall> = [];
-  for (const entry of visible) {
-    if (entry.type === "tool_result") continue;
-    if (entry.type === "tool_call") {
-      const callContent = entry.content as { id?: string } | undefined;
-      const callId = callContent?.id;
-      const result = callId ? resultByCallId.get(callId) : undefined;
-      items.push({ call: entry, result });
-      continue;
-    }
-    items.push(entry);
-  }
-  return items;
-}
-
-function isPaired(item: LogEntry | PairedToolCall): item is PairedToolCall {
-  return "call" in item;
-}
-
-function renderLegacyItem(item: LogEntry | PairedToolCall, index: number) {
-  if (isPaired(item)) {
-    const view = toolViewFromRawEntries(item.call, item.result);
-    return <ToolCallEntry key={view.key} view={view} />;
-  }
-  const entry = item;
-  switch (entry.type) {
-    case "user_message":
-      return <UserMessage key={entry.id} text={entry.display} />;
-    case "assistant_text":
-      return <AssistantMessage key={entry.id} text={entry.display} />;
-    case "reasoning":
-      return <ThinkingMessage key={entry.id} text={entry.display} />;
-    case "agent_result":
-      return <AgentResultMessage key={entry.id} text={entry.display} />;
-    case "error":
-      return <ErrorBlock key={entry.id} text={entry.display} />;
-    case "sub_agent_start":
-    case "sub_agent_end":
     case "status":
-      return <StatusLine key={entry.id} text={entry.display} />;
+      if (isTurnEnd(entry)) return <TurnEndLine key={key} entry={entry} />;
+      return (
+        <div key={key} className={entry.dim ? "status-line status-line-dim" : "status-line"}>
+          {entry.text}
+        </div>
+      );
     default:
-      if (entry.displayKind === "assistant") {
-        return <AssistantMessage key={entry.id} text={entry.display} />;
-      }
       return null;
   }
 }
 
 // ---------------------------------------------------------------------------
+
+function OutdatedBinaryView() {
+  const [installing, setInstalling] = useState(false);
+  return (
+    <div className="state-view">
+      <h2>Update Fermi</h2>
+      <p>This version of the Fermi binary is too old for the editor UI. Update it to continue.</p>
+      <button
+        className="primary-btn"
+        disabled={installing}
+        onClick={async () => {
+          setInstalling(true);
+          try {
+            await rpcRequest("__ext.installFermi");
+          } finally {
+            setInstalling(false);
+          }
+        }}
+      >
+        {installing ? "Updating…" : "Update Fermi"}
+      </button>
+    </div>
+  );
+}
 
 export function Transcript() {
   const usingProjection = useStore((s) => s.meta?.capabilities?.includes("projectedLog") ?? false);
   const conversation = useStore((s) => s.conversation);
-  const logEntries = useStore((s) => s.logEntries);
   const lastTurnError = useStore((s) => s.lastTurnError);
   const isRunning = useStore((s) => s.status?.currentTurnRunning ?? false);
   const isWaitingOnAsk = useStore((s) => s.pendingAsk !== null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
-  const projectedItems = useMemo(
-    () => (usingProjection ? buildProjectedItems(conversation) : []),
-    [usingProjection, conversation],
-  );
-  const legacyItems = useMemo(
-    () => (usingProjection ? [] : buildLegacyItems(logEntries)),
-    [usingProjection, logEntries],
-  );
-  const itemCount = usingProjection ? projectedItems.length : legacyItems.length;
+  const blocks = useMemo(() => buildBlocks(conversation), [conversation]);
+
+  // The trailing work run renders live (expanded) while the turn works on it.
+  const lastBlockIsWork = blocks.length > 0 && blocks[blocks.length - 1].type === "work";
+  const liveWorkIndex = isRunning && lastBlockIsWork ? blocks.length - 1 : -1;
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    nearBottomRef.current = distance < 120;
+    setShowScrollBtn(distance > 300);
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) {
+    if (el && nearBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [itemCount, isRunning]);
+  }, [conversation, isRunning]);
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
 
   // The error log entry is the primary surface; the banner covers turns whose
-  // error never reached the log (legacy binaries). Skip trailing bookkeeping
-  // entries (work_end projects as a status entry AFTER the error entry) when
-  // checking whether the log already shows this failure.
+  // error never reached the log.
   const lastEntryIsError = useMemo(() => {
-    if (usingProjection) {
-      for (let i = conversation.length - 1; i >= 0; i--) {
-        const e = conversation[i];
-        if (e.kind === "status" || e.kind === "progress") continue;
-        return e.kind === "error";
-      }
-      return false;
-    }
-    for (let i = logEntries.length - 1; i >= 0; i--) {
-      const e = logEntries[i];
-      if (e.type === "status" || e.type === "work_end" || e.type === "turn_end" || e.type === "token_update") continue;
-      return e.type === "error";
+    for (let i = conversation.length - 1; i >= 0; i--) {
+      const e = conversation[i];
+      if (e.kind === "status" || e.kind === "progress") continue;
+      return e.kind === "error";
     }
     return false;
-  }, [usingProjection, conversation, logEntries]);
+  }, [conversation]);
   const showErrorBanner = Boolean(lastTurnError) && !lastEntryIsError;
 
+  if (!usingProjection) {
+    return (
+      <div className="transcript-wrap">
+        <OutdatedBinaryView />
+      </div>
+    );
+  }
+
+  const empty = blocks.length === 0 && !isRunning;
+
   return (
-    <div className="transcript" ref={scrollRef}>
-      {itemCount === 0 && !isRunning && (
-        <div className="welcome">
-          <h2>Fermi</h2>
-          <p>Ask a question or describe a task to get started.</p>
-        </div>
+    <div className="transcript-wrap">
+      <div className="transcript" ref={scrollRef} onScroll={handleScroll}>
+        {empty ? (
+          <>
+            <Home />
+            <InfoCards />
+          </>
+        ) : (
+          <>
+            {blocks.map((block, i) =>
+              renderBlock(block, i, { liveWork: i === liveWorkIndex, running: isRunning }),
+            )}
+            {showErrorBanner && <ErrorRow text={lastTurnError!} />}
+            <InfoCards />
+            {isRunning && !lastBlockIsWork && <Spinner text="Working…" />}
+            {!isRunning && isWaitingOnAsk && (
+              <div className="status-line">Waiting for your approval…</div>
+            )}
+          </>
+        )}
+      </div>
+      {showScrollBtn && !empty && (
+        <button className="scroll-bottom-btn" onClick={scrollToBottom} title="Scroll to bottom">
+          <IconArrowDown size={14} />
+        </button>
       )}
-      {usingProjection
-        ? projectedItems.map((item, i) => renderProjectedItem(item, i))
-        : legacyItems.map((item, i) => renderLegacyItem(item, i))}
-      {showErrorBanner && <ErrorBlock text={lastTurnError!} />}
-      {isRunning && <Spinner text="Working..." />}
-      {!isRunning && isWaitingOnAsk && <StatusLine text="⏸ Waiting for your approval…" />}
     </div>
   );
 }

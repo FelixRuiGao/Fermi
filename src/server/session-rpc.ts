@@ -21,6 +21,7 @@ import { applySessionRestore } from "../session-resume.js";
 import { getTierEligibleThinkingLevels, getThinkingLevels } from "../config.js";
 import { createModelTierEntry } from "../model-selection.js";
 import { AGENT_MODES, isAgentMode } from "../modes/index.js";
+import { resolveSkillContent } from "../skills/loader.js";
 
 export interface SessionRpcOptions {
   readonly session: Session;
@@ -51,6 +52,10 @@ export const PROTOCOL_CAPABILITIES = [
   "waitingStatus",
   /** server.crashed emitted on fatal process errors */
   "crashEvent",
+  /** session.runInjectedTurn (displayText ≠ content turns, e.g. /review) */
+  "injectedTurn",
+  /** session.invokeSkill (user-invocable skill slash commands) */
+  "invokeSkill",
 ] as const;
 
 interface MetaPayload {
@@ -645,6 +650,30 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
 
   server.on("session.resumePendingTurn", () =>
     fireAndForgetTurn(() => session.resumePendingTurn()));
+
+  // Injected turns: user-visible display text differs from the model-facing
+  // content. Backs GUI equivalents of TUI commands like /review.
+  server.on("session.runInjectedTurn", (params) => {
+    const p = expectObject(params, "session.runInjectedTurn");
+    const displayText = expectString(p, "displayText", "session.runInjectedTurn");
+    const content = expectString(p, "content", "session.runInjectedTurn");
+    return fireAndForgetTurn(() => session.runInjectedCommand(displayText, content));
+  });
+
+  server.on("session.invokeSkill", (params) => {
+    const p = expectObject(params, "session.invokeSkill");
+    const name = expectString(p, "name", "session.invokeSkill");
+    const args = optString(p, "args") ?? "";
+    const skill = session.getSkillMeta(name);
+    if (!skill) throw new Error(`session.invokeSkill: unknown skill '${name}'`);
+    if (!skill.userInvocable) throw new Error(`session.invokeSkill: skill '${name}' is not user-invocable`);
+    const enabled = session.getAllSkillNames().find((s) => s.name === name)?.enabled ?? false;
+    if (!enabled) throw new Error(`session.invokeSkill: skill '${name}' is disabled`);
+    const content = resolveSkillContent(skill, args);
+    const displayText = args.trim() ? `/${name} ${args.trim()}` : `/${name}`;
+    return fireAndForgetTurn(() =>
+      session.runInjectedCommand(displayText, `[SKILL: ${name}]\n\n${content}`));
+  });
 
   server.on("session.requestTurnInterrupt", () => session.requestTurnInterrupt());
   server.on("session.cancelCurrentTurn", () => {

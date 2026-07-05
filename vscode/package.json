@@ -129,13 +129,21 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "package": "npx @vscode/vsce package --no-dependencies"
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "test:unit": "bun test tests/",
+    "test:integration": "node esbuild.mjs && vscode-test",
+    "test": "bun test tests/ && node esbuild.mjs && vscode-test"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
+    "@types/react-dom": "^19.2.3",
     "@types/vscode": "^1.84.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.0.0",
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.24.0",
+    "mocha": "^11.7.6"
   },
   "dependencies": {
     "marked": "^17.0.0",

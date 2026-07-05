@@ -5,7 +5,7 @@ import { HeaderBar } from "./components/HeaderBar.js";
 import { Transcript } from "./components/Transcript.js";
 import { InputArea } from "./components/InputArea.js";
 import { AskPanel } from "./components/AskPanel.js";
-// StatusInfo removed — model + context are in InputArea's meta row
+import { PlanBar } from "./components/PlanBar.js";
 import { InitWizard } from "./components/InitWizard.js";
 import { BinaryNotFound, ErrorView, LoadingView } from "./components/WelcomeView.js";
 
@@ -27,6 +27,7 @@ export function App() {
   return (
     <>
       <HeaderBar />
+      <PlanBar />
       <Transcript />
       <AskPanel />
       <InputArea />

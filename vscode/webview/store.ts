@@ -8,7 +8,24 @@ import type {
   AskPayload,
   ModelDescriptor,
   ConfigStatus,
+  PlanCheckpoint,
+  SessionListItem,
+  AgentQuestionAnswer,
+  SkillInfo,
 } from "../src/types.js";
+
+/** Local, non-persisted cards that slash info-commands insert into the transcript. */
+export type InfoCard =
+  | { id: number; kind: "help" }
+  | { id: number; kind: "usage" }
+  | { id: number; kind: "mcp"; data: unknown }
+  | { id: number; kind: "hooks"; data: unknown }
+  | { id: number; kind: "text"; title: string; body: string; mono?: boolean };
+
+let nextCardId = 1;
+
+/** Omit that distributes over unions (plain Omit collapses InfoCard's variants). */
+export type NewInfoCard = InfoCard extends infer T ? (T extends { id: number } ? Omit<T, "id"> : never) : never;
 
 export type AppMode = "loading" | "init" | "chat" | "binary-not-found" | "error";
 
@@ -34,6 +51,20 @@ interface StoreState {
   // Models
   models: ModelDescriptor[];
 
+  // Plan (todo checklist projected from the model's plan.md)
+  plan: PlanCheckpoint[];
+
+  // Project session history (for Home + header history)
+  sessions: SessionListItem[];
+
+  // Agent mode / goal / skills (feature parity with the TUI)
+  agentMode: string;
+  goal: string | null;
+  skills: SkillInfo[];
+
+  // Transient info cards appended to the transcript by info commands
+  infoCards: InfoCard[];
+
   // Init wizard
   configStatus: ConfigStatus | null;
 
@@ -44,11 +75,20 @@ interface StoreState {
   initialize(): void;
   submitTurn(input: string): Promise<void>;
   resolveAsk(askId: string, choiceIndex: number): Promise<void>;
+  resolveQuestionAsk(askId: string, answers: AgentQuestionAnswer[]): Promise<void>;
   denyAsk(): Promise<void>;
   interruptTurn(): Promise<void>;
   refreshLog(): Promise<void>;
   refreshModels(): Promise<void>;
   refreshStatus(): Promise<void>;
+  refreshPlan(): Promise<void>;
+  refreshSessions(): Promise<void>;
+  restoreSession(sessionId: string): Promise<void>;
+  refreshMode(): Promise<void>;
+  refreshGoal(): Promise<void>;
+  refreshSkills(): Promise<void>;
+  addInfoCard(card: NewInfoCard): void;
+  dismissInfoCard(id: number): void;
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -63,6 +103,12 @@ export const useStore = create<StoreState>((set, get) => ({
   lastTurnError: null,
   pendingAsk: null,
   models: [],
+  plan: [],
+  sessions: [],
+  agentMode: "default",
+  goal: null,
+  skills: [],
+  infoCards: [],
   configStatus: null,
 
   hasCapability(name: string): boolean {
@@ -77,6 +123,11 @@ export const useStore = create<StoreState>((set, get) => ({
       get().refreshLog();
       get().refreshModels();
       get().refreshStatus();
+      get().refreshPlan();
+      get().refreshSessions();
+      get().refreshMode();
+      get().refreshGoal();
+      get().refreshSkills();
     });
 
     // Needs init → wizard mode
@@ -127,6 +178,18 @@ export const useStore = create<StoreState>((set, get) => ({
       if (p.revision !== get().logRevision) {
         get().refreshLog();
       }
+    });
+
+    // Plan checklist changes
+    onEvent("plan.changed", (params) => {
+      const p = params as { state?: PlanCheckpoint[] };
+      set({ plan: Array.isArray(p?.state) ? p.state : [] });
+    });
+
+    // Agent mode changes (from /mode here or in a parallel TUI on the same session)
+    onEvent("mode.changed", (params) => {
+      const p = params as { mode?: string };
+      if (typeof p?.mode === "string") set({ agentMode: p.mode });
     });
 
     // Ask events
@@ -203,17 +266,6 @@ export const useStore = create<StoreState>((set, get) => ({
       });
     });
 
-    // Session reset (legacy, kept for compat)
-    onEvent("session.reset", () => {
-      set({
-        conversation: [],
-        logEntries: [],
-        logRevision: -1,
-        activeLogEntryId: null,
-        lastTurnError: null,
-        pendingAsk: null,
-      });
-    });
   },
 
   async submitTurn(input: string) {
@@ -222,6 +274,11 @@ export const useStore = create<StoreState>((set, get) => ({
 
   async resolveAsk(askId: string, choiceIndex: number) {
     await rpcRequest("session.resolveApprovalAsk", { askId, choiceIndex });
+    set({ pendingAsk: null });
+  },
+
+  async resolveQuestionAsk(askId: string, answers: AgentQuestionAnswer[]) {
+    await rpcRequest("session.resolveAgentQuestionAsk", { askId, decision: { answers } });
     set({ pendingAsk: null });
   },
 
@@ -275,5 +332,53 @@ export const useStore = create<StoreState>((set, get) => ({
       const s = await rpcRequest<SessionStatus>("session.getStatus");
       set({ status: s });
     } catch {}
+  },
+
+  async refreshPlan() {
+    try {
+      const plan = await rpcRequest<PlanCheckpoint[]>("session.getPlanState");
+      set({ plan: Array.isArray(plan) ? plan : [] });
+    } catch {}
+  },
+
+  async refreshSessions() {
+    try {
+      const sessions = await rpcRequest<SessionListItem[]>("session.listProjectSessions");
+      set({ sessions: sessions ?? [] });
+    } catch {}
+  },
+
+  async restoreSession(sessionId: string) {
+    // Server emits ready + log.changed on success, which refresh everything.
+    await rpcRequest("session.restoreSession", { sessionId });
+  },
+
+  async refreshMode() {
+    try {
+      const r = await rpcRequest<{ mode?: string }>("session.getMode");
+      if (typeof r?.mode === "string") set({ agentMode: r.mode });
+    } catch {}
+  },
+
+  async refreshGoal() {
+    try {
+      const r = await rpcRequest<{ goal?: string | null }>("session.getGoal");
+      set({ goal: r?.goal ?? null });
+    } catch {}
+  },
+
+  async refreshSkills() {
+    try {
+      const skills = await rpcRequest<SkillInfo[]>("session.listSkills");
+      set({ skills: Array.isArray(skills) ? skills : [] });
+    } catch {}
+  },
+
+  addInfoCard(card) {
+    set({ infoCards: [...get().infoCards, { ...card, id: nextCardId++ } as InfoCard] });
+  },
+
+  dismissInfoCard(id) {
+    set({ infoCards: get().infoCards.filter((c) => c.id !== id) });
   },
 }));
