@@ -120,7 +120,7 @@ export function SettingsDialog({
             <div className="session-scroll min-h-0 flex-1 overflow-y-auto px-7 py-6">
               {section === 'general' && <GeneralSection />}
               {section === 'models' && <ModelsSection tab={tab} />}
-              {section === 'providers' && <ProvidersSection />}
+              {section === 'providers' && <ProvidersSection tab={tab} />}
               {section === 'skills' && <SkillsSection tab={tab} />}
               {section === 'mcp' && <McpSection tab={tab} />}
               {section === 'hooks' && <HooksSection tab={tab} />}

@@ -28,6 +28,9 @@ import { getAllMcpServerNames, setMcpServerDisabled } from "../mcp-settings.js";
 import { loadAllHooksFromDisk, setHookDisabled, reloadHooksIntoRuntime } from "../hooks/manage.js";
 import { loadGlobalSettings } from "../persistence.js";
 import { validateSummarizeHintLevels } from "../settings.js";
+import { InitService } from "../init-service.js";
+import { loadDotenv } from "../dotenv.js";
+import { getFermiHomeDir } from "../home-path.js";
 import type {
   SessionMetaPayload as MetaPayload,
   SessionStatusPayload as StatusPayload,
@@ -89,6 +92,8 @@ export const PROTOCOL_CAPABILITIES = [
   "modelCatalog",
   /** session.submitTurn accepts an `attachments` array of inline images */
   "turnAttachments",
+  /** provider.* — add/configure providers, set keys, OAuth login in session mode */
+  "providerControl",
 ] as const;
 
 interface SessionStoreAccess {
@@ -1225,6 +1230,87 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     const next = readSharedSettings();
     server.emit("settings.changed", next);
     return next;
+  });
+
+  // ── Control plane: provider / credential management (capability
+  // "providerControl"). Reuses the init wizard's service so a running session
+  // can add providers, set/change keys, and OAuth-login without dropping to
+  // init mode. Credentials are written to disk (settings.json + ~/.fermi/.env +
+  // state/oauth.json). The running session's Config is fixed at bootstrap, so a
+  // newly-added provider/key applies to the NEXT session — the client says so.
+  const providerService = new InitService();
+  const emitProvidersChanged = (): void => {
+    try {
+      server.emit("providers.changed", providerService.checkConfigStatus());
+    } catch {
+      // peer may be gone
+    }
+  };
+
+  server.on("provider.getConfigStatus", () => providerService.checkConfigStatus());
+  server.on("provider.listPresets", () => providerService.listProviderPresets());
+
+  server.on("provider.configureApiKey", (params) => {
+    const p = expectObject(params, "provider.configureApiKey");
+    const providerId = expectString(p, "providerId", "provider.configureApiKey");
+    const apiKey = expectString(p, "apiKey", "provider.configureApiKey");
+    const result = providerService.configureApiKeyProvider(providerId, apiKey);
+    loadDotenv(getFermiHomeDir());
+    emitProvidersChanged();
+    return result;
+  });
+
+  server.on("provider.configureManaged", (params) => {
+    const p = expectObject(params, "provider.configureManaged");
+    const providerId = expectString(p, "providerId", "provider.configureManaged");
+    const apiKey = expectString(p, "apiKey", "provider.configureManaged");
+    const result = providerService.configureManagedProvider(providerId, apiKey);
+    loadDotenv(getFermiHomeDir());
+    emitProvidersChanged();
+    return result;
+  });
+
+  server.on("provider.discoverLocal", (params) => {
+    const p = expectObject(params, "provider.discoverLocal");
+    const providerId = expectString(p, "providerId", "provider.discoverLocal");
+    const baseUrl = expectString(p, "baseUrl", "provider.discoverLocal");
+    const apiKey = optString(p, "apiKey");
+    return providerService.configureLocalProvider(providerId, baseUrl, apiKey);
+  });
+
+  server.on("provider.saveLocal", (params) => {
+    const p = expectObject(params, "provider.saveLocal");
+    const providerId = expectString(p, "providerId", "provider.saveLocal");
+    const baseUrl = expectString(p, "baseUrl", "provider.saveLocal");
+    const modelId = expectString(p, "modelId", "provider.saveLocal");
+    const contextLength = optNumber(p, "contextLength");
+    const apiKey = optString(p, "apiKey");
+    providerService.saveLocalProvider(providerId, baseUrl, modelId, contextLength, apiKey);
+    loadDotenv(getFermiHomeDir());
+    emitProvidersChanged();
+    return { ok: true };
+  });
+
+  server.on("provider.startOAuth", async (params) => {
+    const p = expectObject(params, "provider.startOAuth");
+    const providerId = expectString(p, "providerId", "provider.startOAuth");
+    if (providerId === "openai-codex") {
+      const { deviceCodeLogin, saveOAuthTokens, hasOAuthTokens } = await import("../auth/openai-oauth.js");
+      if (hasOAuthTokens()) return { status: "already_authenticated", providerId };
+      const tokens = await deviceCodeLogin();
+      saveOAuthTokens(tokens);
+      emitProvidersChanged();
+      return { status: "authenticated", providerId };
+    }
+    if (providerId === "copilot") {
+      const { deviceCodeLoginCLI, saveGitHubTokens, hasGitHubTokens } = await import("../auth/github-copilot-oauth.js");
+      if (hasGitHubTokens()) return { status: "already_authenticated", providerId };
+      const tokens = await deviceCodeLoginCLI();
+      saveGitHubTokens(tokens);
+      emitProvidersChanged();
+      return { status: "authenticated", providerId };
+    }
+    throw new Error(`provider.startOAuth: unknown OAuth provider: ${providerId}`);
   });
 
   // ── Manual context commands ──

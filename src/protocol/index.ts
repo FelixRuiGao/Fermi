@@ -32,7 +32,8 @@ export type ProtocolCapability =
   | "watchEvents"
   | "childMeta"
   | "modelCatalog"
-  | "turnAttachments";
+  | "turnAttachments"
+  | "providerControl";
 
 export type PermissionMode = "read_only" | "reversible" | "yolo";
 
