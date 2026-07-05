@@ -32,6 +32,9 @@ export type {
   // Sessions / models / skills
   SessionListItem,
   ModelDescriptor,
+  ModelCatalogNode,
+  ModelCatalogNodeKind,
+  ModelCredentialState,
   SkillInfo,
   ForkSessionPayload,
   // Context management

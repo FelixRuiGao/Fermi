@@ -19,6 +19,15 @@ interface Props {
   onClose(): void;
   /** A command entered a multi-step flow — composer should clear its input. */
   onFlowStarted(): void;
+  /**
+   * A command completed immediately (e.g. /new, /copy) instead of opening a
+   * flow — clear the `/xxx` filter text it consumed. Flow/picker commands
+   * clear via onFlowStarted (which also forces the filter to "/" so an empty
+   * input can't flash the full list); this covers only the sync-completion
+   * path, and is batched with the close so nothing flashes. Not called on
+   * cancel/back, so a message typed before toggling the panel open survives.
+   */
+  onCommandRun(): void;
   controllerRef?: React.MutableRefObject<CommandPanelController | null>;
 }
 
@@ -28,7 +37,7 @@ type ViewState =
   | { kind: "picker"; spec: PickerSpec }
   | { kind: "input"; spec: import("../commands.js").InputSpec };
 
-export function CommandPanel({ filter, onClose, onFlowStarted, controllerRef }: Props) {
+export function CommandPanel({ filter, onClose, onFlowStarted, onCommandRun, controllerRef }: Props) {
   const [stack, setStack] = useState<ViewState[]>([{ kind: "commands" }]);
   const [selected, setSelected] = useState(0);
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -105,11 +114,20 @@ export function CommandPanel({ filter, onClose, onFlowStarted, controllerRef }: 
         setStack((prev) => [...prev, { kind: "loading" }]);
         onFlowStarted();
         void handleFlowResult(result, true);
-      } else {
+      } else if (result) {
+        // Sync PanelView (e.g. /model returns picker(...)): handleFlowResult's
+        // resolved branch pushes the view and clears input via onFlowStarted.
         void handleFlowResult(result, false);
+      } else {
+        // Sync completion (e.g. /new, /copy): no flow ever opens, so clear the
+        // consumed filter text and close in the same batch — do NOT clear
+        // before this point, or a sync PanelView command would flash the full
+        // list for a frame while panelInFlow is still false.
+        onCommandRun();
+        onClose();
       }
     },
-    [handleFlowResult, onFlowStarted],
+    [handleFlowResult, onFlowStarted, onCommandRun, onClose],
   );
 
   useEffect(() => {

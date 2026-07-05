@@ -43,6 +43,12 @@ export interface SessionMetaPayload {
   readonly workDir: string;
   readonly modelConfigName: string;
   readonly modelProvider: string;
+  /**
+   * Clean display label for the current model (describeModel's modelLabel),
+   * so clients show "Claude Haiku 4.5" instead of a raw runtime config name.
+   * Optional for older-binary compatibility.
+   */
+  readonly modelDisplayLabel?: string;
   readonly thinkingLevel: string;
   readonly accentColor: string | undefined;
   readonly turnCount: number;
@@ -200,6 +206,43 @@ export interface ModelDescriptor {
   contextLength: number;
   supportsThinking: boolean;
   supportsMultimodal: boolean;
+}
+
+/**
+ * session.getModelCatalog: the grouped model picker tree the TUI shows,
+ * serialized for out-of-process clients. Nodes carry human labels
+ * (describeModel), grouping (group → provider → vendor → model), and
+ * credential state so the UI can render a hierarchy with clean names instead
+ * of the flat raw-config-name list. `value` is what session.selectModel
+ * accepts (a config name or provider:selectionKey).
+ */
+export type ModelCatalogNodeKind = "group" | "provider" | "vendor" | "model";
+export type ModelCredentialState =
+  | "configured"
+  | "missing"
+  | "oauth_missing"
+  | "not_required";
+
+export interface ModelCatalogNode {
+  readonly kind: ModelCatalogNodeKind;
+  readonly id: string;
+  readonly value: string;
+  /** Clean, human-readable label (e.g. "Claude Haiku 4.5", "Anthropic"). */
+  readonly label: string;
+  /** Variant / extra qualifier (e.g. a long-context "1m" note). */
+  readonly note?: string;
+  /** Provider brand label, for section headers in flattened views. */
+  readonly brandLabel?: string;
+  readonly providerId?: string;
+  readonly modelId?: string;
+  /** Context window in tokens, when known (model leaves only). */
+  readonly contextLength?: number;
+  readonly isCurrent: boolean;
+  readonly credentialState: ModelCredentialState;
+  /** Short hint when a credential is missing (e.g. "key missing: run fermi init"). */
+  readonly credentialHint?: string;
+  readonly keyMissing: boolean;
+  readonly children?: readonly ModelCatalogNode[];
 }
 
 /** session.listSkills items. */

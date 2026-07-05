@@ -14,6 +14,7 @@ import type {
   SkillInfo,
   ChildSessionSnapshot,
   ShellSnapshot,
+  ModelCatalogNode,
 } from "../src/types.js";
 
 /** Local, non-persisted cards that slash info-commands insert into the transcript. */
@@ -52,6 +53,8 @@ interface StoreState {
 
   // Models
   models: ModelDescriptor[];
+  /** Grouped model catalog (capability "modelCatalog"); empty on old binaries. */
+  modelCatalog: ModelCatalogNode[];
 
   // Plan (todo checklist projected from the model's plan.md)
   plan: PlanCheckpoint[];
@@ -86,6 +89,7 @@ interface StoreState {
   interruptTurn(): Promise<void>;
   refreshLog(): Promise<void>;
   refreshModels(): Promise<void>;
+  refreshModelCatalog(): Promise<void>;
   refreshStatus(): Promise<void>;
   refreshPlan(): Promise<void>;
   refreshSessions(): Promise<void>;
@@ -93,8 +97,26 @@ interface StoreState {
   refreshMode(): Promise<void>;
   refreshGoal(): Promise<void>;
   refreshSkills(): Promise<void>;
+  refreshLiveActivity(): Promise<void>;
   addInfoCard(card: NewInfoCard): void;
   dismissInfoCard(id: number): void;
+}
+
+/**
+ * Compatibility shim for pre-auto-resume binaries: current servers resume the
+ * parked turn themselves when an ask is resolved over RPC; older ones left
+ * the session suspended forever. If the turn is still parked after resolving,
+ * kick it. On current binaries this is a no-op (hasPendingTurn is already
+ * consumed), and a lost double-resume is harmless (resumes are serialized and
+ * an empty pending state returns immediately).
+ */
+async function resumeIfStillParked(): Promise<void> {
+  try {
+    const status = await rpcRequest<SessionStatus>("session.getStatus");
+    if (status?.hasPendingTurn) {
+      await rpcRequest("session.resumePendingTurn");
+    }
+  } catch {}
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -109,6 +131,7 @@ export const useStore = create<StoreState>((set, get) => ({
   lastTurnError: null,
   pendingAsk: null,
   models: [],
+  modelCatalog: [],
   plan: [],
   sessions: [],
   agentMode: "default",
@@ -130,12 +153,17 @@ export const useStore = create<StoreState>((set, get) => ({
       set({ mode: "chat", meta });
       get().refreshLog();
       get().refreshModels();
+      get().refreshModelCatalog();
       get().refreshStatus();
       get().refreshPlan();
       get().refreshSessions();
       get().refreshMode();
       get().refreshGoal();
       get().refreshSkills();
+      // Watcher events only fire on CHANGE — a webview that (re)attaches
+      // mid-run needs the current snapshots or it shows no agents/shells
+      // until the next digest flip.
+      get().refreshLiveActivity();
     });
 
     // Needs init → wizard mode
@@ -146,7 +174,9 @@ export const useStore = create<StoreState>((set, get) => ({
       });
     });
 
-    // New session starting — clear log but stay in chat mode
+    // New session starting — clear ALL per-session state but stay in chat
+    // mode. Anything left out here haunts the new session until the ready
+    // refresh lands (info cards and live chips famously survived /new).
     onEvent("session.starting", (params) => {
       const p = params as { modelConfigName?: string };
       const currentMeta = get().meta;
@@ -158,6 +188,12 @@ export const useStore = create<StoreState>((set, get) => ({
         lastTurnError: null,
         pendingAsk: null,
         status: null,
+        plan: [],
+        goal: null,
+        agentMode: "default",
+        children: [],
+        shells: [],
+        infoCards: [],
         meta: currentMeta
           ? { ...currentMeta, title: "New session", turnCount: 0, modelConfigName: p.modelConfigName || currentMeta.modelConfigName }
           : null,
@@ -244,11 +280,21 @@ export const useStore = create<StoreState>((set, get) => ({
 
     // Model change
     onEvent("model.changed", (params) => {
-      const p = params as { name: string };
+      const p = params as { name: string; displayLabel?: string };
       const meta = get().meta;
       if (meta) {
-        set({ meta: { ...meta, modelConfigName: p.name } });
+        set({
+          meta: {
+            ...meta,
+            modelConfigName: p.name,
+            ...(p.displayLabel ? { modelDisplayLabel: p.displayLabel } : {}),
+          },
+        });
       }
+      // The current-model marker moved — refresh the grouped catalog so its
+      // "current" highlight tracks (a switch may also have auto-created a
+      // runtime config, adding a new entry).
+      get().refreshModelCatalog();
     });
 
     // Turn events. The runtime emits these for every turn (incl. auto-resume
@@ -308,16 +354,19 @@ export const useStore = create<StoreState>((set, get) => ({
   async resolveAsk(askId: string, choiceIndex: number) {
     await rpcRequest("session.resolveApprovalAsk", { askId, choiceIndex });
     set({ pendingAsk: null });
+    await resumeIfStillParked();
   },
 
   async resolveQuestionAsk(askId: string, answers: AgentQuestionAnswer[]) {
     await rpcRequest("session.resolveAgentQuestionAsk", { askId, decision: { answers } });
     set({ pendingAsk: null });
+    await resumeIfStillParked();
   },
 
   async denyAsk() {
     await rpcRequest("session.denyPendingAsk");
     set({ pendingAsk: null });
+    await resumeIfStillParked();
   },
 
   async interruptTurn() {
@@ -360,6 +409,14 @@ export const useStore = create<StoreState>((set, get) => ({
     } catch {}
   },
 
+  async refreshModelCatalog() {
+    if (!get().hasCapability("modelCatalog")) return;
+    try {
+      const catalog = await rpcRequest<ModelCatalogNode[]>("session.getModelCatalog");
+      set({ modelCatalog: Array.isArray(catalog) ? catalog : [] });
+    } catch {}
+  },
+
   async refreshStatus() {
     try {
       const s = await rpcRequest<SessionStatus>("session.getStatus");
@@ -382,8 +439,10 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   async restoreSession(sessionId: string) {
-    // Server emits ready + log.changed on success, which refresh everything.
+    // Server emits ready + log.changed on success, which refresh everything —
+    // except client-local surfaces, which must not leak across sessions.
     await rpcRequest("session.restoreSession", { sessionId });
+    set({ infoCards: [], children: [], shells: [], lastTurnError: null, pendingAsk: null });
   },
 
   async refreshMode() {
@@ -404,6 +463,19 @@ export const useStore = create<StoreState>((set, get) => ({
     try {
       const skills = await rpcRequest<SkillInfo[]>("session.listSkills");
       set({ skills: Array.isArray(skills) ? skills : [] });
+    } catch {}
+  },
+
+  async refreshLiveActivity() {
+    try {
+      const [children, shells] = await Promise.all([
+        rpcRequest<ChildSessionSnapshot[]>("session.getChildSnapshots"),
+        rpcRequest<ShellSnapshot[]>("session.getBackgroundShellSnapshots"),
+      ]);
+      set({
+        children: Array.isArray(children) ? children : [],
+        shells: Array.isArray(shells) ? shells : [],
+      });
     } catch {}
   },
 

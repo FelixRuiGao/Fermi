@@ -96,6 +96,7 @@ describe("protocol handshake", () => {
         "sharedSettings",
         "watchEvents",
         "childMeta",
+        "modelCatalog",
       ]);
       expect(PROTOCOL_VERSION).toBe(1);
       expect(meta.capabilities).toEqual(PROTOCOL_CAPABILITIES);
@@ -269,6 +270,178 @@ describe("ask events over RPC", () => {
       await waitFor(() => rpc.eventsOf("ask.resolved").length > 0);
     } finally {
       dispose();
+      h.dispose();
+    }
+  });
+
+  it("approving over RPC auto-resumes the parked turn to completion", async () => {
+    const h = makeScriptedSession({
+      rounds: [
+        { toolCalls: [{ id: "call-1", name: "write_file", arguments: {} }] },
+        { text: "done after approval" },
+      ],
+      tools: [testToolDef("write_file")],
+    });
+    const { rpc, dispose } = bind(h);
+    try {
+      stageApprovalGate(h, "write_file");
+      await rpc.call("session.submitTurn", { input: "write it" });
+      await waitFor(() => rpc.eventsOf("ask.pending").length > 0);
+      // The remote client only resolves the ask; the SERVER must drive the
+      // resume (the TUI does this in-process — without it the session sat
+      // parked forever after an approval from VS Code/GUI).
+      await rpc.call("session.resolveApprovalAsk", { askId: "approval-test-1", choiceIndex: 0 });
+      await waitFor(() => rpc.eventsOf("turn.ended").some(
+        (e) => (e as { status: string }).status === "completed",
+      ));
+      // The resume emitted its own started (covering the approved tool's
+      // drain-phase execution), paired with the completed ended.
+      expect(rpc.eventsOf("turn.started").length).toBe(2);
+      const projected = await rpc.call("session.getProjectedLog") as {
+        entries: Array<{ kind: string; text: string }>;
+      };
+      expect(projected.entries.some((e) => e.text.includes("done after approval"))).toBe(true);
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+
+  it("denying over RPC resumes so the model sees the denial", async () => {
+    const h = makeScriptedSession({
+      rounds: [
+        { toolCalls: [{ id: "call-1", name: "write_file", arguments: {} }] },
+        { text: "acknowledged the denial" },
+      ],
+      tools: [testToolDef("write_file")],
+    });
+    const { rpc, dispose } = bind(h);
+    try {
+      stageApprovalGate(h, "write_file");
+      await rpc.call("session.submitTurn", { input: "write it" });
+      await waitFor(() => rpc.eventsOf("ask.pending").length > 0);
+      const res = await rpc.call("session.denyPendingAsk") as { denied: boolean };
+      expect(res.denied).toBe(true);
+      await waitFor(() => rpc.eventsOf("turn.ended").some(
+        (e) => (e as { status: string }).status === "completed",
+      ));
+      const projected = await rpc.call("session.getProjectedLog") as {
+        entries: Array<{ kind: string; text: string }>;
+      };
+      expect(projected.entries.some((e) => e.text.includes("acknowledged the denial"))).toBe(true);
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+});
+
+describe("turn state on the wire", () => {
+  it("no post-ended log.changed strands the client on currentTurnRunning=true", async () => {
+    const h = makeScriptedSession({ rounds: [{ text: "hi" }] });
+    const { rpc, dispose } = bind(h);
+    try {
+      await rpc.call("session.submitTurn", { input: "hello" });
+      await waitFor(() => rpc.eventsOf("turn.ended").length > 0);
+      // Let the coalesced log.changed microtask flush — the end-of-turn log
+      // writes queue one BEFORE turn.ended is emitted, and it used to
+      // snapshot the still-held turn lock as currentTurnRunning=true.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const events = rpc.events;
+      const endedIdx = events.findIndex((e) => e.method === "turn.ended");
+      expect(endedIdx).toBeGreaterThan(-1);
+      const trailing = events.slice(endedIdx + 1).filter((e) => e.method === "log.changed");
+      // The racy snapshot is deterministic: there IS a trailing log.changed.
+      expect(trailing.length).toBeGreaterThan(0);
+      for (const e of trailing) {
+        const status = (e.params as { status: { currentTurnRunning: boolean } }).status;
+        expect(status.currentTurnRunning).toBe(false);
+      }
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+
+  it("getStatus during a parked ask reports not running", async () => {
+    const h = makeScriptedSession({
+      rounds: [
+        { toolCalls: [{ id: "call-1", name: "write_file", arguments: {} }] },
+        { text: "done" },
+      ],
+      tools: [testToolDef("write_file")],
+    });
+    const { rpc, dispose } = bind(h);
+    try {
+      stageApprovalGate(h, "write_file");
+      await rpc.call("session.submitTurn", { input: "write it" });
+      await waitFor(() => rpc.eventsOf("ask.pending").length > 0);
+      await waitFor(() => rpc.eventsOf("turn.ended").length > 0);
+      const status = await rpc.call("session.getStatus") as {
+        currentTurnRunning: boolean;
+      };
+      // Parked on the ask: the AskPanel owns the UI; no spinner, no stop.
+      // (_pendingTurnState only exists AFTER the ask resolves, so
+      // hasPendingTurn is false here by design.)
+      expect(status.currentTurnRunning).toBe(false);
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+});
+
+describe("model catalog over RPC", () => {
+  interface CatalogNode {
+    kind: string;
+    label: string;
+    value: string;
+    isCurrent: boolean;
+    children?: CatalogNode[];
+  }
+
+  it("returns a grouped tree with clean model-leaf labels", async () => {
+    const h = makeScriptedSession({ rounds: [] });
+    const { rpc, dispose } = bind(h);
+    try {
+      const tree = await rpc.call("session.getModelCatalog") as CatalogNode[];
+      expect(tree.length).toBeGreaterThan(0);
+      // Top level is provider/group nodes, never bare model leaves or actions.
+      for (const node of tree) {
+        expect(["group", "provider", "vendor"]).toContain(node.kind);
+      }
+      // Collect every model leaf and assert on the clean-label contract.
+      const leaves: CatalogNode[] = [];
+      const walk = (nodes: CatalogNode[]) => {
+        for (const n of nodes) {
+          if (n.kind === "model") leaves.push(n);
+          if (n.children) walk(n.children);
+        }
+      };
+      walk(tree);
+      expect(leaves.length).toBeGreaterThan(0);
+      const anthropicLeaf = leaves.find((l) => l.value.startsWith("anthropic:"));
+      expect(anthropicLeaf).toBeDefined();
+      // Label is the human name ("Claude …"), NOT the raw "provider:model".
+      expect(anthropicLeaf!.label).not.toContain(":");
+      expect(anthropicLeaf!.label.toLowerCase()).toContain("claude");
+      // Value is what selectModel accepts.
+      expect(anthropicLeaf!.value).toBe(`anthropic:${anthropicLeaf!.value.split(":")[1]}`);
+      // No "action" nodes leaked through (they'd carry flows the client lacks).
+      expect(JSON.stringify(tree)).not.toContain('"kind":"action"');
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+
+  it("meta carries a clean modelDisplayLabel and advertises the capability", () => {
+    const h = makeScriptedSession({ rounds: [] });
+    try {
+      const meta = buildMeta(h.session as unknown as Session, h.projectRoot, null);
+      expect(meta.modelDisplayLabel).toBe("GPT Test");
+      expect(meta.capabilities).toContain("modelCatalog");
+    } finally {
       h.dispose();
     }
   });

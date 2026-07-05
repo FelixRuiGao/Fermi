@@ -617,6 +617,7 @@ export class Session {
   // createChildSession wiring.
   private _askListeners = new Set<() => void>();
   private _turnLifecycleListeners = new Set<(event: TurnLifecycleEvent) => void>();
+  private _turnActive = false;
 
   /**
    * Subscribe to pending-ask changes (own asks and child-session asks).
@@ -656,6 +657,13 @@ export class Session {
   }
 
   private _emitTurnLifecycle(event: TurnLifecycleEvent): void {
+    // Track the started/ended pairing BEFORE notifying listeners, so any
+    // state snapshot taken during (or microtasks queued around) the emit
+    // observes the post-event truth. `turnActive` is the UI-facing "agent is
+    // working" signal — unlike `currentTurnRunning` (the turn LOCK, also held
+    // by MCP reloads and other non-turn operations), it flips exactly on the
+    // lifecycle boundary the wire events describe.
+    this._turnActive = event.phase === "started";
     if (!this._turnLifecycleListeners) return;
     for (const listener of this._turnLifecycleListeners) {
       try {
@@ -725,6 +733,18 @@ export class Session {
 
   get currentTurnRunning(): boolean {
     return this._turnInFlight !== null;
+  }
+
+  /**
+   * True between a lifecycle `started` and its paired `ended` — i.e. the
+   * agent is actively working a turn (activation loop or post-approval
+   * drain). This is what UI spinners/stop buttons should reflect. Distinct
+   * from `currentTurnRunning`, which reports the turn LOCK and is also held
+   * by non-turn operations (MCP reload, manual summarize setup, …) — use
+   * that one to gate restore/fork, not to drive UI state.
+   */
+  get turnActive(): boolean {
+    return this._turnActive;
   }
 
   /** Current input/turn index (1-based; advances as user inputs are delivered). */
@@ -4166,14 +4186,44 @@ export class Session {
     // status is stale here; null it like every other turn entry point so the
     // error path below can tell whether work still needs closing.
     this._lastTurnEndStatus = null;
+    // Emit `started` BEFORE the pending tool_call drain, not just when the
+    // activation loop begins: the drain executes the just-approved tool,
+    // which can run for a long time. Without this, remote clients (server
+    // mode) show an idle UI while the approved tool is actually running —
+    // the TUI never noticed because it tracks its own in-process flag.
+    if (!this._turnActive) {
+      this._emitTurnLifecycle({ phase: "started", turnIndex: this._turnCount });
+    }
     try {
-      return await this._resumeActivationStageInner(options);
+      const result = await this._resumeActivationStageInner(options);
+      // Early-return paths that never reach the activation loop (drain
+      // suspended on another ask / drain interrupted) must still pair the
+      // `started` above with an `ended`.
+      if (!this._lifecycleEndedEmitted) {
+        this._lifecycleEndedEmitted = true;
+        this._emitTurnLifecycle({
+          phase: "ended",
+          turnIndex: this._turnCount,
+          status: this._activeAsk ? "waiting" : this._lastTurnEndStatus ?? "completed",
+        });
+      }
+      return result;
     } catch (err) {
       if (!this._activeAsk) {
         this._recordTurnFailure(err, options?.signal);
       }
       if (!this._activeAsk && this._turnCount > 0 && this._lastTurnEndStatus === null) {
         this._finishCurrentWork("error");
+      }
+      // _recordTurnFailure skips abort errors and pending-ask parks; make
+      // sure the `started` emitted above still gets its `ended` twin.
+      if (!this._lifecycleEndedEmitted) {
+        this._lifecycleEndedEmitted = true;
+        this._emitTurnLifecycle({
+          phase: "ended",
+          turnIndex: this._turnCount,
+          status: this._activeAsk ? "waiting" : "interrupted",
+        });
       }
       throw err;
     }
@@ -4523,7 +4573,12 @@ export class Session {
     const turnSignalState = this._installCurrentTurnSignal(signal);
     const activeSignal = turnSignalState.signal;
     this._beginWorkIfNeeded();
-    this._emitTurnLifecycle({ phase: "started", turnIndex: this._turnCount });
+    // Idempotent: the post-approval resume path already emitted `started`
+    // before its tool_call drain (which precedes this loop); a fresh turn
+    // emits it here. Exactly one `started` per logical turn either way.
+    if (!this._turnActive) {
+      this._emitTurnLifecycle({ phase: "started", turnIndex: this._turnCount });
+    }
     try {
       let reachedLimit = true;
       for (let activationIdx = 0; activationIdx < MAX_ACTIVATIONS_PER_TURN; activationIdx++) {

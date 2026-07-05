@@ -7,8 +7,15 @@ import {
   summarizeArgs,
   filterByPrefix,
   isTurnEnd,
+  childStatusView,
+  isLiveChild,
+  liveActivitySummary,
+  thinkingTail,
+  flattenCatalogSections,
+  findCatalogNode,
+  modelLeafDescription,
 } from "../webview/model.js";
-import type { ConversationEntry } from "../src/types.js";
+import type { ChildSessionSnapshot, ConversationEntry, ModelCatalogNode } from "../src/types.js";
 
 const user = (text: string): ConversationEntry => ({ kind: "user", text, id: `u-${text}` });
 const assistant = (text: string): ConversationEntry => ({ kind: "assistant", text, id: `a-${text}` });
@@ -200,5 +207,132 @@ describe("filterByPrefix", () => {
     expect(filterByPrefix(cmds, "/mo").map((c) => c.name)).toEqual(["/model", "/mode"]);
     expect(filterByPrefix(cmds, "/MODEL").map((c) => c.name)).toEqual(["/model"]);
     expect(filterByPrefix(cmds, "/zzz")).toHaveLength(0);
+  });
+});
+
+describe("live activity view model", () => {
+  const child = (over: Partial<ChildSessionSnapshot>): ChildSessionSnapshot => ({
+    id: "c1",
+    numericId: 1,
+    logRevision: 0,
+    template: "explorer",
+    mode: "oneshot",
+    lifecycle: "running",
+    phase: "thinking",
+    outcome: "none",
+    running: true,
+    lifetimeToolCallCount: 0,
+    lastTotalTokens: 0,
+    lastToolCallSummary: "",
+    recentEvents: [],
+    pendingInboxCount: 0,
+    lastActivityAt: 0,
+    inputTokens: 0,
+    contextBudget: 0,
+    modelConfigName: "m",
+    modelProvider: "p",
+    activeLogEntryId: null,
+    turnElapsed: 0,
+    cacheReadTokens: 0,
+    ...over,
+  });
+
+  test("childStatusView maps phases to readable labels", () => {
+    expect(childStatusView(child({ phase: "tool_calling", lifetimeToolCallCount: 5, lastToolCallSummary: "grep foo" })))
+      .toEqual({
+        id: "c1",
+        label: "#1 explorer",
+        phase: "running tools",
+        needsApproval: false,
+        toolCount: 5,
+        detail: "grep foo",
+      });
+  });
+
+  test("a pending ask overrides the phase", () => {
+    const v = childStatusView(child({ pendingAskId: "ask-1", pendingAskKind: "approval" }));
+    expect(v.phase).toBe("needs approval");
+    expect(v.needsApproval).toBe(true);
+  });
+
+  test("isLiveChild: running/blocked live, idle/archived not", () => {
+    expect(isLiveChild(child({ lifecycle: "running" }))).toBe(true);
+    expect(isLiveChild(child({ lifecycle: "blocked" }))).toBe(true);
+    expect(isLiveChild(child({ lifecycle: "idle" }))).toBe(false);
+    expect(isLiveChild(child({ lifecycle: "archived" }))).toBe(false);
+  });
+
+  test("liveActivitySummary pluralizes and joins", () => {
+    expect(liveActivitySummary(1, 0)).toBe("1 agent");
+    expect(liveActivitySummary(2, 1)).toBe("2 agents · 1 shell");
+    expect(liveActivitySummary(0, 3)).toBe("3 shells");
+  });
+});
+
+describe("thinkingTail", () => {
+  test("keeps the last lines of a long stream", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
+    const tail = thinkingTail(text, 8, 700);
+    expect(tail.startsWith("line 12")).toBe(true);
+    expect(tail.endsWith("line 19")).toBe(true);
+  });
+
+  test("caps by characters even within the line window", () => {
+    const text = "x".repeat(2000);
+    expect(thinkingTail(text, 8, 700).length).toBe(700);
+  });
+});
+
+describe("model catalog view model", () => {
+  const leaf = (over: Partial<ModelCatalogNode>): ModelCatalogNode => ({
+    kind: "model",
+    id: over.value ?? "p:m",
+    value: over.value ?? "p:m",
+    label: over.label ?? "Model",
+    isCurrent: false,
+    credentialState: "configured",
+    keyMissing: false,
+    ...over,
+  });
+
+  const catalog: ModelCatalogNode[] = [
+    {
+      kind: "provider", id: "anthropic", value: "anthropic", label: "Anthropic",
+      isCurrent: false, credentialState: "configured", keyMissing: false,
+      children: [
+        leaf({ value: "anthropic:claude-haiku-4-5", label: "Claude Haiku 4.5", brandLabel: "Anthropic", contextLength: 199680, isCurrent: true }),
+        leaf({ value: "anthropic:claude-opus-4-7", label: "Claude Opus 4.7", brandLabel: "Anthropic", contextLength: 199680 }),
+      ],
+    },
+    {
+      kind: "group", id: "kimi", value: "kimi", label: "Kimi",
+      isCurrent: false, credentialState: "missing", keyMissing: true,
+      children: [
+        {
+          kind: "provider", id: "moonshot", value: "moonshot", label: "Moonshot",
+          isCurrent: false, credentialState: "missing", keyMissing: true,
+          children: [leaf({ value: "moonshot:kimi-k2", label: "Kimi K2", brandLabel: "Moonshot", keyMissing: true, credentialState: "missing", credentialHint: "key missing: run fermi init" })],
+        },
+      ],
+    },
+  ];
+
+  test("flattenCatalogSections groups model leaves under their provider label", () => {
+    const sections = flattenCatalogSections(catalog);
+    expect(sections.map((s) => s.label)).toEqual(["Anthropic", "Moonshot"]);
+    expect(sections[0].models.map((m) => m.label)).toEqual(["Claude Haiku 4.5", "Claude Opus 4.7"]);
+    expect(sections[1].models.map((m) => m.label)).toEqual(["Kimi K2"]);
+  });
+
+  test("findCatalogNode descends into children", () => {
+    expect(findCatalogNode(catalog, "anthropic:claude-opus-4-7")?.label).toBe("Claude Opus 4.7");
+    expect(findCatalogNode(catalog, "moonshot:kimi-k2")?.label).toBe("Kimi K2");
+    expect(findCatalogNode(catalog, "nope")).toBeUndefined();
+  });
+
+  test("modelLeafDescription combines brand, context, and credential hint", () => {
+    expect(modelLeafDescription(catalog[0].children![0])).toBe("Anthropic · 195K");
+    const kimi = findCatalogNode(catalog, "moonshot:kimi-k2")!;
+    expect(modelLeafDescription(kimi)).toBe("Moonshot · key missing: run fermi init");
   });
 });

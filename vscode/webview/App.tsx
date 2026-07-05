@@ -5,6 +5,7 @@ import { HeaderBar } from "./components/HeaderBar.js";
 import { Transcript } from "./components/Transcript.js";
 import { InputArea } from "./components/InputArea.js";
 import { AskPanel } from "./components/AskPanel.js";
+import { LiveActivity } from "./components/LiveActivity.js";
 import { PlanBar } from "./components/PlanBar.js";
 import { InitWizard } from "./components/InitWizard.js";
 import { BinaryNotFound, ErrorView, LoadingView } from "./components/WelcomeView.js";
@@ -29,6 +30,7 @@ export function App() {
       <HeaderBar />
       <PlanBar />
       <Transcript />
+      <LiveActivity />
       <AskPanel />
       <InputArea />
     </>

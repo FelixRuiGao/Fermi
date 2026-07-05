@@ -2,6 +2,8 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useStore } from "../store.js";
 import { onEvent, rpcRequest } from "../vscode-api.js";
 import { CommandPanel, type CommandPanelController } from "./CommandPanel.js";
+import { AGENT_MODES, MODE_DESCRIPTIONS } from "../commands.js";
+import { flattenCatalogSections, modelLeafDescription } from "../model.js";
 import {
   IconPlus,
   IconSlash,
@@ -15,6 +17,7 @@ import {
   IconX,
   IconBranch,
   IconFolder,
+  IconSliders,
 } from "./icons.js";
 
 const PERM_MODES = [
@@ -66,6 +69,7 @@ export function InputArea() {
   const [showSlashPanel, setShowSlashPanel] = useState(false);
   const [slashViaButton, setSlashViaButton] = useState(false);
   const [panelInFlow, setPanelInFlow] = useState(false);
+  const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const panelController = useRef<CommandPanelController | null>(null);
   const [fileQuery, setFileQuery] = useState<{ query: string; start: number } | null>(null);
   const [fileResults, setFileResults] = useState<string[]>([]);
@@ -78,21 +82,20 @@ export function InputArea() {
   const [modelOpen, setModelOpen, modelRef] = usePopup();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const [modeOpen, setModeOpen, modeRef] = usePopup();
+
   const submitTurn = useStore((s) => s.submitTurn);
   const interruptTurn = useStore((s) => s.interruptTurn);
   const isRunning = useStore((s) => s.status?.currentTurnRunning ?? false);
+  const hasPendingAsk = useStore((s) => s.pendingAsk !== null);
   const meta = useStore((s) => s.meta);
   const status = useStore((s) => s.status);
   const models = useStore((s) => s.models);
+  const modelCatalog = useStore((s) => s.modelCatalog);
   const hasConversation = useStore((s) => s.conversation.length > 0);
   const agentMode = useStore((s) => s.agentMode);
   const goal = useStore((s) => s.goal);
-  const children = useStore((s) => s.children);
-  const shells = useStore((s) => s.shells);
   const addInfoCard = useStore((s) => s.addInfoCard);
-
-  const liveAgents = children.filter((c) => c.lifecycle === "running" || c.lifecycle === "blocked");
-  const liveShells = shells.filter((sh) => sh.status === "running");
 
   useEffect(() => {
     rpcRequest<{ workspaceName: string | null; branch: string | null }>("__ext.getContext")
@@ -123,6 +126,25 @@ export function InputArea() {
     setSlashViaButton(false);
     setInput("");
   }, []);
+
+  const clearComposerInput = useCallback(() => setInput(""), []);
+
+  // Open the command panel and run a specific command (e.g. the composer's
+  // "More models…" jumping into /model). The panel mounts on the next render;
+  // its controller wires up in a child effect that runs before this one, so
+  // by the time this fires panelController.current is populated.
+  const openCommand = useCallback((name: string) => {
+    setSlashViaButton(true);
+    setPendingCommand(name);
+    setShowSlashPanel(true);
+  }, []);
+
+  useEffect(() => {
+    if (showSlashPanel && pendingCommand && panelController.current) {
+      panelController.current.runByName(pendingCommand);
+      setPendingCommand(null);
+    }
+  }, [showSlashPanel, pendingCommand]);
 
   const acceptFileSuggestion = useCallback(
     (path: string) => {
@@ -187,9 +209,16 @@ export function InputArea() {
         const idx = PERM_MODES.findIndex((p) => p.mode === current);
         const next = PERM_MODES[(idx + 1) % PERM_MODES.length];
         rpcRequest("session.setPermissionMode", { mode: next.mode });
+      } else if (e.key === "Tab") {
+        // Cycle agent mode, mirroring the TUI's Tab. The mode.changed event
+        // updates the store (and the selector under the composer).
+        e.preventDefault();
+        const idx = AGENT_MODES.indexOf(agentMode);
+        const next = AGENT_MODES[(idx + 1) % AGENT_MODES.length];
+        rpcRequest("session.setMode", { mode: next });
       }
     },
-    [handleSubmit, isRunning, interruptTurn, showSlashPanel, status?.permissionMode, fileQuery, fileResults, fileSel, acceptFileSuggestion],
+    [handleSubmit, isRunning, interruptTurn, showSlashPanel, status?.permissionMode, agentMode, fileQuery, fileResults, fileSel, acceptFileSuggestion],
   );
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -239,17 +268,37 @@ export function InputArea() {
   const perm = permDef(status?.permissionMode ?? "reversible");
   const PermIcon = perm.Icon;
 
-  const modelName = meta?.modelConfigName
-    ? meta.modelConfigName.includes(":")
-      ? meta.modelConfigName.split(":")[1]
-      : meta.modelConfigName
-    : "No model";
+  // Prefer the server's clean display label ("Claude Haiku 4.5"); fall back to
+  // stripping the provider prefix off the raw config name on old binaries.
+  const modelName = meta?.modelDisplayLabel
+    || (meta?.modelConfigName
+      ? meta.modelConfigName.includes(":")
+        ? meta.modelConfigName.split(":")[1]
+        : meta.modelConfigName
+      : "No model");
+
+  const catalogSections = modelCatalog.length > 0
+    ? flattenCatalogSections(modelCatalog)
+        .map((s) => ({ ...s, models: s.models.filter((m) => !m.keyMissing) }))
+        .filter((s) => s.models.length > 0)
+    : [];
+
+  const pickModel = (value: string) => {
+    setModelOpen(false);
+    rpcRequest("session.selectModel", { name: value }).catch((err) => {
+      addInfoCard({
+        kind: "text",
+        title: "Model",
+        body: err instanceof Error ? err.message : String(err),
+      });
+    });
+  };
 
   const tokens = status?.lastInputTokens ?? 0;
   const budget = status?.contextBudget ?? 0;
   const pct = budget > 0 ? Math.round((tokens / budget) * 100) : 0;
 
-  const placeholder = isRunning
+  const placeholder = isRunning || hasPendingAsk
     ? "Queue a follow-up…"
     : hasConversation
       ? "Reply…"
@@ -293,6 +342,7 @@ export function InputArea() {
           filter={slashViaButton || panelInFlow ? "/" : input.trimStart()}
           onClose={closeSlash}
           onFlowStarted={handleFlowStarted}
+          onCommandRun={clearComposerInput}
           controllerRef={panelController}
         />
       )}
@@ -311,7 +361,7 @@ export function InputArea() {
             <IconPlus size={14} />
           </button>
           <button
-            className={showSlashPanel ? "ctrl-btn active" : "ctrl-btn"}
+            className={showSlashPanel ? "ctrl-btn ctrl-btn-slash active" : "ctrl-btn ctrl-btn-slash"}
             title="Commands"
             onClick={() => {
               if (showSlashPanel) {
@@ -326,9 +376,9 @@ export function InputArea() {
           </button>
 
           <div style={{ position: "relative" }} ref={permRef}>
-            <button className={perm.pillClass} onClick={() => setPermOpen(!permOpen)} title={perm.desc}>
+            <button className={perm.pillClass} onClick={() => setPermOpen(!permOpen)} title={`${perm.label} — ${perm.desc} (Shift+Tab cycles)`}>
               <PermIcon size={12} />
-              {perm.label}
+              <span className="pill-label">{perm.label}</span>
             </button>
             {permOpen && (
               <div className="popup-menu" style={{ bottom: 32, left: 0 }}>
@@ -366,41 +416,57 @@ export function InputArea() {
               <IconChevronDown size={10} />
             </button>
             {modelOpen && (
-              <div className="popup-menu" style={{ bottom: 32, right: 0, maxHeight: 280, overflowY: "auto" }}>
-                <div className="popup-title">Model</div>
-                {models.length === 0 && (
-                  <div className="popup-item" style={{ color: "var(--f-faint)", cursor: "default" }}>
-                    No models configured
-                  </div>
-                )}
-                {models.map((m) => {
-                  const active = m.name === meta?.modelConfigName;
-                  return (
-                    <div
-                      key={m.name}
-                      className="popup-item"
-                      onClick={() => {
-                        rpcRequest("session.selectModel", { name: m.name });
-                        setModelOpen(false);
-                      }}
-                    >
-                      <span className="pi-text">
-                        <span className="pi-label">{m.name}</span>
-                        <span className="pi-desc" style={{ display: "block" }}>
-                          {m.provider} · {Math.round(m.contextLength / 1024)}K
-                        </span>
-                      </span>
-                      {active && <span className="pi-check"><IconCheck size={12} /></span>}
+              <div className="popup-menu model-menu" style={{ bottom: 32, right: 0, maxHeight: 340, overflowY: "auto" }}>
+                {catalogSections.length > 0 ? (
+                  <>
+                    {catalogSections.map((section) => (
+                      <div key={section.label} className="model-menu-group">
+                        {section.label && <div className="popup-group-label">{section.label}</div>}
+                        {section.models.map((node) => (
+                          <div key={node.value} className="popup-item model-item" onClick={() => pickModel(node.value)}>
+                            <span className="pi-text">
+                              <span className="pi-label">{node.label}</span>
+                              <span className="pi-desc" style={{ display: "block" }}>{modelLeafDescription(node)}</span>
+                            </span>
+                            {node.isCurrent && <span className="pi-check"><IconCheck size={12} /></span>}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    <div className="popup-more" onClick={() => { setModelOpen(false); openCommand("/model"); }}>
+                      More models & providers…
                     </div>
-                  );
-                })}
+                  </>
+                ) : (
+                  <>
+                    <div className="popup-title">Model</div>
+                    {models.length === 0 && (
+                      <div className="popup-item" style={{ color: "var(--f-faint)", cursor: "default" }}>
+                        No models configured
+                      </div>
+                    )}
+                    {models.map((m) => (
+                      <div key={m.name} className="popup-item model-item" onClick={() => pickModel(m.name)}>
+                        <span className="pi-text">
+                          <span className="pi-label">{m.name}</span>
+                          <span className="pi-desc" style={{ display: "block" }}>
+                            {m.provider} · {Math.round(m.contextLength / 1024)}K
+                          </span>
+                        </span>
+                        {m.name === meta?.modelConfigName && <span className="pi-check"><IconCheck size={12} /></span>}
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
 
           {budget > 0 && <ContextRing tokens={tokens} cached={status?.lastCacheReadTokens ?? 0} budget={budget} pct={pct} />}
 
-          {isRunning ? (
+          {isRunning || hasPendingAsk ? (
+            // While parked on an ask, stop = deny-and-stop (the server's
+            // requestTurnInterrupt resolves the pending ask as denied).
             <button className="send-btn send-btn-stop" onClick={() => interruptTurn()} title="Stop (Esc)">
               <IconStop size={12} />
             </button>
@@ -418,54 +484,54 @@ export function InputArea() {
       </div>
 
       <div className="context-chips">
+        <div className="mode-select-wrap" ref={modeRef}>
+          <button
+            className={agentMode === "default" ? "mode-select" : "mode-select mode-select-active"}
+            onClick={() => setModeOpen(!modeOpen)}
+            title={`Agent mode: ${agentMode} — ${MODE_DESCRIPTIONS[agentMode] ?? ""} (Tab cycles)`}
+          >
+            <IconSliders size={11} />
+            <span className="mode-label">{agentMode}</span>
+            <IconChevronDown size={9} />
+          </button>
+          {modeOpen && (
+            <div className="popup-menu" style={{ bottom: 24, left: 0 }}>
+              <div className="popup-title">Agent mode</div>
+              {AGENT_MODES.map((m) => (
+                <div
+                  key={m}
+                  className="popup-item"
+                  onClick={() => {
+                    rpcRequest("session.setMode", { mode: m });
+                    setModeOpen(false);
+                  }}
+                >
+                  <span className="pi-text">
+                    <span className="pi-label">{m}</span>
+                    <span className="pi-desc" style={{ display: "block" }}>{MODE_DESCRIPTIONS[m] ?? ""}</span>
+                  </span>
+                  {m === agentMode && <span className="pi-check"><IconCheck size={12} /></span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         {workspaceInfo.workspaceName && (
-          <span className="context-chip" title={meta?.workDir ?? undefined}>
+          <span className="context-chip chip-workspace" title={meta?.workDir ?? undefined}>
             <IconFolder size={11} />
-            {workspaceInfo.workspaceName}
+            <span className="chip-text">{workspaceInfo.workspaceName}</span>
           </span>
         )}
         {workspaceInfo.branch && (
-          <span className="context-chip" title="Git branch">
+          <span className="context-chip chip-branch" title="Git branch">
             <IconBranch size={11} />
-            {workspaceInfo.branch}
+            <span className="chip-text">{workspaceInfo.branch}</span>
           </span>
         )}
         <span className="chips-right">
-          {liveAgents.length > 0 && (
-            <span
-              className="context-chip"
-              style={{ cursor: "pointer" }}
-              title={liveAgents.map((c) => `#${c.numericId} ${c.template} · ${c.phase}`).join("\n")}
-              onClick={() =>
-                addInfoCard({
-                  kind: "text",
-                  title: "Agents",
-                  body: children
-                    .map((c) => `#${c.numericId} ${c.template} · ${c.lifecycle}/${c.phase} · ${c.lifetimeToolCallCount} tools — ${c.lastToolCallSummary || "…"}`)
-                    .join("\n"),
-                  mono: true,
-                })
-              }
-            >
-              ⛭ {liveAgents.length} agent{liveAgents.length > 1 ? "s" : ""}
-            </span>
-          )}
-          {liveShells.length > 0 && (
-            <span
-              className="context-chip"
-              title={liveShells.map((sh) => `$ ${sh.command}`).join("\n") + "\n(/shells to manage)"}
-            >
-              ❯ {liveShells.length} shell{liveShells.length > 1 ? "s" : ""}
-            </span>
-          )}
           {goal && (
             <span className="context-chip" title={`Goal: ${goal}`} style={{ color: "var(--f-accent)" }}>
               ◎ goal
-            </span>
-          )}
-          {agentMode !== "default" && (
-            <span className="context-chip" title={`Agent mode: ${agentMode} (change via /mode)`}>
-              {agentMode}
             </span>
           )}
         </span>

@@ -124,6 +124,13 @@ export const IconEye = icon(
 export const IconList = icon(
   <path d="M5.5 4.5H13M5.5 8H13M5.5 11.5H13M3 4.5h.01M3 8h.01M3 11.5h.01" />,
 );
+export const IconSliders = icon(
+  <>
+    <path d="M2.5 5h5.6M11.3 5h2.2M2.5 11h2.2M7.9 11h5.6" />
+    <circle cx="9.7" cy="5" r="1.6" />
+    <circle cx="6.3" cy="11" r="1.6" />
+  </>,
+);
 export const IconCircle = icon(<circle cx="8" cy="8" r="5" />);
 export const IconCircleDot = icon(
   <>

@@ -1,13 +1,25 @@
 import React, { useState } from "react";
 import type { ConversationEntry } from "../../src/types.js";
-import type { WorkItem } from "../model.js";
+import { thinkingTail, type WorkItem } from "../model.js";
 import { ToolCallEntry } from "./ToolCallEntry.js";
 import { IconChevronRight, IconGear, IconAgent } from "./icons.js";
 
 export type { WorkItem } from "../model.js";
 
-function ThinkingItem({ text }: { text: string }) {
+function ThinkingItem({ text, streaming }: { text: string; streaming?: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  if (streaming) {
+    // Live: show the tail of the stream as it arrives instead of hiding the
+    // thought behind a collapsed toggle until it's already over.
+    return (
+      <div className="thinking-block">
+        <div className="thinking-header" style={{ cursor: "default" }}>
+          <span className="shimmer-text">Thinking…</span>
+        </div>
+        {text.trim() && <div className="thinking-body thinking-live">{thinkingTail(text)}</div>}
+      </div>
+    );
+  }
   return (
     <div className="thinking-block">
       <div className="thinking-header" onClick={() => setExpanded(!expanded)}>
@@ -32,14 +44,19 @@ function StatusItem({ entry }: { entry: ConversationEntry }) {
   );
 }
 
-export function renderWorkItem(item: WorkItem, index: number, running: boolean): React.ReactNode {
+export function renderWorkItem(
+  item: WorkItem,
+  index: number,
+  running: boolean,
+  streaming = false,
+): React.ReactNode {
   if (item.type === "tool") {
     return <ToolCallEntry key={item.view.key} view={item.view} running={running} />;
   }
   const entry = item.entry;
   const key = entry.id ?? `w-${index}`;
   if (entry.kind === "reasoning") {
-    return <ThinkingItem key={key} text={entry.text} />;
+    return <ThinkingItem key={key} text={entry.text} streaming={streaming} />;
   }
   if (!entry.text.trim()) return null;
   return <StatusItem key={key} entry={entry} />;

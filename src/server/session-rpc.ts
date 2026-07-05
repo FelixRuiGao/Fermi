@@ -18,8 +18,10 @@ import type { PermissionMode } from "../permissions/index.js";
 import { projectToTuiEntries } from "../log-projection.js";
 import { randomSessionId, saveGlobalSettingsPatch, saveLog, SessionStore, type AgentModelEntry, type ModelTierEntry } from "../persistence.js";
 import { applySessionRestore } from "../session-resume.js";
-import { getTierEligibleThinkingLevels, getThinkingLevels } from "../config.js";
-import { createModelTierEntry } from "../model-selection.js";
+import { getContextLength, getTierEligibleThinkingLevels, getThinkingLevels } from "../config.js";
+import { createModelTierEntry, resolveModelSelection } from "../model-selection.js";
+import { buildModelPickerTree, type ModelPickerTreeNode } from "../model-picker-tree.js";
+import { describeModel } from "../model-presentation.js";
 import { AGENT_MODES, isAgentMode } from "../modes/index.js";
 import { resolveSkillContent } from "../skills/loader.js";
 import { getAllMcpServerNames, setMcpServerDisabled } from "../mcp-settings.js";
@@ -35,6 +37,7 @@ import type {
   ModelTierStatusPayload,
   ModelTierLevel,
   SharedSettingsPayload,
+  ModelCatalogNode,
 } from "../protocol/index.js";
 
 export interface SessionRpcOptions {
@@ -82,6 +85,8 @@ export const PROTOCOL_CAPABILITIES = [
   "watchEvents",
   /** sub_agent_done projection entries carry subAgentId/subAgentName meta */
   "childMeta",
+  /** session.getModelCatalog (grouped model tree) + selectModel accepts preset provider:model + meta.modelDisplayLabel */
+  "modelCatalog",
 ] as const;
 
 interface SessionStoreAccess {
@@ -112,6 +117,21 @@ interface AgentModelPinsPayload {
   }[];
 }
 
+function currentModelDisplayLabel(s: Session): string {
+  const mc = s.primaryAgent?.modelConfig;
+  if (!mc?.model) return s.currentModelConfigName ?? "";
+  try {
+    return describeModel({
+      configName: s.currentModelConfigName ?? undefined,
+      providerId: mc.provider,
+      selectionKey: mc.model,
+      modelId: mc.model,
+    }).modelLabel;
+  } catch {
+    return s.currentModelConfigName ?? "";
+  }
+}
+
 export function buildMeta(s: Session, workDir: string, sessionDir: string | null): MetaPayload {
   return {
     sessionId: sessionDir ? basename(sessionDir) : s.createdAt,
@@ -121,6 +141,7 @@ export function buildMeta(s: Session, workDir: string, sessionDir: string | null
     workDir,
     modelConfigName: s.currentModelConfigName ?? "",
     modelProvider: s.primaryAgent?.modelConfig?.provider ?? "",
+    modelDisplayLabel: currentModelDisplayLabel(s),
     thinkingLevel: s.thinkingLevel ?? "none",
     accentColor: s.accentColor,
     turnCount: s.turnCount,
@@ -131,7 +152,14 @@ export function buildMeta(s: Session, workDir: string, sessionDir: string | null
 
 function buildStatus(s: Session): StatusPayload {
   return {
-    currentTurnRunning: s.currentTurnRunning,
+    // The wire field drives client spinners/stop buttons, so it reports
+    // `turnActive` (lifecycle started↔ended pairing), NOT the turn lock:
+    // the lock is also held by non-turn operations and — worse — is still
+    // held when the final coalesced log.changed snapshot is taken after
+    // `turn.ended` was emitted, which used to strand clients on a stale
+    // currentTurnRunning=true forever. Lock-based gating (fork/restore)
+    // keeps using session.currentTurnRunning directly.
+    currentTurnRunning: s.turnActive,
     sessionPhase: s.sessionPhase,
     lastTurnEndStatus: s.lastTurnEndStatus,
     pendingInboxCount: s.pendingInboxCount,
@@ -252,6 +280,47 @@ function buildHooksStatus(s: Session): HooksStatusPayload {
       };
     }),
   };
+}
+
+/**
+ * Serialize the TUI model picker tree for the wire. Drops "action" nodes
+ * (Add provider / Discover / Manage) — those drive credential/discovery flows
+ * the out-of-process clients don't implement yet — and enriches model leaves
+ * with a known context length so the UI can show "195K".
+ */
+function serializeCatalogNode(node: ModelPickerTreeNode): ModelCatalogNode {
+  const children = node.children
+    ?.filter((c) => c.kind !== "action")
+    .map(serializeCatalogNode);
+  const contextLength = node.kind === "model" && node.modelId
+    ? getContextLength(node.modelId)
+    : 0;
+  return {
+    kind: node.kind as ModelCatalogNode["kind"],
+    id: node.id,
+    value: node.value,
+    label: node.label,
+    isCurrent: node.isCurrent,
+    credentialState: node.credentialState,
+    keyMissing: node.keyMissing,
+    ...(node.note ? { note: node.note } : {}),
+    ...(node.brandLabel ? { brandLabel: node.brandLabel } : {}),
+    ...(node.credentialHint ? { credentialHint: node.credentialHint } : {}),
+    ...(node.providerId ? { providerId: node.providerId } : {}),
+    ...(node.modelId ? { modelId: node.modelId } : {}),
+    ...(contextLength > 0 ? { contextLength } : {}),
+    ...(children && children.length > 0 ? { children } : {}),
+  };
+}
+
+function buildModelCatalog(s: Session): ModelCatalogNode[] {
+  return buildModelPickerTree({
+    session: s,
+    includeAddProviderAction: false,
+    includeLocalDiscoverActions: false,
+  })
+    .filter((node) => node.kind !== "action")
+    .map(serializeCatalogNode);
 }
 
 function buildModelTierStatus(s: Session): ModelTierStatusPayload {
@@ -661,7 +730,16 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     return { ok: true };
   });
   server.on("session.hasRunningChildAgents", () => session.hasRunningChildAgents());
-  server.on("session.denyPendingAsk", () => ({ denied: session.denyPendingAsk() }));
+  server.on("session.denyPendingAsk", () => {
+    // Deny-and-continue, like clicking the "Deny" offer: the model must see
+    // the denial tool_result to react to it. Deny-and-STOP is a different
+    // entry point (session.requestTurnInterrupt handles a pending ask).
+    let denied = false;
+    resolveThenResume(() => {
+      denied = session.denyPendingAsk();
+    });
+    return { denied };
+  });
   server.on("session.getShellReport", () => {
     const getReport = (session as unknown as { _buildShellReport?: () => string })._buildShellReport;
     return typeof getReport === "function" ? getReport.call(session) : "No shells tracked.";
@@ -682,11 +760,29 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   // ── Ask resolution ──
   server.on("session.getPendingAsk", () => session.getPendingAsk());
 
+  // Resolving a ROOT ask only parks the decision (_pendingTurnState); the
+  // runtime deliberately leaves the resume to the caller so the TUI can own
+  // its abort controller. Over RPC the server IS that caller: without this,
+  // an approval from a remote client left the session suspended forever.
+  // The before/after transition check scopes the resume to root asks that
+  // THIS resolution parked: child-ask resolutions (routing resumes children
+  // itself) must not resurrect a stale root pending state left behind by an
+  // earlier deny-and-stop.
+  const resolveThenResume = (resolve: () => void): void => {
+    const parkedBefore = session.hasPendingTurnToResume();
+    resolve();
+    if (parkedBefore || !session.hasPendingTurnToResume()) return;
+    void session.resumePendingTurn().catch(() => {
+      // Failures surface through the runtime's error log entry + lifecycle
+      // ended(error) event, same as fire-and-forget turns.
+    });
+  };
+
   server.on("session.resolveApprovalAsk", (params) => {
     const p = expectObject(params, "session.resolveApprovalAsk");
     const askId = expectString(p, "askId", "session.resolveApprovalAsk");
     const choiceIndex = optNumber(p, "choiceIndex") ?? 0;
-    session.resolveApprovalAsk(askId, choiceIndex);
+    resolveThenResume(() => session.resolveApprovalAsk(askId, choiceIndex));
     return { ok: true };
   });
 
@@ -697,7 +793,7 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     if (!decision || !Array.isArray(decision.answers)) {
       throw new Error("session.resolveAgentQuestionAsk: 'decision.answers' must be an array");
     }
-    session.resolveAgentQuestionAsk(askId, decision as never);
+    resolveThenResume(() => session.resolveAgentQuestionAsk(askId, decision as never));
     return { ok: true };
   });
 
@@ -723,8 +819,18 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.selectModel", (params) => {
     const p = expectObject(params, "session.selectModel");
     const name = expectString(p, "name", "session.selectModel");
-    session.switchModel(name);
-    server.emit("model.changed", { name });
+    // Resolve preset `provider:selectionKey` values the same way the TUI
+    // /model does: a known config name resolves to itself; a preset model on
+    // an already-authenticated provider gets a runtime config auto-created;
+    // an unauthenticated provider throws a helpful message (surfaced as an
+    // RPC error the client shows). Without this, switchModel(name) threw for
+    // every catalog entry that wasn't already an explicit settings.json config.
+    const resolved = resolveModelSelection(session, name);
+    session.switchModel(resolved.selectedConfigName);
+    server.emit("model.changed", {
+      name: resolved.selectedConfigName,
+      displayLabel: currentModelDisplayLabel(session),
+    });
     // Optional thinking level, applied after the switch (mirrors the TUI's
     // /model → thinking picker chain).
     const thinkingLevel = optString(p, "thinkingLevel");
@@ -737,6 +843,8 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     }
     return buildMeta(session, workDir, sessionDir);
   });
+
+  server.on("session.getModelCatalog", () => buildModelCatalog(session));
 
   server.on("session.getThinkingLevels", () => ({
     levels: getThinkingLevels(session.currentModelName ?? ""),

@@ -26,11 +26,15 @@ function ApprovalAsk({ ask }: { ask: AskPayload }) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Enter-to-approve must not fire while the user is typing a follow-up
+      // in the composer (or any input) — that silently approved the tool.
+      const target = e.target as HTMLElement | null;
+      const typing = target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         void denyAsk();
-      } else if (e.key === "Enter" && options.length > 0) {
+      } else if (e.key === "Enter" && !typing && options.length > 0) {
         e.preventDefault();
         e.stopPropagation();
         void resolveAsk(ask.id, 0);

@@ -69,9 +69,10 @@ export class SessionManager {
       return;
     }
 
-    this.process = new FermiProcess(resolved.path, workDir);
+    const proc = new FermiProcess(resolved.path, workDir);
+    this.process = proc;
 
-    this.process.on("server-event", (method: string, params: unknown) => {
+    proc.on("server-event", (method: string, params: unknown) => {
       if (method === "ready") {
         this._cachedMeta = params as SessionMeta;
         this._needsInit = false;
@@ -99,12 +100,18 @@ export class SessionManager {
       this.emit(method, params);
     });
 
-    this.process.on("stderr", (text: string) => {
+    proc.on("stderr", (text: string) => {
       this.outputChannel.append(text);
     });
 
-    this.process.on("exit", (code: number | null) => {
+    proc.on("exit", (code: number | null) => {
       this.outputChannel.appendLine(`fermi server exited with code ${code}`);
+      // A process we've already replaced (killed during a /new restart, or
+      // after dispose) is not a crash — only the CURRENT process exiting
+      // unexpectedly is. Comparing the instance keeps the old process's
+      // teardown from flashing the "Something went wrong" screen on every
+      // new session. A genuine crash leaves `this.process === proc`.
+      if (this.process !== proc) return;
       vscode.commands.executeCommand("setContext", "fermi.isConnected", false);
       vscode.commands.executeCommand("setContext", "fermi.isRunning", false);
       // Tell the webview. Without this the UI silently froze at its last

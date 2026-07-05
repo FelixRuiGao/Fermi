@@ -1,4 +1,4 @@
-import type { ConversationEntry } from "../src/types.js";
+import type { ChildSessionSnapshot, ConversationEntry, ModelCatalogNode } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
 // Pure view-model logic for the webview — no DOM, no vscode-api imports.
@@ -183,6 +183,116 @@ export function buildBlocks(entries: ConversationEntry[]): Block[] {
   }
   flushWork();
   return blocks;
+}
+
+// ── Live activity (persistent agents/shells strip above the composer) ──
+
+export interface ChildStatusView {
+  id: string;
+  label: string;
+  phase: string;
+  needsApproval: boolean;
+  toolCount: number;
+  detail: string;
+}
+
+const CHILD_PHASE_LABELS: Record<string, string> = {
+  idle: "idle",
+  thinking: "thinking",
+  tool_calling: "running tools",
+  generating: "writing",
+  waiting: "waiting",
+};
+
+export function childStatusView(c: ChildSessionSnapshot): ChildStatusView {
+  const needsApproval = Boolean(c.pendingAskId);
+  return {
+    id: c.id,
+    label: `#${c.numericId} ${c.template}`,
+    phase: needsApproval
+      ? "needs approval"
+      : CHILD_PHASE_LABELS[c.phase] ?? c.phase,
+    needsApproval,
+    toolCount: c.lifetimeToolCallCount,
+    detail: c.lastToolCallSummary || "",
+  };
+}
+
+export function isLiveChild(c: ChildSessionSnapshot): boolean {
+  return c.lifecycle === "running" || c.lifecycle === "blocked";
+}
+
+export function liveActivitySummary(agentCount: number, shellCount: number): string {
+  const parts: string[] = [];
+  if (agentCount > 0) parts.push(`${agentCount} agent${agentCount === 1 ? "" : "s"}`);
+  if (shellCount > 0) parts.push(`${shellCount} shell${shellCount === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
+/** Trailing lines of an in-flight reasoning stream (chars capped so a huge
+ * thought doesn't bloat the live view). */
+export function thinkingTail(text: string, maxLines = 8, maxChars = 700): string {
+  const lines = text.trimEnd().split("\n");
+  let tail = lines.slice(-maxLines).join("\n");
+  if (tail.length > maxChars) tail = tail.slice(-maxChars);
+  return tail;
+}
+
+// ── Model catalog (grouped picker tree) ──
+
+export interface ModelCatalogSection {
+  /** Section header — the nearest provider/vendor label above the models. */
+  label: string;
+  models: ModelCatalogNode[];
+}
+
+/**
+ * Flatten the nested catalog (group → provider → vendor → model) into
+ * provider-labeled sections of model leaves — for the composer's compact
+ * dropdown, which shows headers instead of a full drill-down. Each section's
+ * label is the immediate parent (provider or, for OpenRouter, vendor).
+ */
+export function flattenCatalogSections(nodes: readonly ModelCatalogNode[]): ModelCatalogSection[] {
+  const sections: ModelCatalogSection[] = [];
+  const visit = (list: readonly ModelCatalogNode[], parentLabel: string): void => {
+    const models = list.filter((n) => n.kind === "model");
+    if (models.length > 0) sections.push({ label: parentLabel, models });
+    for (const node of list) {
+      if (node.kind !== "model" && node.children && node.children.length > 0) {
+        visit(node.children, node.label);
+      }
+    }
+  };
+  visit(nodes, "");
+  return sections;
+}
+
+/** Depth-first search for a node by its `value` (for drill-down resolution). */
+export function findCatalogNode(
+  nodes: readonly ModelCatalogNode[],
+  value: string,
+): ModelCatalogNode | undefined {
+  for (const node of nodes) {
+    if (node.value === value) return node;
+    if (node.children) {
+      const hit = findCatalogNode(node.children, value);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/** Secondary line for a model leaf: brand · context · (credential hint). */
+export function modelLeafDescription(node: ModelCatalogNode): string {
+  const parts: string[] = [];
+  if (node.brandLabel) parts.push(node.brandLabel);
+  else if (node.providerId) parts.push(node.providerId);
+  if (node.contextLength && node.contextLength > 0) {
+    parts.push(`${Math.round(node.contextLength / 1024)}K`);
+  }
+  if (node.note) parts.push(node.note);
+  if (node.keyMissing && node.credentialHint) parts.push(node.credentialHint);
+  return parts.join(" · ");
 }
 
 // ── Command filtering (prefix match, mirroring the TUI completion) ──

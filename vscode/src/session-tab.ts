@@ -16,7 +16,6 @@ class SessionEditorBackend implements WebviewBackend {
   private needsInit = false;
   private binaryNotFound = false;
   private restored = false;
-  private intentionalKill = false;
   private handlers = new Set<(method: string, params: unknown) => void>();
 
   constructor(
@@ -48,9 +47,10 @@ class SessionEditorBackend implements WebviewBackend {
       return;
     }
 
-    this.process = new FermiProcess(resolved.path, workDir);
+    const proc = new FermiProcess(resolved.path, workDir);
+    this.process = proc;
 
-    this.process.on("server-event", async (method: string, params: unknown) => {
+    proc.on("server-event", async (method: string, params: unknown) => {
       if (method === "ready") {
         // First ready: restore the requested session, then forward subsequent state.
         if (!this.restored) {
@@ -70,20 +70,19 @@ class SessionEditorBackend implements WebviewBackend {
       this.emit(method, params);
     });
 
-    this.process.on("stderr", (text: string) => this.outputChannel.append(text));
-    this.process.on("exit", () => {
-      // Suppress error during an intentional restart (kill + start).
-      if (this.intentionalKill) {
-        this.intentionalKill = false;
-        return;
-      }
+    proc.on("stderr", (text: string) => this.outputChannel.append(text));
+    proc.on("exit", () => {
+      // Only the CURRENT process exiting is a crash. A process we've already
+      // replaced (intentional restart) or torn down (dispose) has
+      // `this.process !== proc` and is suppressed — same instance-compare the
+      // sidebar SessionManager uses, so /new doesn't flash an error screen.
+      if (this.process !== proc) return;
       this.emit("error", { message: "Fermi server exited." });
     });
   }
 
   kill(): void {
     if (this.process) {
-      this.intentionalKill = true;
       this.process.kill();
       this.process = undefined;
     }

@@ -1,6 +1,6 @@
 import { rpcRequest } from "./vscode-api.js";
 import { useStore, type NewInfoCard } from "./store.js";
-import { filterByPrefix } from "./model.js";
+import { filterByPrefix, findCatalogNode, modelLeafDescription } from "./model.js";
 import type {
   SummarizeTarget,
   RewindTarget,
@@ -10,6 +10,7 @@ import type {
   HooksStatusPayload,
   ThinkingLevelsPayload,
   SharedSettingsPayload,
+  ModelCatalogNode,
 } from "../src/types.js";
 import reviewTemplate from "../../prompts/review.md";
 
@@ -105,14 +106,15 @@ function relativeTime(isoOrMs?: string | number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-// ── Mirrors src/modes/index.ts MODE_DESCRIPTIONS ──
-const MODE_DESCRIPTIONS: Record<string, string> = {
+// ── Mirrors src/modes/index.ts MODE_DESCRIPTIONS (shared with the composer's
+// mode selector) ──
+export const MODE_DESCRIPTIONS: Record<string, string> = {
   default: "Balanced everyday collaboration",
   vibe: "You steer by outcomes; the agent owns the implementation",
   scale: "Large multi-part work: design first, delegate reading, checkpoint discipline",
   auto: "Long-running self-directed loops: ledger, verify-then-advance, keep going",
 };
-const AGENT_MODES = ["default", "vibe", "scale", "auto"];
+export const AGENT_MODES = ["default", "vibe", "scale", "auto"];
 
 const PERMISSION_MODES = [
   { mode: "reversible", label: "Approve edits", desc: "Ask before file changes" },
@@ -180,6 +182,69 @@ async function dispatchReview(kind: string, detail: string, note: string): Promi
   } else {
     await state().submitTurn(content);
   }
+}
+
+// ── Model picker (grouped catalog) ──
+
+/**
+ * Switch to `name`, then chain into the thinking-level picker like the TUI's
+ * /model. `name` is a config name or provider:selectionKey; the server
+ * resolves preset models and auto-configures already-authenticated providers.
+ * A provider needing a key throws a helpful message we surface as a card.
+ */
+async function selectModelThenThinking(name: string): Promise<PanelView | void> {
+  try {
+    await rpcRequest("session.selectModel", { name });
+  } catch (err) {
+    textCard("Model", err instanceof Error ? err.message : String(err));
+    return;
+  }
+  if (!hasCapability("thinkingLevel")) return;
+  const t = await rpcRequest<ThinkingLevelsPayload>("session.getThinkingLevels");
+  if (!t || t.levels.length <= 1) return;
+  return picker({
+    title: "Thinking level",
+    items: t.levels.map((level) => ({
+      label: level,
+      value: level,
+      active: level === t.current,
+    })),
+    onSelect: async (level) => {
+      await rpcRequest("session.setThinkingLevel", { level });
+    },
+  });
+}
+
+/** A drill-down picker over the grouped model catalog. */
+function modelCatalogPicker(nodes: ModelCatalogNode[], title: string): PanelView {
+  return picker({
+    title,
+    emptyText: "No models available",
+    items: nodes.map((node) => {
+      const isBranch = Boolean(node.children && node.children.length > 0);
+      if (isBranch) {
+        return {
+          label: node.label,
+          description: node.brandLabel && node.brandLabel !== node.label ? node.brandLabel : undefined,
+          detail: `${node.children!.length} ›`,
+          value: node.value,
+        };
+      }
+      return {
+        label: node.label,
+        description: modelLeafDescription(node),
+        value: node.value,
+        active: node.isCurrent,
+      };
+    }),
+    onSelect: (value) => {
+      const node = findCatalogNode(nodes, value);
+      if (node?.children && node.children.length > 0) {
+        return modelCatalogPicker(node.children as ModelCatalogNode[], node.label);
+      }
+      return selectModelThenThinking(value);
+    },
+  });
 }
 
 // ── Command implementations ──
@@ -401,7 +466,16 @@ const builtinCommands: SlashCommand[] = [
     name: "/model",
     description: "Switch model",
     group: "Config",
-    run: () => {
+    run: async () => {
+      // Grouped catalog (capability "modelCatalog") — clean labels, provider
+      // hierarchy, credential state. Falls back to the flat configured list on
+      // older binaries.
+      if (hasCapability("modelCatalog")) {
+        const catalog = await rpcRequest<ModelCatalogNode[]>("session.getModelCatalog");
+        if (Array.isArray(catalog) && catalog.length > 0) {
+          return modelCatalogPicker(catalog, "Model");
+        }
+      }
       const s = state();
       return picker({
         title: "Model",
@@ -412,25 +486,7 @@ const builtinCommands: SlashCommand[] = [
           value: m.name,
           active: m.name === s.meta?.modelConfigName,
         })),
-        onSelect: async (name) => {
-          await rpcRequest("session.selectModel", { name });
-          // Mirror the TUI: model switch chains into a thinking-level picker
-          // (0 levels → skip, 1 → server already applied a sane default).
-          if (!hasCapability("thinkingLevel")) return;
-          const t = await rpcRequest<ThinkingLevelsPayload>("session.getThinkingLevels");
-          if (!t || t.levels.length <= 1) return;
-          return picker({
-            title: "Thinking level",
-            items: t.levels.map((level) => ({
-              label: level,
-              value: level,
-              active: level === t.current,
-            })),
-            onSelect: async (level) => {
-              await rpcRequest("session.setThinkingLevel", { level });
-            },
-          });
-        },
+        onSelect: (name) => selectModelThenThinking(name),
       });
     },
   },

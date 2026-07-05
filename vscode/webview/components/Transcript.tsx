@@ -58,8 +58,12 @@ function AssistantMessage({ text }: { text: string }) {
   );
 }
 
-/** Nested read-only view of a child agent's projected log. */
-function ChildTranscript({ childId }: { childId: string }) {
+/**
+ * Nested read-only view of a child agent's projected log. Pass the child's
+ * logRevision to keep a LIVE child's transcript refreshing as it works;
+ * omit it for completed agents (fetch once).
+ */
+export function ChildTranscript({ childId, revision }: { childId: string; revision?: number }) {
   const [entries, setEntries] = useState<ConversationEntry[] | null | "loading">("loading");
 
   useEffect(() => {
@@ -74,7 +78,7 @@ function ChildTranscript({ childId }: { childId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [childId]);
+  }, [childId, revision]);
 
   if (entries === "loading") {
     return <div className="status-line status-line-dim">Loading transcript…</div>;
@@ -175,9 +179,13 @@ function TurnEndLine({ entry }: { entry: ConversationEntry }) {
 function renderBlock(block: Block, index: number, opts: { liveWork: boolean; running: boolean }) {
   if (block.type === "work") {
     if (opts.liveWork) {
+      // The trailing item is the one the agent is working on right now —
+      // a reasoning entry there is a live stream and renders its tail.
       return (
         <div key={`live-${index}`} className="work-group">
-          {block.items.map((item, i) => renderWorkItem(item, i, opts.running))}
+          {block.items.map((item, i) =>
+            renderWorkItem(item, i, opts.running, opts.running && i === block.items.length - 1),
+          )}
         </div>
       );
     }
