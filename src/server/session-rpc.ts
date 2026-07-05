@@ -25,6 +25,7 @@ import { resolveSkillContent } from "../skills/loader.js";
 import { getAllMcpServerNames, setMcpServerDisabled } from "../mcp-settings.js";
 import { loadAllHooksFromDisk, setHookDisabled, reloadHooksIntoRuntime } from "../hooks/manage.js";
 import { loadGlobalSettings } from "../persistence.js";
+import { validateSummarizeHintLevels } from "../settings.js";
 import type {
   SessionMetaPayload as MetaPayload,
   SessionStatusPayload as StatusPayload,
@@ -997,7 +998,11 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     const p = expectObject(params, "session.setHookEnabled");
     const name = expectString(p, "name", "session.setHookEnabled");
     const enabled = p["enabled"] === true;
-    const hook = loadAllHooksFromDisk().find((h) => h.name === name);
+    // loadAllHooksFromDisk keeps every scope's copy (no de-dupe). Take the
+    // last same-named hook — that's the one the runtime actually uses, since
+    // loadHooksMulti lets later scopes (project/workspace) override global.
+    const matches = loadAllHooksFromDisk().filter((h) => h.name === name);
+    const hook = matches.at(-1);
     if (!hook?._sourcePath) {
       throw new Error(`session.setHookEnabled: hook '${name}' not found on disk`);
     }
@@ -1043,17 +1048,22 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
         throw new Error("settings.patch: 'summarize_hint' must be an object");
       }
       const hint = v as Record<string, unknown>;
-      const clean: NonNullable<SharedSettingsPayload["summarize_hint"]> = {};
-      if (typeof hint.enabled === "boolean") clean.enabled = hint.enabled;
-      if (typeof hint.level1 === "number") clean.level1 = hint.level1;
-      if (typeof hint.level2 === "number") clean.level2 = hint.level2;
-      if (
-        clean.level1 !== undefined && clean.level2 !== undefined &&
-        !(clean.level1 > 0 && clean.level1 < clean.level2 && clean.level2 < 85)
-      ) {
-        throw new Error("settings.patch: summarize_hint levels must satisfy 0 < level1 < level2 < 85");
+      // Field-level merge over the persisted value: saveGlobalSettingsPatch
+      // shallow-overwrites the whole key, so a partial patch (e.g. a toggle
+      // sending only { enabled }) would otherwise wipe existing level1/level2.
+      const merged: NonNullable<SharedSettingsPayload["summarize_hint"]> = {
+        ...(loadGlobalSettings().summarize_hint ?? {}),
+      };
+      if (typeof hint.enabled === "boolean") merged.enabled = hint.enabled;
+      if (typeof hint.level1 === "number") merged.level1 = hint.level1;
+      if (typeof hint.level2 === "number") merged.level2 = hint.level2;
+      // Validate the merged result with the same helper the TUI uses (also
+      // rejects non-integers), so both entry points enforce identical rules.
+      if (merged.level1 !== undefined && merged.level2 !== undefined) {
+        const err = validateSummarizeHintLevels(merged.level1, merged.level2);
+        if (err) throw new Error(`settings.patch: ${err}`);
       }
-      patch.summarize_hint = clean;
+      patch.summarize_hint = merged;
     }
     if (Object.keys(patch).length === 0) {
       throw new Error("settings.patch: no recognized keys (auto_update, summarize_hint)");
