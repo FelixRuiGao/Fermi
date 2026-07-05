@@ -1,11 +1,22 @@
-export type AskKind = "agent_question" | "approval";
-
-export interface AskSource {
-  agentId: string;
-  agentName?: string;
-  toolName?: string;
-  turnId?: string;
-}
+// Ask wire types live in src/protocol (single source for all remote
+// clients); re-exported here so runtime consumers keep their import path.
+export type {
+  AskKind,
+  AskSource,
+  AgentQuestionOptionKind,
+  AgentQuestionOption,
+  AgentQuestionItem,
+  AgentQuestionAnswer,
+  AgentQuestionDecision,
+  PendingAskUi,
+} from "./protocol/index.js";
+import type {
+  AskKind,
+  AskSource,
+  AgentQuestionOption,
+  AgentQuestionItem,
+  PendingAskUi,
+} from "./protocol/index.js";
 
 export interface AskBase {
   id: string;
@@ -22,36 +33,10 @@ export interface AskBase {
   turnIndex?: number;
 }
 
-export type AgentQuestionOptionKind = "normal" | "custom_input" | "discuss_further";
-
-export interface AgentQuestionOption {
-  label: string;
-  description?: string;
-  kind: AgentQuestionOptionKind;
-  systemAdded?: boolean;
-}
-
 export const ASK_CUSTOM_OPTION_LABEL = "Enter custom answer";
 export const ASK_DISCUSS_OPTION_LABEL = "Discuss further";
 export const ASK_DISCUSS_FURTHER_GUIDANCE =
   'One or more answers are "Discuss further". Treat those answers as requests to continue the discussion rather than final commitments. Use any other answers normally. Briefly address the discussion points, then return control to the user.';
-
-export interface AgentQuestionItem {
-  question: string;
-  options: AgentQuestionOption[];
-}
-
-export interface AgentQuestionAnswer {
-  questionIndex: number;
-  selectedOptionIndex: number;
-  answerText: string;
-  /** Optional user note attached to any answer (added via Tab). */
-  note?: string;
-}
-
-export interface AgentQuestionDecision {
-  answers: AgentQuestionAnswer[];
-}
 
 export interface AgentQuestion extends AskBase {
   kind: "agent_question";
@@ -79,16 +64,6 @@ export interface ApprovalRequest extends AskBase {
 }
 
 export type AskRequest = AgentQuestion | ApprovalRequest;
-
-export interface PendingAskUi {
-  id: string;
-  kind: AskKind;
-  createdAt: string;
-  summary: string;
-  source: AskSource;
-  payload: Record<string, unknown>;
-  options: string[];
-}
 
 export interface AskAuditRecord {
   askId: string;

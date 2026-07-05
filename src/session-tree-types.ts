@@ -1,48 +1,17 @@
-export type ChildSessionMode = "oneshot" | "persistent";
-
-export type ChildSessionLifecycle = "running" | "blocked" | "idle" | "archived";
-
-export type ChildSessionPhase =
-  | "idle"
-  | "thinking"
-  | "tool_calling"
-  | "generating"
-  | "waiting";
-
-export type ChildSessionOutcome =
-  | "none"
-  | "completed"
-  | "interrupted"
-  | "error";
-
-export interface ChildSessionSnapshot {
-  id: string;
-  numericId: number;
-  logRevision: number;
-  template: string;
-  mode: ChildSessionMode;
-  lifecycle: ChildSessionLifecycle;
-  phase: ChildSessionPhase;
-  outcome: ChildSessionOutcome;
-  running: boolean;
-  lifetimeToolCallCount: number;
-  lastTotalTokens: number;
-  lastToolCallSummary: string;
-  recentEvents: string[];
-  pendingInboxCount: number;
-  lastActivityAt: number;
-  // Phase 1 Step 3: child page chrome fields
-  inputTokens: number;
-  contextBudget: number;
-  modelConfigName: string;
-  modelProvider: string;
-  modelDisplayLabel?: string;
-  pendingAskId?: string | null;
-  pendingAskKind?: "agent_question" | "approval" | null;
-  activeLogEntryId: string | null;
-  turnElapsed: number;
-  cacheReadTokens: number;
-}
+// Child-session wire types live in src/protocol; re-exported here so
+// runtime consumers keep their import path.
+export type {
+  ChildSessionMode,
+  ChildSessionLifecycle,
+  ChildSessionPhase,
+  ChildSessionOutcome,
+  ChildSessionSnapshot,
+} from "./protocol/index.js";
+import type {
+  ChildSessionMode,
+  ChildSessionLifecycle,
+  ChildSessionOutcome,
+} from "./protocol/index.js";
 
 export interface ChildSessionMetaRecord {
   id: string;

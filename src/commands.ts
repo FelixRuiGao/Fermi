@@ -17,6 +17,8 @@ import type { CommandPickerResult } from "./ui/command-picker.js";
 import type { SessionStore, LocalProviderConfig, ModelSelectionState, FermiSettings, ProviderEntry, CustomModelEntry, ModelTierEntry } from "./persistence.js";
 import { fetchModelSpecSuggestion } from "./models-dev-lookup.js";
 import { randomSessionId, saveModelSelectionState, saveGlobalSettingsPatch, loadGlobalSettings } from "./persistence.js";
+import { getAllMcpServerNames, setMcpServerDisabled } from "./mcp-settings.js";
+import { loadAllHooksFromDisk, setHookDisabled, reloadHooksIntoRuntime } from "./hooks/manage.js";
 import { validateSummarizeHintLevels } from "./settings.js";
 import { AGENT_MODES, MODE_DESCRIPTIONS, isAgentMode, type AgentMode } from "./modes/index.js";
 import { VERSION } from "./version.js";
@@ -2677,23 +2679,6 @@ async function cmdFork(ctx: CommandContext): Promise<void> {
 // /mcp command
 // ------------------------------------------------------------------
 
-/**
- * Read the full MCP server list from settings (including disabled).
- * This is the picker's data source — separate from MCPClientManager
- * which only knows about active (non-disabled) servers.
- */
-function getAllMcpServerNames(homeDir?: string): Map<string, { disabled: boolean }> {
-  const settings = loadGlobalSettings(homeDir);
-  const result = new Map<string, { disabled: boolean }>();
-  if (settings.mcp_servers) {
-    for (const [name, cfg] of Object.entries(settings.mcp_servers)) {
-      if (!cfg || typeof cfg !== "object") continue;
-      result.set(name, { disabled: cfg.disabled === true });
-    }
-  }
-  return result;
-}
-
 function mcpOptions(ctx: CommandOptionsContext): CommandOption[] {
   const session = ctx.session;
   const mcpManager = session?.mcpManager;
@@ -2780,20 +2765,6 @@ function mcpOptions(ctx: CommandOptionsContext): CommandOption[] {
   }
 
   return opts;
-}
-
-function setMcpServerDisabled(serverName: string, disabled: boolean, homeDir?: string): boolean {
-  const settings = loadGlobalSettings(homeDir);
-  const servers = settings.mcp_servers;
-  if (!servers || !servers[serverName]) return false;
-
-  if (disabled) {
-    servers[serverName].disabled = true;
-  } else {
-    delete servers[serverName].disabled;
-  }
-  persistSettingsPatch({ mcp_servers: servers }, homeDir);
-  return true;
 }
 
 async function cmdMcp(ctx: CommandContext, args: string): Promise<void> {
@@ -3345,58 +3316,6 @@ async function cmdRewind(ctx: CommandContext, args: string): Promise<void> {
 // ------------------------------------------------------------------
 // /hooks command
 // ------------------------------------------------------------------
-
-function loadAllHooksFromDisk(): Array<{ name: string; event: string; command: string; args?: string[]; disabled?: boolean; _sourcePath?: string; _scope?: string; matcher?: { toolNames?: string[]; agentIds?: string[] }; failClosed?: boolean }> {
-  try {
-    const { resolveAssetPaths } = require("./config.js") as typeof import("./config.js");
-    const { loadHooksMulti } = require("./hooks/index.js") as typeof import("./hooks/index.js");
-    const paths = resolveAssetPaths();
-    // loadHooksMulti de-dupes by name (project overrides global)
-    // We want ALL including disabled, so we load raw from disk
-    const allHooks: any[] = [];
-    for (const { dir, scope } of paths.hookRoots) {
-      const { loadHooksFromDir } = require("./hooks/index.js") as typeof import("./hooks/index.js");
-      for (const h of loadHooksFromDir(dir, scope as "project" | "global")) {
-        allHooks.push(h);
-      }
-    }
-    // De-dupe by name (later scopes override earlier)
-    const byName = new Map<string, any>();
-    for (const h of allHooks) byName.set(h.name, h);
-    return [...byName.values()];
-  } catch {
-    return [];
-  }
-}
-
-function setHookDisabled(sourcePath: string, disabled: boolean): boolean {
-  if (!existsSync(sourcePath)) return false;
-  try {
-    const raw = JSON.parse(readFileSync(sourcePath, "utf-8"));
-    if (disabled) {
-      raw["disabled"] = true;
-    } else {
-      delete raw["disabled"];
-    }
-    writeFileSync(sourcePath, JSON.stringify(raw, null, 2) + "\n");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function reloadHooksIntoRuntime(session: any): number {
-  try {
-    const { resolveAssetPaths } = require("./config.js") as typeof import("./config.js");
-    const { loadHooksMulti } = require("./hooks/index.js") as typeof import("./hooks/index.js");
-    const paths = resolveAssetPaths();
-    const hooks = loadHooksMulti(paths.hookRoots);
-    session.hookRuntime.setHooks(hooks);
-    return hooks.length;
-  } catch {
-    return -1;
-  }
-}
 
 function hooksOptions(_ctx: CommandOptionsContext): CommandOption[] {
   const allHooks = loadAllHooksFromDisk();

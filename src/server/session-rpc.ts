@@ -22,6 +22,19 @@ import { getTierEligibleThinkingLevels, getThinkingLevels } from "../config.js";
 import { createModelTierEntry } from "../model-selection.js";
 import { AGENT_MODES, isAgentMode } from "../modes/index.js";
 import { resolveSkillContent } from "../skills/loader.js";
+import { getAllMcpServerNames, setMcpServerDisabled } from "../mcp-settings.js";
+import { loadAllHooksFromDisk, setHookDisabled, reloadHooksIntoRuntime } from "../hooks/manage.js";
+import { loadGlobalSettings } from "../persistence.js";
+import type {
+  SessionMetaPayload as MetaPayload,
+  SessionStatusPayload as StatusPayload,
+  McpStatusPayload,
+  HooksStatusPayload,
+  ForkSessionPayload,
+  ModelTierStatusPayload,
+  ModelTierLevel,
+  SharedSettingsPayload,
+} from "../protocol/index.js";
 
 export interface SessionRpcOptions {
   readonly session: Session;
@@ -56,38 +69,19 @@ export const PROTOCOL_CAPABILITIES = [
   "injectedTurn",
   /** session.invokeSkill (user-invocable skill slash commands) */
   "invokeSkill",
+  /** session.getThinkingLevels / setThinkingLevel + thinking.changed */
+  "thinkingLevel",
+  /** session.setMcpServerEnabled / reconnectMcpServer / reloadMcp + mcp.changed */
+  "mcpControl",
+  /** session.setHookEnabled / reloadHooks + hooks.changed (disk-backed getHooksStatus) */
+  "hooksControl",
+  /** settings.get / settings.patch + settings.changed */
+  "sharedSettings",
+  /** child.changed / shells.changed push events (in-process watcher) */
+  "watchEvents",
+  /** sub_agent_done projection entries carry subAgentId/subAgentName meta */
+  "childMeta",
 ] as const;
-
-interface MetaPayload {
-  readonly sessionId: string;
-  readonly title: string | undefined;
-  readonly displayName: string;
-  readonly sessionDir: string | null;
-  readonly workDir: string;
-  readonly modelConfigName: string;
-  readonly modelProvider: string;
-  readonly thinkingLevel: string;
-  readonly accentColor: string | undefined;
-  readonly turnCount: number;
-  readonly protocolVersion: number;
-  readonly capabilities: readonly string[];
-}
-
-interface StatusPayload {
-  readonly currentTurnRunning: boolean;
-  readonly sessionPhase: string;
-  readonly lastTurnEndStatus: string | null;
-  readonly pendingInboxCount: number;
-  readonly lifetimeToolCallCount: number;
-  readonly lastToolCallSummary: string;
-  readonly lastInputTokens: number;
-  readonly lastTotalTokens: number;
-  readonly lastCacheReadTokens: number;
-  readonly contextBudget: number;
-  readonly activeLogEntryId: string | null;
-  readonly hasPendingTurn: boolean;
-  readonly permissionMode: PermissionMode;
-}
 
 interface SessionStoreAccess {
   _store?: {
@@ -95,52 +89,8 @@ interface SessionStoreAccess {
   };
 }
 
-interface McpStatusPayload {
-  readonly configured: boolean;
-  readonly error: string | null;
-  readonly toolCount: number;
-  readonly servers: readonly {
-    readonly name: string;
-    readonly state: string | null;
-    readonly error: string | null;
-    readonly tools: readonly string[];
-  }[];
-}
-
-interface HooksStatusPayload {
-  readonly available: boolean;
-  readonly hooks: readonly {
-    readonly name: string;
-    readonly scope: string;
-    readonly event: string;
-    readonly matcher: string | null;
-    readonly command: string;
-    readonly failClosed: boolean;
-  }[];
-}
-
-interface ForkSessionPayload {
-  readonly sessionId: string;
-  readonly sessionDir: string;
-  readonly title: string;
-  readonly sourceSessionId: string;
-}
-
 const PERMISSION_MODES = new Set<PermissionMode>(["read_only", "reversible", "yolo"]);
-const MODEL_TIER_LEVELS = ["high", "medium", "low"] as const;
-type ModelTierLevel = typeof MODEL_TIER_LEVELS[number];
-
-interface ModelTierStatusPayload {
-  readonly tiers: readonly {
-    readonly level: ModelTierLevel;
-    readonly provider: string | null;
-    readonly selectionKey: string | null;
-    readonly modelId: string | null;
-    readonly thinkingLevel: string | null;
-    readonly configName: string | null;
-    readonly label: string;
-  }[];
-}
+const MODEL_TIER_LEVELS: readonly ModelTierLevel[] = ["high", "medium", "low"];
 
 interface AgentRuntimeSettingsPayload {
   readonly subAgentInheritMcp: boolean;
@@ -197,9 +147,27 @@ function buildStatus(s: Session): StatusPayload {
 }
 
 async function buildMcpStatus(s: Session): Promise<McpStatusPayload> {
+  // Settings are the authority on which servers exist (including disabled
+  // ones the manager never sees); the manager supplies runtime state.
+  const settingsServers = getAllMcpServerNames();
+  const disabledEntries = [...settingsServers.entries()]
+    .filter(([, cfg]) => cfg.disabled)
+    .map(([name]) => ({
+      name,
+      state: null,
+      error: null,
+      tools: [] as string[],
+      disabled: true,
+    }));
+
   const manager = s.mcpManager;
   if (!manager) {
-    return { configured: false, error: null, toolCount: 0, servers: [] };
+    return {
+      configured: settingsServers.size > 0,
+      error: null,
+      toolCount: 0,
+      servers: disabledEntries,
+    };
   }
 
   try {
@@ -241,25 +209,31 @@ async function buildMcpStatus(s: Session): Promise<McpStatusPayload> {
     configured: true,
     error: null,
     toolCount: tools.length,
-    servers: [...byServer.entries()].map(([name, serverTools]) => {
-      const status = statuses.find((item) => item.name === name);
-      return {
-        name,
-        state: typeof status?.state === "string" ? status.state : null,
-        error: typeof status?.error === "string" ? status.error : null,
-        tools: [...serverTools].sort(),
-      };
-    }),
+    servers: [
+      ...[...byServer.entries()].map(([name, serverTools]) => {
+        const status = statuses.find((item) => item.name === name);
+        return {
+          name,
+          state: typeof status?.state === "string" ? status.state : null,
+          error: typeof status?.error === "string" ? status.error : null,
+          tools: [...serverTools].sort(),
+        };
+      }),
+      ...disabledEntries.filter((d) => !byServer.has(d.name)),
+    ],
   };
 }
 
 function buildHooksStatus(s: Session): HooksStatusPayload {
-  const runtime = s.hookRuntime;
-  if (!runtime) return { available: false, hooks: [] };
-  const hooks = Array.isArray(runtime.hooks) ? runtime.hooks : [];
+  // Disk is the authority: includes disabled hooks (the runtime filters them
+  // out at setHooks time, so a runtime-based listing can't drive a toggle UI).
+  const diskHooks = loadAllHooksFromDisk();
+  if (diskHooks.length === 0) {
+    return { available: Boolean(s.hookRuntime), hooks: [] };
+  }
   return {
     available: true,
-    hooks: hooks.map((hook) => {
+    hooks: diskHooks.map((hook) => {
       const matcher = hook.matcher
         ? [
             ...(hook.matcher.toolNames ?? []),
@@ -273,6 +247,7 @@ function buildHooksStatus(s: Session): HooksStatusPayload {
         matcher: matcher.length > 0 ? matcher : null,
         command: `${hook.command}${hook.args?.length ? ` ${hook.args.join(" ")}` : ""}`,
         failClosed: hook.failClosed ?? false,
+        ...(hook.disabled === true ? { disabled: true } : {}),
       };
     }),
   };
@@ -749,7 +724,36 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     const name = expectString(p, "name", "session.selectModel");
     session.switchModel(name);
     server.emit("model.changed", { name });
+    // Optional thinking level, applied after the switch (mirrors the TUI's
+    // /model → thinking picker chain).
+    const thinkingLevel = optString(p, "thinkingLevel");
+    if (thinkingLevel) {
+      const levels = getThinkingLevels(session.currentModelName ?? "");
+      if (levels.includes(thinkingLevel) || thinkingLevel === "off" || thinkingLevel === "none") {
+        session.thinkingLevel = thinkingLevel;
+        server.emit("thinking.changed", { level: thinkingLevel });
+      }
+    }
     return buildMeta(session, workDir, sessionDir);
+  });
+
+  server.on("session.getThinkingLevels", () => ({
+    levels: getThinkingLevels(session.currentModelName ?? ""),
+    current: session.thinkingLevel ?? "none",
+  }));
+
+  server.on("session.setThinkingLevel", (params) => {
+    const p = expectObject(params, "session.setThinkingLevel");
+    const level = expectString(p, "level", "session.setThinkingLevel");
+    const levels = getThinkingLevels(session.currentModelName ?? "");
+    if (!levels.includes(level) && level !== "off" && level !== "none") {
+      throw new Error(
+        `session.setThinkingLevel: '${level}' is not valid for the current model. Available: ${levels.join(", ") || "(none)"}`,
+      );
+    }
+    session.thinkingLevel = level;
+    server.emit("thinking.changed", { level });
+    return { level };
   });
 
   server.on("session.setMode", (params) => {
@@ -902,6 +906,7 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     } catch {
       // Runtime skill state has already been updated; persistence is best effort.
     }
+    server.emit("skills.changed", { skills: session.getAllSkillNames() });
     return { ok: true, report };
   });
 
@@ -939,6 +944,125 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   // ── Runtime diagnostics ──
   server.on("session.getMcpStatus", () => buildMcpStatus(session));
   server.on("session.getHooksStatus", () => buildHooksStatus(session));
+
+  // ── Control plane: MCP / hooks / shared settings ──
+
+  const reloadMcpLocked = (reason: string): Promise<string> =>
+    typeof session.reloadMcpFromCommand === "function"
+      ? session.reloadMcpFromCommand(reason)
+      : session.reloadMcp({ reason });
+
+  server.on("session.reloadMcp", async () => {
+    const report = await reloadMcpLocked("the user reloaded MCP configuration");
+    server.emit("mcp.changed", await buildMcpStatus(session));
+    return { report };
+  });
+
+  server.on("session.setMcpServerEnabled", async (params) => {
+    const p = expectObject(params, "session.setMcpServerEnabled");
+    const name = expectString(p, "name", "session.setMcpServerEnabled");
+    const enabled = p["enabled"] === true;
+    if (!setMcpServerDisabled(name, !enabled)) {
+      throw new Error(`session.setMcpServerEnabled: unknown MCP server '${name}'`);
+    }
+    let report = "";
+    try {
+      report = await reloadMcpLocked(
+        `the user ${enabled ? "enabled" : "disabled"} MCP server '${name}'`,
+      );
+    } catch (err) {
+      report = `reload failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    const status = await buildMcpStatus(session);
+    server.emit("mcp.changed", status);
+    return { ok: true, report, status };
+  });
+
+  server.on("session.reconnectMcpServer", async (params) => {
+    const p = expectObject(params, "session.reconnectMcpServer");
+    const name = expectString(p, "name", "session.reconnectMcpServer");
+    let ok = false;
+    if (typeof session.reconnectMcpServerFromCommand === "function") {
+      ok = await session.reconnectMcpServerFromCommand(name);
+    } else if (typeof session.reconnectMcpServer === "function") {
+      ok = await session.reconnectMcpServer(name);
+    } else if (session.mcpManager && typeof session.mcpManager.reconnectServer === "function") {
+      ok = await session.mcpManager.reconnectServer(name);
+    }
+    server.emit("mcp.changed", await buildMcpStatus(session));
+    return { ok };
+  });
+
+  server.on("session.setHookEnabled", (params) => {
+    const p = expectObject(params, "session.setHookEnabled");
+    const name = expectString(p, "name", "session.setHookEnabled");
+    const enabled = p["enabled"] === true;
+    const hook = loadAllHooksFromDisk().find((h) => h.name === name);
+    if (!hook?._sourcePath) {
+      throw new Error(`session.setHookEnabled: hook '${name}' not found on disk`);
+    }
+    if (!setHookDisabled(hook._sourcePath, !enabled)) {
+      throw new Error(`session.setHookEnabled: failed to update ${hook._sourcePath}`);
+    }
+    reloadHooksIntoRuntime(session);
+    const status = buildHooksStatus(session);
+    server.emit("hooks.changed", status);
+    return status;
+  });
+
+  server.on("session.reloadHooks", () => {
+    const count = reloadHooksIntoRuntime(session);
+    const status = buildHooksStatus(session);
+    server.emit("hooks.changed", status);
+    return { count, status };
+  });
+
+  const readSharedSettings = (): SharedSettingsPayload => {
+    const settings = loadGlobalSettings();
+    return {
+      ...(settings.auto_update !== undefined ? { auto_update: settings.auto_update } : {}),
+      ...(settings.summarize_hint !== undefined ? { summarize_hint: settings.summarize_hint } : {}),
+    };
+  };
+
+  server.on("settings.get", () => readSharedSettings());
+
+  server.on("settings.patch", (params) => {
+    const p = expectObject(params, "settings.patch");
+    const patch: SharedSettingsPayload = {};
+    if ("auto_update" in p) {
+      const v = p["auto_update"];
+      if (typeof v !== "boolean" && v !== "notify") {
+        throw new Error("settings.patch: 'auto_update' must be boolean or \"notify\"");
+      }
+      patch.auto_update = v;
+    }
+    if ("summarize_hint" in p) {
+      const v = p["summarize_hint"];
+      if (!v || typeof v !== "object") {
+        throw new Error("settings.patch: 'summarize_hint' must be an object");
+      }
+      const hint = v as Record<string, unknown>;
+      const clean: NonNullable<SharedSettingsPayload["summarize_hint"]> = {};
+      if (typeof hint.enabled === "boolean") clean.enabled = hint.enabled;
+      if (typeof hint.level1 === "number") clean.level1 = hint.level1;
+      if (typeof hint.level2 === "number") clean.level2 = hint.level2;
+      if (
+        clean.level1 !== undefined && clean.level2 !== undefined &&
+        !(clean.level1 > 0 && clean.level1 < clean.level2 && clean.level2 < 85)
+      ) {
+        throw new Error("settings.patch: summarize_hint levels must satisfy 0 < level1 < level2 < 85");
+      }
+      patch.summarize_hint = clean;
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new Error("settings.patch: no recognized keys (auto_update, summarize_hint)");
+    }
+    saveGlobalSettingsPatch(patch);
+    const next = readSharedSettings();
+    server.emit("settings.changed", next);
+    return next;
+  });
 
   // ── Manual context commands ──
   server.on("session.summarize", (params) => {
@@ -1041,6 +1165,42 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   };
   const unsubscribeAsk = session.subscribeAsk(onAskChange);
   disposers.push(unsubscribeAsk);
+
+  // Child-session and background-shell watcher. Neither surface has a
+  // subscription hook (the TUI itself polls at 250ms on top of subscribeLog),
+  // so the server polls in-process and pushes coalesced change events —
+  // remote clients stay purely event-driven.
+  let lastChildDigest = "";
+  let lastShellDigest = "";
+  const watchTimer = setInterval(() => {
+    try {
+      const children = typeof session.getChildSessionSnapshots === "function"
+        ? session.getChildSessionSnapshots()
+        : [];
+      const childDigest = children
+        .map((c) => `${c.id}:${c.logRevision}:${c.lifecycle}:${c.phase}:${c.lifetimeToolCallCount}:${c.pendingAskId ?? ""}`)
+        .join("|");
+      if (childDigest !== lastChildDigest) {
+        lastChildDigest = childDigest;
+        server.emit("child.changed", { children });
+      }
+
+      const shells = typeof session.getBackgroundShellSnapshots === "function"
+        ? session.getBackgroundShellSnapshots()
+        : [];
+      const shellDigest = shells
+        .map((sh) => `${sh.id}:${sh.status}:${sh.exitCode ?? ""}`)
+        .join("|");
+      if (shellDigest !== lastShellDigest) {
+        lastShellDigest = shellDigest;
+        server.emit("shells.changed", { shells });
+      }
+    } catch {
+      // The watcher must never take the server down.
+    }
+  }, 500);
+  watchTimer.unref?.();
+  disposers.push(() => clearInterval(watchTimer));
 
   // Turn lifecycle — forwarded from the runtime (capability "turnLifecycle").
   // Covers every activation-loop run, including auto-resume and post-approval

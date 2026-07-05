@@ -1,7 +1,16 @@
 import { rpcRequest } from "./vscode-api.js";
 import { useStore, type NewInfoCard } from "./store.js";
 import { filterByPrefix } from "./model.js";
-import type { SummarizeTarget, RewindTarget, ShellSnapshot, SkillInfo } from "../src/types.js";
+import type {
+  SummarizeTarget,
+  RewindTarget,
+  ShellSnapshot,
+  SkillInfo,
+  McpStatusPayload,
+  HooksStatusPayload,
+  ThinkingLevelsPayload,
+  SharedSettingsPayload,
+} from "../src/types.js";
 import reviewTemplate from "../../prompts/review.md";
 
 // ---------------------------------------------------------------------------
@@ -405,6 +414,22 @@ const builtinCommands: SlashCommand[] = [
         })),
         onSelect: async (name) => {
           await rpcRequest("session.selectModel", { name });
+          // Mirror the TUI: model switch chains into a thinking-level picker
+          // (0 levels → skip, 1 → server already applied a sane default).
+          if (!hasCapability("thinkingLevel")) return;
+          const t = await rpcRequest<ThinkingLevelsPayload>("session.getThinkingLevels");
+          if (!t || t.levels.length <= 1) return;
+          return picker({
+            title: "Thinking level",
+            items: t.levels.map((level) => ({
+              label: level,
+              value: level,
+              active: level === t.current,
+            })),
+            onSelect: async (level) => {
+              await rpcRequest("session.setThinkingLevel", { level });
+            },
+          });
         },
       });
     },
@@ -595,20 +620,172 @@ const builtinCommands: SlashCommand[] = [
   },
   {
     name: "/mcp",
-    description: "MCP server status",
+    description: "Manage MCP servers",
     group: "Info",
     run: async () => {
-      const data = await rpcRequest("session.getMcpStatus");
-      addCard({ kind: "mcp", data });
+      const data = await rpcRequest<McpStatusPayload>("session.getMcpStatus");
+      if (!hasCapability("mcpControl")) {
+        addCard({ kind: "mcp", data });
+        return;
+      }
+      const servers = data?.servers ?? [];
+      return picker({
+        title: "MCP servers",
+        emptyText: "No MCP servers configured (settings.json → mcp_servers)",
+        items: [
+          ...(servers.length > 0 ? [{ label: "Reload config", value: "__reload__" }] : []),
+          ...servers.map((srv) => ({
+            label: srv.name,
+            description: srv.disabled
+              ? "disabled"
+              : `${srv.state ?? "not connected"}${srv.tools.length > 0 ? ` · ${srv.tools.length} tools` : ""}${srv.error ? ` · ${srv.error}` : ""}`,
+            value: srv.name,
+          })),
+        ],
+        onSelect: async (value) => {
+          if (value === "__reload__") {
+            const r = await rpcRequest<{ report: string }>("session.reloadMcp");
+            textCard("MCP", r?.report ?? "Reloaded.");
+            return;
+          }
+          const srv = servers.find((s) => s.name === value);
+          const disabled = srv?.disabled === true;
+          return picker({
+            title: value,
+            items: [
+              ...(!disabled ? [{ label: "Reconnect", value: "reconnect" }] : []),
+              disabled
+                ? { label: "Enable", value: "enable" }
+                : { label: "Disable", value: "disable" },
+              ...(srv && srv.tools.length > 0
+                ? [{ label: `View tools (${srv.tools.length})`, value: "tools" }]
+                : []),
+            ],
+            onSelect: async (op) => {
+              if (op === "tools") {
+                textCard(`${value} tools`, (srv?.tools ?? []).join("\n"), true);
+                return;
+              }
+              if (op === "reconnect") {
+                const r = await rpcRequest<{ ok: boolean }>("session.reconnectMcpServer", { name: value });
+                textCard("MCP", `${value}: ${r?.ok ? "reconnected" : "reconnect failed"}`);
+                return;
+              }
+              const enabled = op === "enable";
+              const r = await rpcRequest<{ report: string }>("session.setMcpServerEnabled", { name: value, enabled });
+              textCard("MCP", `${value}: ${enabled ? "enabled" : "disabled"}${r?.report ? ` (${r.report})` : ""}`);
+            },
+          });
+        },
+      });
     },
   },
   {
     name: "/hooks",
-    description: "Hooks status",
+    description: "Manage hooks",
     group: "Info",
     run: async () => {
-      const data = await rpcRequest("session.getHooksStatus");
-      addCard({ kind: "hooks", data });
+      const data = await rpcRequest<HooksStatusPayload>("session.getHooksStatus");
+      if (!hasCapability("hooksControl")) {
+        addCard({ kind: "hooks", data });
+        return;
+      }
+      const hooks = data?.hooks ?? [];
+      return picker({
+        title: "Hooks — select to toggle",
+        emptyText: "No hooks configured",
+        items: [
+          ...(hooks.length > 0 ? [{ label: "Reload hooks", value: "__reload__" }] : []),
+          ...hooks.map((h) => ({
+            label: h.disabled ? `${h.name} (disabled)` : h.name,
+            description: `${h.scope} · ${h.event}${h.matcher ? ` [${h.matcher}]` : ""}`,
+            value: h.name,
+          })),
+        ],
+        onSelect: async (value) => {
+          if (value === "__reload__") {
+            const r = await rpcRequest<{ count: number }>("session.reloadHooks");
+            textCard("Hooks", `Reloaded: ${r?.count ?? 0} active`);
+            return;
+          }
+          const hook = hooks.find((h) => h.name === value);
+          const enable = hook?.disabled === true;
+          await rpcRequest("session.setHookEnabled", { name: value, enabled: enable });
+          textCard("Hooks", `${value}: ${enable ? "enabled" : "disabled"}`);
+        },
+      });
+    },
+  },
+  {
+    name: "/autoupdate",
+    description: "Background update checks",
+    group: "Config",
+    run: async () => {
+      if (!hasCapability("sharedSettings")) {
+        textCard("Auto-update", "This Fermi binary does not expose shared settings yet — update it first.");
+        return;
+      }
+      const current = await rpcRequest<SharedSettingsPayload>("settings.get");
+      const mode = current?.auto_update ?? true;
+      return picker({
+        title: "Auto-update",
+        items: [
+          { label: "On", description: "Download and apply updates automatically", value: "on", active: mode === true },
+          { label: "Notify only", description: "Check and show a notice, don't install", value: "notify", active: mode === "notify" },
+          { label: "Off", description: "No background update checks", value: "off", active: mode === false },
+        ],
+        onSelect: async (v) => {
+          await rpcRequest("settings.patch", { auto_update: v === "on" ? true : v === "notify" ? "notify" : false });
+        },
+      });
+    },
+  },
+  {
+    name: "/summarize_hint",
+    description: "Two-tier context summarize hints",
+    group: "Config",
+    run: async () => {
+      if (!hasCapability("sharedSettings")) {
+        textCard("Summarize hints", "This Fermi binary does not expose shared settings yet — update it first.");
+        return;
+      }
+      const current = await rpcRequest<SharedSettingsPayload>("settings.get");
+      const hint = current?.summarize_hint ?? {};
+      const enabled = hint.enabled !== false;
+      const levels = `${hint.level1 ?? 50}/${hint.level2 ?? 75}`;
+      return picker({
+        title: `Summarize hints — now ${enabled ? `on (${levels}%)` : "off"}`,
+        items: [
+          { label: "On (default levels)", description: "Hint at 50% and 75% of context budget", value: "on", active: enabled && hint.level1 === undefined },
+          { label: "Custom levels…", description: "Pick the two trigger percentages", value: "custom" },
+          { label: "Off", description: "No summarize hints", value: "off", active: !enabled },
+        ],
+        onSelect: async (v) => {
+          if (v === "off") {
+            await rpcRequest("settings.patch", { summarize_hint: { enabled: false } });
+            return;
+          }
+          if (v === "on") {
+            await rpcRequest("settings.patch", { summarize_hint: { enabled: true } });
+            return;
+          }
+          return input({
+            title: "Trigger levels (two percentages, e.g. 50 75)",
+            placeholder: "50 75",
+            initial: `${hint.level1 ?? 50} ${hint.level2 ?? 75}`,
+            onSubmit: async (text) => {
+              const m = text.trim().match(/^(\d{1,2})\s+(\d{1,2})$/);
+              if (!m) {
+                textCard("Summarize hints", "Expected two numbers like: 50 75");
+                return;
+              }
+              await rpcRequest("settings.patch", {
+                summarize_hint: { enabled: true, level1: Number(m[1]), level2: Number(m[2]) },
+              });
+            },
+          });
+        },
+      });
     },
   },
   {

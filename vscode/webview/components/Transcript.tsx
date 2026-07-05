@@ -58,24 +58,78 @@ function AssistantMessage({ text }: { text: string }) {
   );
 }
 
+/** Nested read-only view of a child agent's projected log. */
+function ChildTranscript({ childId }: { childId: string }) {
+  const [entries, setEntries] = useState<ConversationEntry[] | null | "loading">("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    rpcRequest<ConversationEntry[] | null>("session.getProjectedChildLog", { childId })
+      .then((result) => {
+        if (!cancelled) setEntries(result);
+      })
+      .catch(() => {
+        if (!cancelled) setEntries(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [childId]);
+
+  if (entries === "loading") {
+    return <div className="status-line status-line-dim">Loading transcript…</div>;
+  }
+  if (!entries || entries.length === 0) {
+    return <div className="status-line status-line-dim">No transcript available.</div>;
+  }
+  const blocks = buildBlocks(entries);
+  return (
+    <>
+      {blocks.map((block, i) => renderBlock(block, i, { liveWork: false, running: false }))}
+    </>
+  );
+}
+
 function AgentResultRow({ entry }: { entry: ConversationEntry }) {
   const [expanded, setExpanded] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const full = entry.fullText && entry.fullText !== entry.text ? entry.fullText : null;
+  const childId = typeof entry.meta?.agentId === "string" ? entry.meta.agentId : null;
+  const expandable = Boolean(full || childId);
   return (
     <div className="agent-row">
-      <div className="agent-row-header" onClick={full ? () => setExpanded(!expanded) : undefined}>
+      <div className="agent-row-header" onClick={expandable ? () => setExpanded(!expanded) : undefined}>
         <IconAgent size={12} />
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: expanded ? "normal" : "nowrap" }}>
           {entry.text || "Agent complete"}
         </span>
-        {full && (
+        {expandable && (
           <IconChevronRight
             size={10}
             style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : undefined, transition: "transform 120ms ease-out" }}
           />
         )}
       </div>
-      {expanded && full && <div className="agent-row-body">{full}</div>}
+      {expanded && (
+        <div className="agent-row-body">
+          {full && <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{full}</div>}
+          {childId && (
+            <button
+              className="work-group-header"
+              style={{ marginTop: full ? 6 : 0 }}
+              onClick={() => setShowTranscript(!showTranscript)}
+            >
+              <IconChevronRight
+                size={10}
+                className="chevron"
+                style={{ transform: showTranscript ? "rotate(90deg)" : undefined }}
+              />
+              <span>Transcript</span>
+            </button>
+          )}
+          {showTranscript && childId && <ChildTranscript childId={childId} />}
+        </div>
+      )}
     </div>
   );
 }

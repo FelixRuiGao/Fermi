@@ -131,6 +131,11 @@ function toConversationEntry(
       kind: "sub_agent_done",
       text: `[${label}] [done] (${elapsedStr}s)`,
       id: entry.id,
+      // Child linkage for remote clients (join numericId → snapshot → child log).
+      meta: {
+        ...(typeof subAgentId === "number" ? { subAgentId } : {}),
+        ...(typeof subAgentName === "string" ? { subAgentName } : {}),
+      },
     };
   }
 

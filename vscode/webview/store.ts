@@ -12,6 +12,8 @@ import type {
   SessionListItem,
   AgentQuestionAnswer,
   SkillInfo,
+  ChildSessionSnapshot,
+  ShellSnapshot,
 } from "../src/types.js";
 
 /** Local, non-persisted cards that slash info-commands insert into the transcript. */
@@ -62,6 +64,10 @@ interface StoreState {
   goal: string | null;
   skills: SkillInfo[];
 
+  // Live child agents + background shells (watchEvents push)
+  children: ChildSessionSnapshot[];
+  shells: ShellSnapshot[];
+
   // Transient info cards appended to the transcript by info commands
   infoCards: InfoCard[];
 
@@ -108,6 +114,8 @@ export const useStore = create<StoreState>((set, get) => ({
   agentMode: "default",
   goal: null,
   skills: [],
+  children: [],
+  shells: [],
   infoCards: [],
   configStatus: null,
 
@@ -192,6 +200,31 @@ export const useStore = create<StoreState>((set, get) => ({
       if (typeof p?.mode === "string") set({ agentMode: p.mode });
     });
 
+    // Thinking level changes (from /model chain or setThinkingLevel)
+    onEvent("thinking.changed", (params) => {
+      const p = params as { level?: string };
+      const meta = get().meta;
+      if (meta && typeof p?.level === "string") {
+        set({ meta: { ...meta, thinkingLevel: p.level } });
+      }
+    });
+
+    // Skills toggled (here, in a parallel client, or via the reload tool)
+    onEvent("skills.changed", (params) => {
+      const p = params as { skills?: SkillInfo[] };
+      if (Array.isArray(p?.skills)) set({ skills: p.skills });
+    });
+
+    // Watcher pushes: live child agents and background shells
+    onEvent("child.changed", (params) => {
+      const p = params as { children?: ChildSessionSnapshot[] };
+      if (Array.isArray(p?.children)) set({ children: p.children });
+    });
+    onEvent("shells.changed", (params) => {
+      const p = params as { shells?: ShellSnapshot[] };
+      if (Array.isArray(p?.shells)) set({ shells: p.shells });
+    });
+
     // Ask events
     onEvent("ask.pending", (params) => {
       set({ pendingAsk: params as AskPayload });
@@ -202,7 +235,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
     // Permission change
     onEvent("permission.changed", (params) => {
-      const p = params as { mode: string };
+      const p = params as { mode: SessionStatus["permissionMode"] };
       const status = get().status;
       if (status) {
         set({ status: { ...status, permissionMode: p.mode } });

@@ -87,6 +87,12 @@ describe("protocol handshake", () => {
         "crashEvent",
         "injectedTurn",
         "invokeSkill",
+        "thinkingLevel",
+        "mcpControl",
+        "hooksControl",
+        "sharedSettings",
+        "watchEvents",
+        "childMeta",
       ]);
       expect(PROTOCOL_VERSION).toBe(1);
       expect(meta.capabilities).toEqual(PROTOCOL_CAPABILITIES);

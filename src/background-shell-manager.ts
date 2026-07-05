@@ -51,26 +51,9 @@ export interface BackgroundShellEntry {
 }
 
 /** Read-only view of a tracked shell for UI surfaces (badge, picker, detail tab). */
-export interface BackgroundShellSnapshot {
-  id: string;
-  command: string;
-  cwd: string;
-  status: "running" | "exited" | "failed" | "killed";
-  exitCode: number | null;
-  /** Seconds since the shell was started. */
-  elapsedSeconds: number;
-  /** Last few output lines (trimmed, newest last). */
-  recentOutput: string[];
-  logPath: string;
-}
-
-/** Snapshot + log tail for the shell detail view. */
-export interface BackgroundShellDetail extends BackgroundShellSnapshot {
-  /** Tail of the log file (up to the requested size). */
-  logTail: string;
-  /** True when the log was longer than the tail window. */
-  logTruncated: boolean;
-}
+// Shell wire types live in src/protocol; re-exported to keep import paths stable.
+export type { BackgroundShellSnapshot, BackgroundShellDetail } from "./protocol/index.js";
+import type { BackgroundShellSnapshot, BackgroundShellDetail } from "./protocol/index.js";
 
 export interface BackgroundShellManagerDeps {
   projectRoot: string;

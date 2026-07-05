@@ -14,13 +14,11 @@
 // Types
 // ------------------------------------------------------------------
 
-export type CheckpointStatus = "pending" | "active" | "done";
+// Wire types live in src/protocol; re-exported to keep import paths stable.
+export type { CheckpointStatus, PlanCheckpoint } from "./protocol/index.js";
+import type { CheckpointStatus, PlanCheckpoint } from "./protocol/index.js";
 
-export interface PlanCheckpoint {
-  /** Full text of the checkbox line (without the `- [.] ` prefix). */
-  text: string;
-  status: CheckpointStatus;
-}
+
 
 // ------------------------------------------------------------------
 // Parser

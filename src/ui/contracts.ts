@@ -233,33 +233,9 @@ export interface Session {
   ): () => void;
 }
 
-export type ConversationEntryKind =
-  | "user"
-  | "agent_result"
-  | "assistant"
-  | "interrupted_marker"
-  | "progress"
-  | "sub_agent_rollup"
-  | "sub_agent_done"
-  | "tool_call"
-  | "tool_result"
-  | "reasoning"
-  | "status"
-  | "error"
-  | "compact_mark";
-
-export interface ConversationEntry {
-  kind: ConversationEntryKind;
-  text: string;
-  startedAt?: number;
-  elapsedMs?: number;
-  id?: string;
-  queued?: boolean;
-  dim?: boolean;
-  meta?: Record<string, unknown>;
-  /** Full untruncated result text for preview/detail entries. */
-  fullText?: string;
-}
+// Wire types live in src/protocol (single source for all remote clients);
+// re-exported here so UI-layer consumers keep their import path.
+export type { ConversationEntry, ConversationEntryKind } from "../protocol/index.js";
 
 export interface LaunchOptions {
   session: Session;

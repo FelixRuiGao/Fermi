@@ -87,6 +87,12 @@ export function InputArea() {
   const hasConversation = useStore((s) => s.conversation.length > 0);
   const agentMode = useStore((s) => s.agentMode);
   const goal = useStore((s) => s.goal);
+  const children = useStore((s) => s.children);
+  const shells = useStore((s) => s.shells);
+  const addInfoCard = useStore((s) => s.addInfoCard);
+
+  const liveAgents = children.filter((c) => c.lifecycle === "running" || c.lifecycle === "blocked");
+  const liveShells = shells.filter((sh) => sh.status === "running");
 
   useEffect(() => {
     rpcRequest<{ workspaceName: string | null; branch: string | null }>("__ext.getContext")
@@ -425,6 +431,33 @@ export function InputArea() {
           </span>
         )}
         <span className="chips-right">
+          {liveAgents.length > 0 && (
+            <span
+              className="context-chip"
+              style={{ cursor: "pointer" }}
+              title={liveAgents.map((c) => `#${c.numericId} ${c.template} · ${c.phase}`).join("\n")}
+              onClick={() =>
+                addInfoCard({
+                  kind: "text",
+                  title: "Agents",
+                  body: children
+                    .map((c) => `#${c.numericId} ${c.template} · ${c.lifecycle}/${c.phase} · ${c.lifetimeToolCallCount} tools — ${c.lastToolCallSummary || "…"}`)
+                    .join("\n"),
+                  mono: true,
+                })
+              }
+            >
+              ⛭ {liveAgents.length} agent{liveAgents.length > 1 ? "s" : ""}
+            </span>
+          )}
+          {liveShells.length > 0 && (
+            <span
+              className="context-chip"
+              title={liveShells.map((sh) => `$ ${sh.command}`).join("\n") + "\n(/shells to manage)"}
+            >
+              ❯ {liveShells.length} shell{liveShells.length > 1 ? "s" : ""}
+            </span>
+          )}
           {goal && (
             <span className="context-chip" title={`Goal: ${goal}`} style={{ color: "var(--f-accent)" }}>
               ◎ goal

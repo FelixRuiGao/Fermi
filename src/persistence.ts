@@ -1506,6 +1506,9 @@ export function mergeSettings(global: FermiSettings, local: FermiSettings): Ferm
   if (local.context_budget_percent !== undefined) merged.context_budget_percent = local.context_budget_percent;
   if (local.accent_color !== undefined) merged.accent_color = local.accent_color;
   if (local.theme_mode !== undefined) merged.theme_mode = local.theme_mode;
+  if (local.diff_display !== undefined) merged.diff_display = local.diff_display;
+  if (local.copy_on_select !== undefined) merged.copy_on_select = local.copy_on_select;
+  if (local.auto_update !== undefined) merged.auto_update = local.auto_update;
   if (local.permission_mode !== undefined) merged.permission_mode = local.permission_mode;
   if (local.sub_agent_inherit_mcp !== undefined) merged.sub_agent_inherit_mcp = local.sub_agent_inherit_mcp;
   if (local.sub_agent_inherit_hooks !== undefined) merged.sub_agent_inherit_hooks = local.sub_agent_inherit_hooks;
@@ -1612,6 +1615,7 @@ export function saveSettings(settings: FermiSettings, filePath: string): void {
   if (settings.accent_color !== undefined) clean.accent_color = settings.accent_color;
   if (settings.theme_mode !== undefined) clean.theme_mode = settings.theme_mode;
   if (settings.diff_display !== undefined) clean.diff_display = settings.diff_display;
+  if (settings.copy_on_select !== undefined) clean.copy_on_select = settings.copy_on_select;
   if (settings.permission_mode !== undefined) clean.permission_mode = settings.permission_mode;
   if (settings.disabled_skills !== undefined) clean.disabled_skills = settings.disabled_skills;
   if (settings.mcp_servers !== undefined) clean.mcp_servers = settings.mcp_servers;
