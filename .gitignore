@@ -41,6 +41,9 @@ opentui-src/forked/core/benchmark/
 vscode/node_modules/
 vscode/out/
 
+# Stray repo-root build output (electron-vite run from the wrong cwd)
+/out/
+
 # GUI build artifacts (gui/ itself is now tracked)
 gui/node_modules/
 gui/out/
