@@ -9,9 +9,12 @@ import { Transcript } from '@/components/Transcript.js'
 import { StatusBar } from '@/components/StatusBar.js'
 import { AskBar } from '@/components/ApprovalCard.js'
 import { InitWizard } from '@/components/InitWizard.js'
+import { PlanBar } from '@/components/PlanBar.js'
+import { LiveActivity } from '@/components/LiveActivity.js'
 import { cn } from '@/lib/cn.js'
 import { projectName } from '@/lib/path.js'
 import { api } from '@/lib/api.js'
+import type { InlineAttachment } from '@/state/sessionStore.js'
 import type { ConversationEntry, SessionTab } from '@shared/rpc.js'
 
 export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
@@ -43,8 +46,8 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
     if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight
   }, [state?.logRevision, running])
 
-  const onSubmit = async (input: string): Promise<void> => {
-    await submitTurn(tab.tabId, input)
+  const onSubmit = async (input: string, attachments?: readonly InlineAttachment[]): Promise<void> => {
+    await submitTurn(tab.tabId, input, attachments)
   }
 
   const showSessionNotice = (message: string): void => {
@@ -201,6 +204,8 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
         </div>
       )}
 
+      {!isEmptyDraft && <PlanBar tabId={tab.tabId} />}
+
       <div
         ref={transcriptRef}
         onScroll={onScroll}
@@ -220,6 +225,7 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
           />
         )}
       </div>
+      <LiveActivity tab={tab} />
       <AskBar tab={tab} />
       <StatusBar state={state ?? null} />
       <Composer tab={tab} state={state ?? null} onSubmit={onSubmit} disabled={running} />

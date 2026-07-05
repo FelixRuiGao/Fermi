@@ -9,21 +9,10 @@
  */
 
 import { useEffect, useState } from 'react'
-import {
-  ChevronDown,
-  CircleDot,
-  GitBranch,
-  Loader2,
-  SquareTerminal,
-  ListChecks,
-  Bot,
-  Gauge,
-  FileDiff,
-} from 'lucide-react'
+import { ChevronDown, CircleDot, GitBranch, ListChecks, Gauge, FileDiff } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { api } from '@/lib/api.js'
 import { useSessionStore } from '@/state/sessionStore.js'
-import { childStatusView, isLiveChild } from '@/lib/transcriptModel.js'
 import type { GitStatus, SessionTab } from '@shared/rpc.js'
 
 export function RightPane({ tab }: { tab: SessionTab }): JSX.Element | null {
@@ -48,8 +37,6 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element | null {
 
   const status = state.status
   const plan = state.plan
-  const liveChildren = state.children.filter(isLiveChild)
-  const shells = state.shells
   const changedFiles = git?.files ?? []
 
   const usedPct =
@@ -163,55 +150,6 @@ export function RightPane({ tab }: { tab: SessionTab }): JSX.Element | null {
         </Section>
       )}
 
-      {liveChildren.length > 0 && (
-        <Section title="Agents" icon={<Bot className="h-3.5 w-3.5" strokeWidth={1.7} />} count={liveChildren.length} defaultOpen>
-          <div className="flex flex-col gap-1">
-            {liveChildren.map((c) => {
-              const v = childStatusView(c)
-              return (
-                <div key={v.id} className="rounded-md px-2 py-1.5 text-[13px] transition hover:bg-line-soft/50">
-                  <div className="flex items-center gap-2">
-                    {v.needsApproval ? (
-                      <CircleDot className="h-3 w-3 shrink-0 text-warning" strokeWidth={2} />
-                    ) : (
-                      <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate text-ink-2">{v.label}</span>
-                    <span className="shrink-0 text-[11.5px] text-ink-4">{v.phase}</span>
-                  </div>
-                  {v.detail && <div className="mono ml-5 truncate text-[11.5px] text-ink-4">{v.detail}</div>}
-                </div>
-              )
-            })}
-          </div>
-        </Section>
-      )}
-
-      {shells.length > 0 && (
-        <Section
-          title="Background shells"
-          icon={<SquareTerminal className="h-3.5 w-3.5" strokeWidth={1.7} />}
-          count={shells.length}
-          defaultOpen
-        >
-          <div className="flex flex-col gap-1">
-            {shells.map((sh) => (
-              <div key={sh.id} className="rounded-md px-2 py-1.5 text-[13px] transition hover:bg-line-soft/50">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      'h-1.5 w-1.5 shrink-0 rounded-full',
-                      sh.status === 'running' ? 'bg-accent' : sh.status === 'exited' ? 'bg-success' : 'bg-error',
-                    )}
-                  />
-                  <span className="mono min-w-0 flex-1 truncate text-ink-2">{sh.command}</span>
-                  <span className="shrink-0 text-[11.5px] text-ink-4">{Math.round(sh.elapsedSeconds)}s</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
     </aside>
   )
 }

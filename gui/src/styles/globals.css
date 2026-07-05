@@ -200,6 +200,10 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--color-line-soft);
 }
 
+@utility hairline-t {
+  border-top: 1px solid var(--color-line-soft);
+}
+
 /* Spinner shown wherever we indicate in-progress work */
 @keyframes spin { to { transform: rotate(360deg); } }
 

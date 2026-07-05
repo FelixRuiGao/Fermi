@@ -14,7 +14,7 @@ import { api } from '@/lib/api.js'
 import { CommandPanel } from '@/components/CommandPanel.js'
 import { buildCommands, type CommandCtx } from '@/lib/commands.js'
 import type { ModelDescriptor, PermissionMode, SessionTab } from '@shared/rpc.js'
-import type { TabState } from '@/state/sessionStore.js'
+import type { InlineAttachment, TabState } from '@/state/sessionStore.js'
 
 const AGENT_MODES = ['default', 'vibe', 'scale', 'auto'] as const
 const MODE_LABELS: Record<string, string> = {
@@ -56,10 +56,11 @@ export function Composer({
 }: {
   tab: SessionTab
   state: TabState | null
-  onSubmit: (input: string) => Promise<void>
+  onSubmit: (input: string, attachments?: readonly InlineAttachment[]) => Promise<void>
   disabled: boolean
 }): JSX.Element {
   const [text, setText] = useState('')
+  const [attachments, setAttachments] = useState<InlineAttachment[]>([])
   const [promptHistory, setPromptHistory] = useState<readonly string[]>([])
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -128,13 +129,48 @@ export function Composer({
 
   const send = async (): Promise<void> => {
     const v = text.trim()
-    if (!v || disabled) return
-    const nextHistory = addPromptHistoryEntry(tab.workDir, promptHistory, v)
-    setPromptHistory(nextHistory)
+    if ((!v && attachments.length === 0) || disabled) return
+    if (v) {
+      const nextHistory = addPromptHistoryEntry(tab.workDir, promptHistory, v)
+      setPromptHistory(nextHistory)
+    }
     setHistoryIndex(null)
     historyDraftRef.current = ''
+    const atts = attachments
     setText('')
-    await onSubmit(v)
+    setAttachments([])
+    await onSubmit(v, atts.length > 0 ? atts : undefined)
+  }
+
+  const addImageFiles = (files: readonly File[]): void => {
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue
+      const reader = new FileReader()
+      reader.onload = () => {
+        const data = typeof reader.result === 'string' ? reader.result : ''
+        if (data) setAttachments((prev) => [...prev, { data, mimeType: file.type, name: file.name }])
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const onPaste = (e: React.ClipboardEvent): void => {
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null)
+    if (files.length > 0) {
+      e.preventDefault()
+      addImageFiles(files)
+    }
+  }
+
+  const onDrop = (e: React.DragEvent): void => {
+    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'))
+    if (files.length > 0) {
+      e.preventDefault()
+      addImageFiles(files)
+    }
   }
 
   const navigateHistory = (direction: -1 | 1): void => {
@@ -248,10 +284,32 @@ export function Composer({
           />
         )}
         <div className="input-focus-shell rounded-xl border border-line-soft bg-pane-2 px-3.5 py-2 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+          {attachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {attachments.map((att, i) => (
+                <div
+                  key={i}
+                  className="group relative h-14 w-14 overflow-hidden rounded-lg border border-line-soft bg-pane"
+                >
+                  <img src={att.data} alt={att.name ?? 'attachment'} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    aria-label="Remove attachment"
+                    className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onPaste={onPaste}
+            onDrop={onDrop}
             onKeyDown={(e) => {
               // While the slash palette is open it owns the nav keys.
               if (panelOpen) return
@@ -343,12 +401,10 @@ export function Composer({
               <button
                 type="button"
                 onClick={() => void send()}
-                disabled={!text.trim()}
+                disabled={!text.trim() && attachments.length === 0}
                 className={cn(
                   'grid h-8 w-8 place-items-center rounded transition',
-                  text.trim()
-                    ? 'bg-ink text-pane hover:opacity-90'
-                    : 'text-ink-4',
+                  text.trim() || attachments.length > 0 ? 'bg-ink text-pane hover:opacity-90' : 'text-ink-4',
                 )}
                 title="Send (↵)"
                 aria-label="Send"

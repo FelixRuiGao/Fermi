@@ -354,7 +354,34 @@ function AgentResultRow({ entry, ctx }: { entry: ConversationEntry; ctx: RenderC
   )
 }
 
-function ChildTranscript({ tabId, childId, ctx }: { tabId: string; childId: string; ctx: RenderCtx }): JSX.Element {
+/** Nested read-only view of a child agent's projected log. Pass the child's
+ * logRevision to keep a LIVE child's transcript refreshing as it works. */
+export function ChildTranscriptView({
+  tabId,
+  childId,
+  workDir,
+  revision,
+}: {
+  tabId: string
+  childId: string
+  workDir?: string
+  revision?: number
+}): JSX.Element {
+  const ctx: RenderCtx = { activeId: null, running: false, workDir, markdownMode: 'rendered', tabId }
+  return <ChildTranscript tabId={tabId} childId={childId} ctx={ctx} revision={revision} />
+}
+
+function ChildTranscript({
+  tabId,
+  childId,
+  ctx,
+  revision,
+}: {
+  tabId: string
+  childId: string
+  ctx: RenderCtx
+  revision?: number
+}): JSX.Element {
   const request = useSessionStore((s) => s.request)
   const [entries, setEntries] = useState<ConversationEntry[] | null | 'loading'>('loading')
 
@@ -370,7 +397,7 @@ function ChildTranscript({ tabId, childId, ctx }: { tabId: string; childId: stri
     return () => {
       cancelled = true
     }
-  }, [tabId, childId, request])
+  }, [tabId, childId, request, revision])
 
   if (entries === 'loading') return <div className="mt-2 text-[13px] text-ink-4">Loading transcript…</div>
   if (!entries || entries.length === 0) return <div className="mt-2 text-[13px] text-ink-4">No transcript available.</div>
