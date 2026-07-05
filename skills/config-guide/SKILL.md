@@ -39,6 +39,12 @@ description: Explains Fermi's configuration system, settings.json, local project
 └── .gitignore                         # Auto-generated
 ```
 
+The `~/.fermi/` root above can be relocated with the `FERMI_HOME` environment
+variable: set `FERMI_HOME=/some/path` and that directory replaces `~/.fermi`
+everywhere — settings.json, `.env`, skills, hooks, agent_templates, prompts, and
+per-project storage all resolve under it. Unset, it defaults to `~/.fermi`.
+Useful for isolated multi-profile setups.
+
 ### Extension Layer Priority (highest first)
 
 1. **Workspace** --- `{cwd}/.fermi/`

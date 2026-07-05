@@ -33,4 +33,15 @@ describe("fixed Fermi home directory", () => {
     expect(process.env["FERMI_TEST_KEY"]).toBe("from-home");
   });
 
+  it("honours FERMI_HOME as an override of the default ~/.fermi", () => {
+    const prev = process.env.FERMI_HOME;
+    process.env.FERMI_HOME = tempHome;
+    try {
+      expect(getFermiHomeDir()).toBe(tempHome);
+    } finally {
+      if (prev === undefined) delete process.env.FERMI_HOME;
+      else process.env.FERMI_HOME = prev;
+    }
+  });
+
 });

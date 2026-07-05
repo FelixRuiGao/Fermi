@@ -8,6 +8,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { projectToTuiEntries } from "../src/log-projection.js";
 import type { LogEntry } from "../src/log-entry.js";
@@ -317,5 +320,112 @@ describe("projected log over RPC", () => {
       dispose();
       h.dispose();
     }
+  });
+});
+
+describe("control-plane isolation (FERMI_HOME)", () => {
+  // These handlers read/write the *global* ~/.fermi state (settings.json,
+  // hooks/). getFermiHomeDir() honours FERMI_HOME, so each test points the
+  // whole control plane at a throwaway dir instead of the developer's home.
+  async function withTmpHome<T>(fn: (home: string) => Promise<T> | T): Promise<T> {
+    const home = mkdtempSync(join(tmpdir(), "fermi-cp-"));
+    const prev = process.env.FERMI_HOME;
+    process.env.FERMI_HOME = home;
+    try {
+      return await fn(home);
+    } finally {
+      if (prev === undefined) delete process.env.FERMI_HOME;
+      else process.env.FERMI_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  it("settings.patch field-merges summarize_hint (a toggle keeps level1/level2)", async () => {
+    await withTmpHome(async () => {
+      const h = makeScriptedSession({ rounds: [] });
+      const { rpc, dispose } = bind(h);
+      try {
+        await rpc.call("settings.patch", { summarize_hint: { enabled: true, level1: 20, level2: 40 } });
+        // A partial patch that only flips `enabled` must NOT wipe the thresholds
+        // (the pre-fix bug: saveGlobalSettingsPatch shallow-overwrote the key).
+        await rpc.call("settings.patch", { summarize_hint: { enabled: false } });
+        const got = await rpc.call("settings.get") as {
+          summarize_hint?: { enabled?: boolean; level1?: number; level2?: number };
+        };
+        expect(got.summarize_hint).toEqual({ enabled: false, level1: 20, level2: 40 });
+        expect(rpc.eventsOf("settings.changed").at(-1)).toMatchObject({
+          summarize_hint: { enabled: false, level1: 20, level2: 40 },
+        });
+      } finally {
+        dispose();
+        h.dispose();
+      }
+    });
+  });
+
+  it("settings.patch rejects a non-integer level (parity with the TUI validator)", async () => {
+    await withTmpHome(async () => {
+      const h = makeScriptedSession({ rounds: [] });
+      const { rpc, dispose } = bind(h);
+      try {
+        await expect(
+          rpc.call("settings.patch", { summarize_hint: { level1: 10.5, level2: 40 } }),
+        ).rejects.toThrow(/integer/i);
+      } finally {
+        dispose();
+        h.dispose();
+      }
+    });
+  });
+
+  it("settings.patch re-validates the MERGED pair, not just the patched key", async () => {
+    await withTmpHome(async () => {
+      const h = makeScriptedSession({ rounds: [] });
+      const { rpc, dispose } = bind(h);
+      try {
+        await rpc.call("settings.patch", { summarize_hint: { enabled: true, level1: 20, level2: 40 } });
+        // 90 alone looks fine, but 90 < persisted level2 (40) must fail.
+        await expect(
+          rpc.call("settings.patch", { summarize_hint: { level1: 90 } }),
+        ).rejects.toThrow(/satisfy/i);
+        // The rejected patch left the stored value untouched.
+        const got = await rpc.call("settings.get") as {
+          summarize_hint?: Record<string, unknown>;
+        };
+        expect(got.summarize_hint).toEqual({ enabled: true, level1: 20, level2: 40 });
+      } finally {
+        dispose();
+        h.dispose();
+      }
+    });
+  });
+
+  it("setHookEnabled targets the last same-named hook (the copy the runtime loads)", async () => {
+    await withTmpHome(async (home) => {
+      const hooksRoot = join(home, "hooks");
+      const writeHook = (dir: string) => {
+        mkdirSync(join(hooksRoot, dir), { recursive: true });
+        writeFileSync(
+          join(hooksRoot, dir, "hook.json"),
+          JSON.stringify({ name: "iso-dup", event: "PreToolUse", type: "command", command: "true" }),
+        );
+      };
+      // readdirSync().sort() yields [aaa, bbb]; loadHooksMulti keeps the last,
+      // so the toggle must land on bbb, not the shadowed aaa.
+      writeHook("aaa");
+      writeHook("bbb");
+      const h = makeScriptedSession({ rounds: [] });
+      const { rpc, dispose } = bind(h);
+      try {
+        await rpc.call("session.setHookEnabled", { name: "iso-dup", enabled: false });
+        const bbb = JSON.parse(readFileSync(join(hooksRoot, "bbb", "hook.json"), "utf-8"));
+        const aaa = JSON.parse(readFileSync(join(hooksRoot, "aaa", "hook.json"), "utf-8"));
+        expect(bbb.disabled).toBe(true);
+        expect(aaa.disabled).toBeUndefined();
+      } finally {
+        dispose();
+        h.dispose();
+      }
+    });
   });
 });

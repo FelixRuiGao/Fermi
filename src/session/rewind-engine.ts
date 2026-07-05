@@ -21,7 +21,7 @@ import {
   readdirSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
+import { getFermiHomeDir } from "../home-path.js";
 import { join, relative } from "node:path";
 
 import { applyPatch, parsePatch } from "diff";
@@ -512,7 +512,7 @@ export class RewindEngine {
   }
 
   private _getRewindJournalPath(): string {
-    const dir = this.deps.getArtifactsDir() ?? join(homedir(), ".fermi", "tmp");
+    const dir = this.deps.getArtifactsDir() ?? join(getFermiHomeDir(), "tmp");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     return join(dir, "rewind-journal.json");
   }
