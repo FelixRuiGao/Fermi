@@ -30,7 +30,9 @@ export type ProtocolCapability =
   | "hooksControl"
   | "sharedSettings"
   | "watchEvents"
-  | "childMeta";
+  | "childMeta"
+  | "modelCatalog"
+  | "turnAttachments";
 
 export type PermissionMode = "read_only" | "reversible" | "yolo";
 
@@ -206,6 +208,12 @@ export interface ModelDescriptor {
   contextLength: number;
   supportsThinking: boolean;
   supportsMultimodal: boolean;
+  /**
+   * Thinking levels eligible for this model when pinned to a sub-agent tier
+   * (session.listAvailableModels enriches each entry). Optional for
+   * older-binary compatibility.
+   */
+  tierThinkingLevels?: readonly string[];
 }
 
 /**

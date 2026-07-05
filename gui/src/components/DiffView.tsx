@@ -18,6 +18,118 @@ import { useMemo } from 'react'
 import { FileEdit, FilePlus2 } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { relToWorkspace } from '@/lib/path.js'
+import { iconForExtension } from '@/lib/fileIcon.js'
+import { diffStats, type FileModifyDisplay } from '@/lib/transcriptModel.js'
+
+/**
+ * Inline unified diff rendered straight from the structured hunk data the
+ * server ships in a tool's `fileModifyData` — no client-side diffing. Write
+ * mode shows the new file content as additions (truncated).
+ */
+export function StructuredDiff({
+  data,
+  workDir,
+  maxWriteLines = 140,
+}: {
+  data: FileModifyDisplay
+  workDir?: string
+  maxWriteLines?: number
+}): JSX.Element {
+  const fileName = data.filePath.split(/[\\/]/).pop() ?? data.filePath
+  const relPath = workDir ? relToWorkspace(data.filePath, workDir) : data.filePath
+  const { added, removed } = diffStats(data)
+  const FileIcon = iconForExtension(fileName)
+  const isWrite = data.mode === 'write' && !!data.writeLines && data.hunks.length === 0
+
+  const rows: DiffRow[] = []
+  if (isWrite) {
+    const lines = data.writeLines!.slice(0, maxWriteLines)
+    lines.forEach((text, i) => rows.push({ kind: 'add', num: i + 1, text }))
+    if (data.writeLines!.length > lines.length) {
+      rows.push({ kind: 'more', num: null, text: `… ${data.writeLines!.length - lines.length} more lines` })
+    }
+  } else {
+    data.hunks.forEach((h, hi) => {
+      if (hi > 0) rows.push({ kind: 'sep', num: null, text: '' })
+      let oldLine = h.startLine - h.contextBefore.length
+      let newLine = oldLine
+      for (const text of h.contextBefore) {
+        rows.push({ kind: 'ctx', num: newLine, text })
+        oldLine++
+        newLine++
+      }
+      for (const text of h.deletions) {
+        rows.push({ kind: 'del', num: oldLine, text })
+        oldLine++
+      }
+      for (const text of h.additions) {
+        rows.push({ kind: 'add', num: newLine, text })
+        newLine++
+      }
+      for (const text of h.contextAfter) {
+        rows.push({ kind: 'ctx', num: newLine, text })
+        oldLine++
+        newLine++
+      }
+    })
+  }
+
+  return (
+    <div className="overflow-hidden">
+      <div className="max-h-[420px] overflow-auto">
+        <div className="mono min-w-max text-[13px] leading-[1.55]">
+          {rows.map((row, i) => {
+            if (row.kind === 'sep') {
+              return <div key={i} className="h-2 bg-line-soft/20" />
+            }
+            if (row.kind === 'more') {
+              return (
+                <div key={i} className="flex px-1 py-1 text-ink-4">
+                  <span className="w-10 shrink-0" />
+                  <span>{row.text}</span>
+                </div>
+              )
+            }
+            const tone =
+              row.kind === 'add'
+                ? 'bg-diff-add-bg'
+                : row.kind === 'del'
+                  ? 'bg-diff-rm-bg'
+                  : ''
+            const sign = row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ' '
+            const signColor =
+              row.kind === 'add' ? 'text-diff-add-ink' : row.kind === 'del' ? 'text-diff-rm-ink' : 'text-ink-4'
+            return (
+              <div key={i} className={cn('flex', tone)}>
+                <span className="w-11 shrink-0 select-none px-2 text-right text-[11.5px] text-ink-4">
+                  {row.num ?? ''}
+                </span>
+                <span className={cn('w-4 shrink-0 select-none text-center', signColor)}>{sign}</span>
+                <span className="whitespace-pre pr-3 text-code-ink">{row.text.length > 0 ? row.text : ' '}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 border-t border-line-soft/60 bg-pane-2/30 px-3 py-1.5 text-[12.5px]">
+        <FileIcon className="h-3.5 w-3.5 shrink-0 text-ink-4" strokeWidth={1.6} />
+        <span className="mono truncate text-ink-3" title={data.filePath}>
+          {relPath}
+        </span>
+        <span className="mono ml-auto flex shrink-0 items-center gap-1.5">
+          {added > 0 && <span className="text-diff-add-ink">+{added}</span>}
+          {removed > 0 && <span className="text-diff-rm-ink">−{removed}</span>}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+interface DiffRow {
+  kind: 'add' | 'del' | 'ctx' | 'sep' | 'more'
+  num: number | null
+  text: string
+}
 
 interface DiffLine {
   kind: 'add' | 'del' | 'ctx' | 'hunk'

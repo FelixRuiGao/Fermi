@@ -1,10 +1,79 @@
 /**
  * Shared types for the Fermi GUI ↔ subprocess JSON-RPC.
  *
- * Mirrors src/server/rpc-transport.ts. Used by both the Electron main process
- * (which talks to the subprocess) and the renderer (which talks to main via
- * the preload bridge).
+ * All wire-protocol types come from the core's single source of truth
+ * (`src/protocol`) — never re-declare them here; drift between hand-mirrored
+ * copies is exactly the class of bug that module exists to kill. Only
+ * GUI-local types (Electron IPC transport, git/file/search desktop features
+ * the fermi server doesn't own, settings.json read/write) live below.
+ *
+ * Used by both the Electron main process (which talks to the subprocess) and
+ * the renderer (which talks to main via the preload bridge).
  */
+
+// ── Wire protocol (single source) ──
+export type {
+  // Handshake
+  PermissionMode,
+  ProtocolCapability,
+  SessionMetaPayload as SessionMeta,
+  SessionStatusPayload as SessionStatus,
+  // Conversation projection
+  ConversationEntry,
+  ConversationEntryKind,
+  // Asks
+  AskKind,
+  AskSource,
+  AgentQuestionOption,
+  AgentQuestionOptionKind,
+  AgentQuestionItem,
+  AgentQuestionAnswer,
+  AgentQuestionDecision,
+  ApprovalAskPayload as ApprovalPayload,
+  PendingAskUi as AskPayload,
+  // Plan
+  CheckpointStatus,
+  PlanCheckpoint,
+  // Sessions / models / skills
+  SessionListItem,
+  ModelDescriptor,
+  ModelCatalogNode,
+  ModelCatalogNodeKind,
+  ModelCredentialState,
+  SkillInfo,
+  ForkSessionPayload,
+  // Context management
+  RewindTarget,
+  SummarizeTarget,
+  // Background shells
+  BackgroundShellSnapshot as ShellSnapshot,
+  BackgroundShellDetail as ShellDetail,
+  // Child sessions
+  ChildSessionSnapshot,
+  ChildSessionMode,
+  ChildSessionLifecycle,
+  ChildSessionPhase,
+  ChildSessionOutcome,
+  // Control plane
+  McpStatusPayload,
+  HooksStatusPayload,
+  ModelTierStatusPayload,
+  ModelTierLevel,
+  ThinkingLevelsPayload,
+  SharedSettingsPayload,
+  // Init wizard
+  ProviderPresetInfo,
+  ConfigStatus,
+  ModelPickerNode,
+} from '../../src/protocol/index.js'
+
+import type { ModelTierStatusPayload } from '../../src/protocol/index.js'
+
+/** One tier row from the model-tier status payload. */
+export type ModelTierInfo = ModelTierStatusPayload['tiers'][number]
+export type ModelTierStatus = ModelTierStatusPayload
+
+// ── GUI-local: Electron IPC transport ──
 
 export interface RpcEvent {
   readonly tabId: string
@@ -24,6 +93,8 @@ export interface SessionTab {
   readonly lastActiveAt: number
   readonly status: 'draft' | 'starting' | 'ready' | 'error' | 'closed'
   readonly errorMessage?: string
+  /** True when the subprocess is in init-wizard mode (no providers configured). */
+  readonly needsInit?: boolean
 }
 
 export interface CreateTabInput {
@@ -32,18 +103,7 @@ export interface CreateTabInput {
   readonly selectedAgent?: string
 }
 
-export interface SessionMeta {
-  readonly sessionId: string
-  readonly title: string | undefined
-  readonly displayName: string
-  readonly sessionDir: string | null
-  readonly workDir: string
-  readonly modelConfigName: string
-  readonly modelProvider: string
-  readonly thinkingLevel: string
-  readonly accentColor: string | undefined
-  readonly turnCount: number
-}
+// ── GUI-local: workspace history (Electron reads ~/.fermi/projects) ──
 
 export interface SessionHistoryItem {
   readonly sessionId: string
@@ -64,6 +124,19 @@ export interface WorkspaceHistoryGroup {
   readonly sessions: readonly SessionHistoryItem[]
 }
 
+export interface ArchiveSessionInput {
+  readonly workDir: string
+  readonly sessionId: string
+}
+
+export interface SetSessionPinnedInput {
+  readonly workDir: string
+  readonly sessionId: string
+  readonly pinned: boolean
+}
+
+// ── GUI-local: workspace file tree / text search (Electron) ──
+
 export interface WorkspaceFileEntry {
   readonly path: string
   readonly size: number
@@ -82,81 +155,7 @@ export interface WorkspaceTextSearchResult {
   readonly text: string
 }
 
-export interface ArchiveSessionInput {
-  readonly workDir: string
-  readonly sessionId: string
-}
-
-export interface SetSessionPinnedInput {
-  readonly workDir: string
-  readonly sessionId: string
-  readonly pinned: boolean
-}
-
-export type PermissionMode = 'read_only' | 'reversible' | 'yolo'
-
-export interface SessionStatus {
-  readonly currentTurnRunning: boolean
-  readonly sessionPhase: string
-  readonly lastTurnEndStatus: string | null
-  readonly pendingInboxCount: number
-  readonly lifetimeToolCallCount: number
-  readonly lastToolCallSummary: string
-  readonly lastInputTokens: number
-  readonly lastTotalTokens: number
-  readonly lastCacheReadTokens: number
-  readonly contextBudget: number
-  readonly activeLogEntryId: string | null
-  readonly hasPendingTurn: boolean
-  readonly permissionMode: PermissionMode
-}
-
-export interface ModelDescriptor {
-  readonly name: string
-  readonly provider: string
-  readonly model: string
-  readonly contextLength: number
-  readonly supportsThinking: boolean
-  readonly supportsMultimodal: boolean
-  readonly tierThinkingLevels?: readonly string[]
-}
-
-export type ModelTierLevel = 'high' | 'medium' | 'low'
-
-export interface ModelTierInfo {
-  readonly level: ModelTierLevel
-  readonly provider: string | null
-  readonly selectionKey: string | null
-  readonly modelId: string | null
-  readonly thinkingLevel: string | null
-  readonly configName: string | null
-  readonly label: string
-}
-
-export interface ModelTierStatus {
-  readonly tiers: readonly ModelTierInfo[]
-}
-
-export interface AgentRuntimeSettings {
-  readonly subAgentInheritMcp: boolean
-  readonly subAgentInheritHooks: boolean
-  readonly agentModelPins: number
-}
-
-export interface AgentModelPinInfo {
-  readonly name: string
-  readonly description: string | null
-  readonly provider: string | null
-  readonly selectionKey: string | null
-  readonly modelId: string | null
-  readonly thinkingLevel: string | null
-  readonly configName: string | null
-  readonly label: string
-}
-
-export interface AgentModelPinsStatus {
-  readonly templates: readonly AgentModelPinInfo[]
-}
+// ── GUI-local: git panel (Electron shells out to git) ──
 
 export interface GitFileChange {
   readonly path: string
@@ -197,6 +196,9 @@ export interface GitFileDiffInput {
   readonly staged: boolean
 }
 
+// ── GUI-local: settings.json read/write (Electron main; Stage 4 moves the
+// credential-mutating paths to backend RPC) ──
+
 export interface SettingsSnapshot {
   readonly autoUpdate: boolean
   readonly settingsPath: string
@@ -206,12 +208,15 @@ export interface SettingsSnapshot {
   readonly permissionMode: string | null
 }
 
-export interface SummarizeTarget {
-  readonly kind: 'turn' | 'summary'
-  readonly turnIndex: number
-  readonly preview: string
-  readonly timestamp: number
-  readonly contextId?: string
+export interface ProviderSettingsItem {
+  readonly id: string
+  readonly kind: 'cloud' | 'local' | 'invalid'
+  readonly apiKeyEnv: string | null
+  readonly hasEnvValue: boolean
+  readonly baseUrl: string | null
+  readonly model: string | null
+  readonly contextLength: number | null
+  readonly hasInlineKey: boolean
 }
 
 export interface McpServerInput {
@@ -229,13 +234,26 @@ export interface SettingsDefaultsPatch {
   readonly permissionMode?: string | null
 }
 
-export interface ProviderSettingsItem {
-  readonly id: string
-  readonly kind: 'cloud' | 'local' | 'invalid'
-  readonly apiKeyEnv: string | null
-  readonly hasEnvValue: boolean
-  readonly baseUrl: string | null
-  readonly model: string | null
-  readonly contextLength: number | null
-  readonly hasInlineKey: boolean
+// ── GUI-local: agent runtime settings (session-rpc payloads not yet promoted
+// to the protocol module; used by the settings dialog) ──
+
+export interface AgentRuntimeSettings {
+  readonly subAgentInheritMcp: boolean
+  readonly subAgentInheritHooks: boolean
+  readonly agentModelPins: number
+}
+
+export interface AgentModelPinInfo {
+  readonly name: string
+  readonly description: string | null
+  readonly provider: string | null
+  readonly selectionKey: string | null
+  readonly modelId: string | null
+  readonly thinkingLevel: string | null
+  readonly configName: string | null
+  readonly label: string
+}
+
+export interface AgentModelPinsStatus {
+  readonly templates: readonly AgentModelPinInfo[]
 }

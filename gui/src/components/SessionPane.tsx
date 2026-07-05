@@ -2,16 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import type { ButtonHTMLAttributes } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Code2, MoreHorizontal, FolderOpen, Pencil, X, Copy, GitBranch, ScrollText, Archive, Pin, Undo2 } from 'lucide-react'
+import { Code2, MoreHorizontal, FolderOpen, Pencil, X, Copy, GitBranch, ScrollText, Archive, Pin } from 'lucide-react'
 import { useSessionStore } from '@/state/sessionStore.js'
 import { Composer } from '@/components/Composer.js'
-import { Transcript, type TranscriptRewindTarget } from '@/components/Transcript.js'
+import { Transcript } from '@/components/Transcript.js'
 import { StatusBar } from '@/components/StatusBar.js'
 import { AskBar } from '@/components/ApprovalCard.js'
+import { InitWizard } from '@/components/InitWizard.js'
 import { cn } from '@/lib/cn.js'
 import { projectName } from '@/lib/path.js'
 import { api } from '@/lib/api.js'
-import type { SessionTab } from '@shared/rpc.js'
+import type { ConversationEntry, SessionTab } from '@shared/rpc.js'
 
 export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
   const state = useSessionStore((s) => s.perTab[tab.tabId])
@@ -20,22 +21,27 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
   const submitTurn = useSessionStore((s) => s.submitTurn)
   const closeTab = useSessionStore((s) => s.closeTab)
   const refreshMeta = useSessionStore((s) => s.refreshMeta)
-  const refreshLog = useSessionStore((s) => s.refreshLog)
-  const refreshStatus = useSessionStore((s) => s.refreshStatus)
   const refreshHistory = useSessionStore((s) => s.refreshHistory)
   const openHistorySession = useSessionStore((s) => s.openHistorySession)
   const setHistorySessionPinned = useSessionStore((s) => s.setHistorySessionPinned)
   const history = useSessionStore((s) => s.history)
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
   const [sessionNotice, setSessionNotice] = useState<string | null>(null)
-  const [pendingTranscriptRewind, setPendingTranscriptRewind] = useState<TranscriptRewindTarget | null>(null)
-  const [rewinding, setRewinding] = useState(false)
+
+  const conversation = state?.conversation ?? []
+  const running = state?.status?.currentTurnRunning ?? false
+
+  const onScroll = (): void => {
+    const el = transcriptRef.current
+    if (!el) return
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+  }
 
   useEffect(() => {
     const el = transcriptRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [state?.logRevision])
+    if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [state?.logRevision, running])
 
   const onSubmit = async (input: string): Promise<void> => {
     await submitTurn(tab.tabId, input)
@@ -47,7 +53,7 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
   }
 
   const copyLastAgentResponse = async (): Promise<void> => {
-    const text = findLastAgentResponse(state?.logEntries ?? [])
+    const text = findLastAgentResponse(conversation)
     if (!text) {
       showSessionNotice('No agent response to copy')
       return
@@ -55,18 +61,17 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
     try {
       await navigator.clipboard.writeText(text)
       showSessionNotice(`Copied ${text.length} chars`)
-    } catch (err) {
-      console.error('copy response failed', err)
+    } catch {
       showSessionNotice('Copy failed')
     }
   }
 
   const copySessionTranscript = async (): Promise<void> => {
-    const text = formatSessionTranscriptMarkdown({
-      entries: state?.logEntries ?? [],
-      title: tab.title ?? tab.displayName ?? projectName(tab.workDir),
-      workDir: tab.workDir,
-    })
+    const text = formatTranscriptMarkdown(
+      conversation,
+      tab.title ?? tab.displayName ?? projectName(tab.workDir),
+      tab.workDir,
+    )
     if (!text.trim()) {
       showSessionNotice('No transcript to copy')
       return
@@ -74,8 +79,7 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
     try {
       await navigator.clipboard.writeText(text)
       showSessionNotice(`Copied transcript (${text.length} chars)`)
-    } catch (err) {
-      console.error('copy transcript failed', err)
+    } catch {
       showSessionNotice('Copy failed')
     }
   }
@@ -89,64 +93,32 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
       const opened = await openHistorySession(tab.workDir, result.sessionId)
       showSessionNotice(opened ? 'Forked session' : 'Fork created but not opened')
     } catch (err) {
-      console.error('fork session failed', err)
       showSessionNotice(err instanceof Error ? err.message : 'Fork failed')
     }
   }
 
   const archiveSession = async (): Promise<void> => {
-    if (tab.status === 'draft' || !tab.sessionId || state?.status?.currentTurnRunning) return
+    if (tab.status === 'draft' || !tab.sessionId || running) return
     try {
       showSessionNotice('Archiving session')
       await closeTab(tab.tabId)
       await api.history.archiveSession({ workDir: tab.workDir, sessionId: tab.sessionId })
       await refreshHistory()
     } catch (err) {
-      console.error('archive session failed', err)
       showSessionNotice(err instanceof Error ? err.message : 'Archive failed')
     }
   }
 
   const pinned = tab.sessionId
     ? history
-      .find((group) => group.workDir === tab.workDir)
-      ?.sessions.some((session) => session.sessionId === tab.sessionId && session.pinned) ?? false
+        .find((group) => group.workDir === tab.workDir)
+        ?.sessions.some((session) => session.sessionId === tab.sessionId && session.pinned) ?? false
     : false
 
   const toggleSessionPinned = async (): Promise<void> => {
     if (tab.status === 'draft' || !tab.sessionId) return
     await setHistorySessionPinned(tab.workDir, tab.sessionId, !pinned)
     showSessionNotice(pinned ? 'Unpinned session' : 'Pinned session')
-  }
-
-  const requestTranscriptRewind = (target: TranscriptRewindTarget): void => {
-    if (tab.status === 'draft' || state?.status?.currentTurnRunning) return
-    setPendingTranscriptRewind(target)
-  }
-
-  const confirmTranscriptRewind = async (): Promise<void> => {
-    const target = pendingTranscriptRewind
-    if (!target || tab.status === 'draft' || state?.status?.currentTurnRunning || rewinding) return
-    setRewinding(true)
-    try {
-      const result = await api.rpc.request<{ removed: number; error?: string }>(tab.tabId, 'session.rewind', {
-        toTurnIndex: target.turnIndex,
-      })
-      if (result.error) throw new Error(result.error)
-      setPendingTranscriptRewind(null)
-      await Promise.all([
-        refreshLog(tab.tabId),
-        refreshStatus(tab.tabId),
-        refreshMeta(tab.tabId),
-        refreshHistory(),
-      ])
-      showSessionNotice(`Rewound ${result.removed} entries`)
-    } catch (err) {
-      console.error('transcript rewind failed', err)
-      showSessionNotice(err instanceof Error ? err.message : 'Rewind failed')
-    } finally {
-      setRewinding(false)
-    }
   }
 
   if (tab.status === 'starting') {
@@ -159,39 +131,40 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
   if (tab.status === 'error') {
     return (
       <div className="flex h-full items-center justify-center px-6">
-        <div className="max-w-md rounded-xl border border-error/30 bg-error/5 p-5">
+        <div className="max-w-lg rounded-xl border border-error/30 bg-error/5 p-5">
           <div className="text-[15px] font-medium text-error">Session failed to start</div>
-          <pre className="mt-2 whitespace-pre-wrap text-[15.5px] text-ink-3">
+          <pre className="mt-2 whitespace-pre-wrap text-[13.5px] leading-[1.5] text-ink-3">
             {tab.errorMessage ?? 'Unknown error'}
           </pre>
+          {(state?.stderrLog?.length ?? 0) > 0 && (
+            <pre className="mono mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-line-soft bg-pane px-3 py-2 text-[12px] text-ink-4">
+              {state!.stderrLog.slice(-20).join('')}
+            </pre>
+          )}
         </div>
       </div>
     )
+  }
+  if (state?.needsInit) {
+    return <InitWizard tab={tab} />
   }
 
   const projectLabel = projectName(tab.workDir)
   const sessionTitle = (tab.title ?? tab.displayName ?? '').trim()
   const headerTitle = sessionTitle.length > 0 && sessionTitle !== projectLabel ? sessionTitle : projectLabel
   const headerSubtitle = headerTitle === projectLabel ? '' : projectLabel
-  // Empty draft: hero already announces the workspace, so hide the redundant
-  // header title — keep the action buttons reachable on the right.
-  const showHeaderTitle = !(tab.status === 'draft' && (state?.logEntries?.length ?? 0) === 0)
+  const isEmptyDraft = tab.status === 'draft' && conversation.length === 0
+  const showHeaderTitle = !isEmptyDraft
 
   return (
     <div data-session-pane-root className="flex h-full min-w-0 flex-1 flex-col bg-pane">
-      {/* Thread header — project name + tool buttons */}
-      <div className={cn(
-        'flex h-12 shrink-0 items-center gap-3 px-6',
-        showHeaderTitle && 'border-b border-line-soft',
-      )}>
+      <div className={cn('flex h-12 shrink-0 items-center gap-3 px-6', showHeaderTitle && 'border-b border-line-soft')}>
         <div className="min-w-0 flex-1">
           {showHeaderTitle && (
             <>
               <div className="truncate text-[15px] font-semibold leading-tight text-ink">{headerTitle}</div>
               {headerSubtitle && (
-                <div className="mt-0.5 truncate text-[12.5px] leading-tight text-ink-4">
-                  {headerSubtitle}
-                </div>
+                <div className="mt-0.5 truncate text-[12.5px] leading-tight text-ink-4">{headerSubtitle}</div>
               )}
             </>
           )}
@@ -210,16 +183,16 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
           onClose={() => void closeTab(tab.tabId)}
           onRenamed={() => void refreshMeta(tab.tabId)}
           onCopyLastResponse={() => void copyLastAgentResponse()}
-          canCopyLastResponse={!!findLastAgentResponse(state?.logEntries ?? [])}
+          canCopyLastResponse={!!findLastAgentResponse(conversation)}
           onCopyTranscript={() => void copySessionTranscript()}
-          canCopyTranscript={hasVisibleTranscript(state?.logEntries ?? [])}
+          canCopyTranscript={hasVisibleTranscript(conversation)}
           onForkSession={() => void forkSession()}
-          canForkSession={tab.status !== 'draft' && !(state?.status?.currentTurnRunning ?? false)}
+          canForkSession={tab.status !== 'draft' && !running}
           pinned={pinned}
           onTogglePinned={() => void toggleSessionPinned()}
           canTogglePinned={tab.status !== 'draft' && !!tab.sessionId}
           onArchiveSession={() => void archiveSession()}
-          canArchiveSession={tab.status !== 'draft' && !!tab.sessionId && !(state?.status?.currentTurnRunning ?? false)}
+          canArchiveSession={tab.status !== 'draft' && !!tab.sessionId && !running}
         />
       </div>
       {sessionNotice && (
@@ -228,37 +201,28 @@ export function SessionPane({ tab }: { tab: SessionTab }): JSX.Element {
         </div>
       )}
 
-      <div ref={transcriptRef} className="session-scroll min-h-0 flex-1 overflow-y-auto bg-pane">
-        {tab.status === 'draft' && (state?.logEntries?.length ?? 0) === 0 ? (
+      <div
+        ref={transcriptRef}
+        onScroll={onScroll}
+        className="session-scroll min-h-0 flex-1 overflow-y-auto bg-pane"
+      >
+        {isEmptyDraft ? (
           <DraftHero project={projectLabel} />
         ) : (
           <Transcript
-            entries={state?.logEntries ?? []}
+            entries={conversation}
             activeId={state?.activeLogEntryId ?? null}
+            running={running}
             workDir={tab.workDir}
             markdownMode={markdownMode}
+            tabId={tab.tabId}
             emptyLabel={tab.status === 'draft' ? null : 'Ready'}
-            canRewind={tab.status !== 'draft' && !(state?.status?.currentTurnRunning ?? false)}
-            onRequestRewind={requestTranscriptRewind}
           />
         )}
       </div>
-      <TranscriptRewindDialog
-        target={pendingTranscriptRewind}
-        busy={rewinding}
-        onOpenChange={(open) => {
-          if (!open && !rewinding) setPendingTranscriptRewind(null)
-        }}
-        onConfirm={() => void confirmTranscriptRewind()}
-      />
       <AskBar tab={tab} />
       <StatusBar state={state ?? null} />
-      <Composer
-        tab={tab}
-        state={state ?? null}
-        onSubmit={onSubmit}
-        disabled={state?.status?.currentTurnRunning ?? false}
-      />
+      <Composer tab={tab} state={state ?? null} onSubmit={onSubmit} disabled={running} />
     </div>
   )
 }
@@ -275,62 +239,6 @@ function DraftHero({ project }: { project: string }): JSX.Element {
         </div>
       </div>
     </div>
-  )
-}
-
-function TranscriptRewindDialog({
-  target,
-  busy,
-  onOpenChange,
-  onConfirm,
-}: {
-  target: TranscriptRewindTarget | null
-  busy: boolean
-  onOpenChange: (open: boolean) => void
-  onConfirm: () => void
-}): JSX.Element {
-  return (
-    <Dialog.Root open={target !== null} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[440px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-pane-2 p-4 shadow-2xl">
-          <Dialog.Title className="flex items-center gap-2 text-[16px] font-semibold text-ink">
-            <Undo2 className="h-4 w-4 text-warning" strokeWidth={1.8} />
-            Rewind before this message
-          </Dialog.Title>
-          <Dialog.Description className="mt-2 text-[13.5px] leading-[1.45] text-ink-3">
-            This removes this user turn and everything after it from the session transcript.
-          </Dialog.Description>
-          {target && (
-            <div className="mt-3 rounded-lg border border-line-soft bg-pane px-3 py-2">
-              <div className="mono text-[11.5px] text-ink-4">turn {target.turnIndex}</div>
-              <div className="mt-1 line-clamp-3 text-[13.5px] leading-[1.45] text-ink-2">
-                {target.preview}
-              </div>
-            </div>
-          )}
-          <div className="mt-4 flex justify-end gap-2">
-            <Dialog.Close asChild>
-              <button
-                type="button"
-                disabled={busy}
-                className="rounded px-3 py-1.5 text-[14px] font-medium text-ink-3 transition hover:bg-line-soft hover:text-ink disabled:opacity-45"
-              >
-                Cancel
-              </button>
-            </Dialog.Close>
-            <button
-              type="button"
-              onClick={onConfirm}
-              disabled={busy}
-              className="rounded bg-warning px-3 py-1.5 text-[14px] font-medium text-pane transition hover:opacity-90 disabled:opacity-45"
-            >
-              {busy ? 'Rewinding' : 'Rewind'}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
   )
 }
 
@@ -360,24 +268,55 @@ function HeaderBtn({
   )
 }
 
-function findLastAgentResponse(entries: readonly unknown[]): string | null {
+function findLastAgentResponse(entries: readonly ConversationEntry[]): string | null {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i] as {
-      type?: unknown
-      discarded?: unknown
-      display?: unknown
-      content?: unknown
-    } | null
-    if (!entry || entry.discarded) continue
-    if (entry.type !== 'assistant_text' && entry.type !== 'agent_result') continue
-    const text = typeof entry.display === 'string'
-      ? entry.display
-      : typeof entry.content === 'string'
-        ? entry.content
-        : ''
-    if (text.trim()) return text
+    const e = entries[i]!
+    if ((e.kind === 'assistant' || e.kind === 'agent_result') && (e.fullText ?? e.text).trim()) {
+      return e.kind === 'agent_result' ? e.fullText ?? e.text : e.text
+    }
   }
   return null
+}
+
+function hasVisibleTranscript(entries: readonly ConversationEntry[]): boolean {
+  return entries.some(
+    (e) =>
+      (e.kind === 'user' || e.kind === 'assistant' || e.kind === 'agent_result') &&
+      (e.fullText ?? e.text).trim().length > 0,
+  )
+}
+
+function formatTranscriptMarkdown(entries: readonly ConversationEntry[], title: string, workDir: string): string {
+  const sections: string[] = []
+  for (const e of entries) {
+    const text = (e.fullText ?? e.text).trim()
+    if (!text) continue
+    switch (e.kind) {
+      case 'user':
+        sections.push(`## User\n\n${text}\n`)
+        break
+      case 'assistant':
+      case 'agent_result':
+        sections.push(`## Assistant\n\n${text}\n`)
+        break
+      case 'reasoning':
+        sections.push(`## Reasoning\n\n${text}\n`)
+        break
+      case 'tool_call':
+        sections.push(`### Tool\n\n${text}\n`)
+        break
+      case 'tool_result':
+        sections.push(`#### Tool Result\n\n${text}\n`)
+        break
+      case 'error':
+        sections.push(`## Error\n\n${text}\n`)
+        break
+      default:
+        break
+    }
+  }
+  if (sections.length === 0) return ''
+  return [`# ${title.trim() || 'Session transcript'}`, '', `Workspace: \`${workDir}\``, '', ...sections].join('\n')
 }
 
 function HeaderMenu({
@@ -412,6 +351,8 @@ function HeaderMenu({
   canArchiveSession: boolean
 }): JSX.Element {
   const [renameOpen, setRenameOpen] = useState(false)
+  const itemCls =
+    'flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2'
 
   return (
     <>
@@ -429,166 +370,47 @@ function HeaderMenu({
           >
             {tab.status !== 'draft' && (
               <>
-                <DropdownMenu.Item
-                  onSelect={onCopyLastResponse}
-                  disabled={!canCopyLastResponse}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
-                >
+                <DropdownMenu.Item onSelect={onCopyLastResponse} disabled={!canCopyLastResponse} className={itemCls}>
                   <Copy className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Copy last response
                 </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={onCopyTranscript}
-                  disabled={!canCopyTranscript}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
-                >
+                <DropdownMenu.Item onSelect={onCopyTranscript} disabled={!canCopyTranscript} className={itemCls}>
                   <ScrollText className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Copy transcript
                 </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={onForkSession}
-                  disabled={!canForkSession}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
-                >
+                <DropdownMenu.Item onSelect={onForkSession} disabled={!canForkSession} className={itemCls}>
                   <GitBranch className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Fork session
                 </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={onTogglePinned}
-                  disabled={!canTogglePinned}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
-                >
+                <DropdownMenu.Item onSelect={onTogglePinned} disabled={!canTogglePinned} className={itemCls}>
                   <Pin className={cn('h-3.5 w-3.5', pinned ? 'text-accent' : 'text-ink-4')} strokeWidth={1.7} />
                   {pinned ? 'Unpin session' : 'Pin session'}
                 </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={onArchiveSession}
-                  disabled={!canArchiveSession}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink data-[disabled]:cursor-default data-[disabled]:opacity-45 data-[disabled]:hover:bg-transparent data-[disabled]:hover:text-ink-2"
-                >
+                <DropdownMenu.Item onSelect={onArchiveSession} disabled={!canArchiveSession} className={itemCls}>
                   <Archive className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Archive session
                 </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={() => setRenameOpen(true)}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
-                >
+                <DropdownMenu.Item onSelect={() => setRenameOpen(true)} className={itemCls}>
                   <Pencil className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
                   Rename session
                 </DropdownMenu.Item>
               </>
             )}
-            <DropdownMenu.Item
-              onSelect={() => void api.workspace.openPath(tab.workDir)}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
-            >
+            <DropdownMenu.Item onSelect={() => void api.workspace.openPath(tab.workDir)} className={itemCls}>
               <FolderOpen className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
               Open workspace
             </DropdownMenu.Item>
             <DropdownMenu.Separator className="my-1 h-px bg-line-soft" />
-            <DropdownMenu.Item
-              onSelect={onClose}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13.5px] text-ink-2 outline-none transition hover:bg-line-soft hover:text-ink focus:bg-line-soft focus:text-ink"
-            >
+            <DropdownMenu.Item onSelect={onClose} className={itemCls}>
               <X className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
               {tab.status === 'draft' ? 'Discard draft' : 'Close session'}
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
-      <RenameSessionDialog
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        tab={tab}
-        onRenamed={onRenamed}
-      />
+      <RenameSessionDialog open={renameOpen} onOpenChange={setRenameOpen} tab={tab} onRenamed={onRenamed} />
     </>
   )
-}
-
-interface TranscriptCopyEntry {
-  readonly type?: unknown
-  readonly display?: unknown
-  readonly content?: unknown
-  readonly discarded?: unknown
-  readonly tuiVisible?: unknown
-}
-
-function hasVisibleTranscript(entries: readonly unknown[]): boolean {
-  return entries.some((entry) => {
-    const item = entry as TranscriptCopyEntry | null
-    if (!item || item.discarded || item.tuiVisible === false) return false
-    return typeof item.display === 'string' && item.display.trim().length > 0 && isTranscriptCopyType(item.type)
-  })
-}
-
-function formatSessionTranscriptMarkdown({
-  entries,
-  title,
-  workDir,
-}: {
-  entries: readonly unknown[]
-  title: string
-  workDir: string
-}): string {
-  const sections = entries
-    .map((entry) => formatTranscriptEntry(entry as TranscriptCopyEntry | null))
-    .filter((section): section is string => Boolean(section))
-
-  if (sections.length === 0) return ''
-  return [
-    `# ${title.trim() || 'Session transcript'}`,
-    '',
-    `Workspace: \`${workDir}\``,
-    `Exported: ${new Date().toISOString()}`,
-    '',
-    ...sections,
-  ].join('\n')
-}
-
-function formatTranscriptEntry(entry: TranscriptCopyEntry | null): string | null {
-  if (!entry || entry.discarded || entry.tuiVisible === false || !isTranscriptCopyType(entry.type)) return null
-  const text = getTranscriptEntryText(entry)
-  if (!text) return null
-  switch (entry.type) {
-    case 'user_message':
-      return `## User\n\n${text}\n`
-    case 'assistant_text':
-    case 'agent_result':
-      return `## Assistant\n\n${text}\n`
-    case 'reasoning':
-      return `## Reasoning\n\n${text}\n`
-    case 'tool_call':
-      return `### Tool\n\n${text}\n`
-    case 'tool_result':
-      return `#### Tool Result\n\n${text}\n`
-    case 'error':
-      return `## Error\n\n${text}\n`
-    default:
-      return `> ${text.replace(/\n/g, '\n> ')}\n`
-  }
-}
-
-function isTranscriptCopyType(type: unknown): boolean {
-  return type === 'user_message' ||
-    type === 'assistant_text' ||
-    type === 'agent_result' ||
-    type === 'reasoning' ||
-    type === 'tool_call' ||
-    type === 'tool_result' ||
-    type === 'sub_agent_start' ||
-    type === 'sub_agent_end' ||
-    type === 'sub_agent_tool_call' ||
-    type === 'compact_marker' ||
-    type === 'status' ||
-    type === 'error' ||
-    type === 'interruption_marker'
-}
-
-function getTranscriptEntryText(entry: TranscriptCopyEntry): string {
-  if (typeof entry.display === 'string') return entry.display.trim()
-  if (typeof entry.content === 'string') return entry.content.trim()
-  return ''
 }
 
 function RenameSessionDialog({
@@ -627,12 +449,8 @@ function RenameSessionDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/35 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-pane-2 p-4 shadow-2xl">
-          <Dialog.Title className="text-[16px] font-semibold text-ink">
-            Rename session
-          </Dialog.Title>
-          <Dialog.Description className="mt-1 text-[13px] text-ink-4">
-            {projectName(tab.workDir)}
-          </Dialog.Description>
+          <Dialog.Title className="text-[16px] font-semibold text-ink">Rename session</Dialog.Title>
+          <Dialog.Description className="mt-1 text-[13px] text-ink-4">{projectName(tab.workDir)}</Dialog.Description>
           <input
             autoFocus
             value={value}

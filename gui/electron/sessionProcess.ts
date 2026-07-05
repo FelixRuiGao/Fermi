@@ -5,6 +5,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { augmentedPath, resolveBun } from './paths.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -16,15 +17,21 @@ export interface SessionProcessOptions {
   readonly selectedModel?: string
 }
 
+/** Subset of the server's `ready` meta the main process tracks per tab. */
 export interface ReadyMeta {
   readonly sessionId: string
   readonly sessionDir: string | null
   readonly workDir: string
-  readonly selectedModel: string
+  readonly modelConfigName: string
   readonly modelProvider: string
+  readonly modelDisplayLabel?: string
   readonly title?: string
   readonly displayName: string
+  readonly capabilities?: readonly string[]
 }
+
+/** First lifecycle signal from the subprocess: session ready, or init needed. */
+export type WaitReadyResult = { kind: 'ready'; meta: ReadyMeta } | { kind: 'needs_init' }
 
 type Resolver = {
   resolve: (v: unknown) => void
@@ -35,17 +42,20 @@ type Listeners = {
   event: Set<(method: string, params: unknown) => void>
   exit: Set<(code: number | null, signal: NodeJS.Signals | null) => void>
   stderr: Set<(text: string) => void>
+  error: Set<(err: Error) => void>
 }
 
 export class SessionProcess {
   readonly #child: ChildProcessWithoutNullStreams
   readonly #pending = new Map<number, Resolver>()
-  readonly #listeners: Listeners = { event: new Set(), exit: new Set(), stderr: new Set() }
+  readonly #listeners: Listeners = { event: new Set(), exit: new Set(), stderr: new Set(), error: new Set() }
   #nextId = 1
   #stdoutBuffer = ''
   #ready = false
+  #needsInit = false
   #readyMeta: ReadyMeta | null = null
   #closed = false
+  #spawnError: Error | null = null
 
   constructor(options: SessionProcessOptions) {
     const bin = resolveFermiBinary()
@@ -58,6 +68,9 @@ export class SessionProcess {
       cwd: options.workDir,
       env: {
         ...process.env,
+        // A GUI-launched Electron doesn't inherit the login shell PATH, so
+        // `bun` (and any tool it shells out to) must be findable here.
+        PATH: augmentedPath(),
         FORCE_COLOR: '0',
         NO_COLOR: '1',
       },
@@ -79,48 +92,62 @@ export class SessionProcess {
       for (const cb of this.#listeners.exit) cb(code, signal)
     })
     this.#child.on('error', (err) => {
+      // Failure to even spawn (e.g. `bun` not on PATH). Without surfacing this,
+      // waitReady would hang until its timeout with a misleading message.
       this.#closed = true
+      this.#spawnError = err
       for (const cb of this.#listeners.stderr) cb(`[spawn error] ${err.message}\n`)
+      for (const cb of this.#listeners.error) cb(err)
     })
   }
 
   get ready(): boolean { return this.#ready }
+  get needsInit(): boolean { return this.#needsInit }
   get readyMeta(): ReadyMeta | null { return this.#readyMeta }
   get closed(): boolean { return this.#closed }
 
-  async waitReady(timeoutMs = 20_000): Promise<ReadyMeta> {
-    if (this.#ready && this.#readyMeta) return this.#readyMeta
-    return new Promise<ReadyMeta>((resolve, reject) => {
+  async waitReady(timeoutMs = 30_000): Promise<WaitReadyResult> {
+    if (this.#ready && this.#readyMeta) return { kind: 'ready', meta: this.#readyMeta }
+    if (this.#needsInit) return { kind: 'needs_init' }
+    if (this.#spawnError) throw this.#spawnError
+    return new Promise<WaitReadyResult>((resolve, reject) => {
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        this.#listeners.event.delete(eventHandler)
+        this.#listeners.exit.delete(exitHandler)
+        this.#listeners.error.delete(errorHandler)
+      }
       const timer = setTimeout(() => {
         cleanup()
         reject(new Error(`session did not become ready in ${timeoutMs}ms`))
       }, timeoutMs)
-      const cleanup = () => {
-        clearTimeout(timer)
-        this.#listeners.event.delete(eventHandler)
-        this.#listeners.exit.delete(exitHandler)
-      }
-      const eventHandler = (method: string, params: unknown) => {
-        if (method === 'ready' && this.#readyMeta) {
+      const eventHandler = (method: string, params: unknown): void => {
+        if (method === 'ready') {
           cleanup()
-          resolve(this.#readyMeta)
-        } else if (method === 'ready' && params) {
+          resolve({ kind: 'ready', meta: (this.#readyMeta ?? params) as ReadyMeta })
+        } else if (method === 'needs_init') {
           cleanup()
-          resolve(params as ReadyMeta)
+          resolve({ kind: 'needs_init' })
         }
       }
-      const exitHandler = () => {
+      const exitHandler = (): void => {
         cleanup()
-        reject(new Error('session exited before ready'))
+        reject(new Error('session exited before it became ready'))
+      }
+      const errorHandler = (err: Error): void => {
+        cleanup()
+        reject(err)
       }
       this.#listeners.event.add(eventHandler)
       this.#listeners.exit.add(exitHandler)
+      this.#listeners.error.add(errorHandler)
     })
   }
 
   on(event: 'event', cb: (method: string, params: unknown) => void): () => void
   on(event: 'exit', cb: (code: number | null, signal: NodeJS.Signals | null) => void): () => void
   on(event: 'stderr', cb: (text: string) => void): () => void
+  on(event: 'error', cb: (err: Error) => void): () => void
   on(event: keyof Listeners, cb: (...args: never[]) => void): () => void {
     const set = this.#listeners[event] as Set<(...args: never[]) => void>
     set.add(cb)
@@ -177,7 +204,13 @@ export class SessionProcess {
   }
 
   #handleLine(line: string): void {
-    let frame: { id?: number; method?: string; params?: unknown; result?: unknown; error?: { code: number; message: string } }
+    let frame: {
+      id?: number
+      method?: string
+      params?: unknown
+      result?: unknown
+      error?: { code: number; message: string }
+    }
     try {
       frame = JSON.parse(line)
     } catch {
@@ -196,6 +229,9 @@ export class SessionProcess {
       if (frame.method === 'ready' && frame.params) {
         this.#readyMeta = frame.params as ReadyMeta
         this.#ready = true
+        this.#needsInit = false
+      } else if (frame.method === 'needs_init') {
+        this.#needsInit = true
       }
       for (const cb of this.#listeners.event) cb(frame.method, frame.params)
     }
@@ -203,8 +239,9 @@ export class SessionProcess {
 }
 
 function resolveFermiBinary(): { cmd: string; args: string[] } {
-  // Dev: spawn `bun` running the TS source directly (hot iteration).
-  // Prod: would point at the bundled binary in resourcesPath.
+  // Dev: run the TS source directly with bun (hot iteration). Resolve bun to an
+  // absolute path — a GUI Electron often can't find it on PATH.
+  // Prod: point at the bundled binary in resourcesPath.
   const entry = path.resolve(__dirname, '../../../src/cli.ts')
-  return { cmd: 'bun', args: [entry] }
+  return { cmd: resolveBun() ?? 'bun', args: [entry] }
 }

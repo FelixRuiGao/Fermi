@@ -12,7 +12,7 @@ import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs
 import { basename, dirname, join } from "node:path";
 
 import type { RpcServer } from "./rpc-transport.js";
-import type { Session } from "../session.js";
+import type { Session, InlineImageInput } from "../session.js";
 import type { LogEntry } from "../log-entry.js";
 import type { PermissionMode } from "../permissions/index.js";
 import { projectToTuiEntries } from "../log-projection.js";
@@ -87,6 +87,8 @@ export const PROTOCOL_CAPABILITIES = [
   "childMeta",
   /** session.getModelCatalog (grouped model tree) + selectModel accepts preset provider:model + meta.modelDisplayLabel */
   "modelCatalog",
+  /** session.submitTurn accepts an `attachments` array of inline images */
+  "turnAttachments",
 ] as const;
 
 interface SessionStoreAccess {
@@ -526,6 +528,47 @@ function optNumber(params: Record<string, unknown>, key: string): number | undef
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+/**
+ * Normalize a client `attachments` array into the runtime InlineImageInput
+ * shape. Accepts either a bare base64 payload or a `data:<type>;base64,...`
+ * URL under `base64`/`data`, and a media type under `mediaType`/`mimeType`.
+ * Returns undefined when there are no usable images (turn runs text-only).
+ */
+function parseInlineImages(raw: unknown): InlineImageInput[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const images: InlineImageInput[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const rawData = typeof o["base64"] === "string"
+      ? (o["base64"] as string)
+      : typeof o["data"] === "string"
+        ? (o["data"] as string)
+        : "";
+    if (!rawData) continue;
+    let mediaType = typeof o["mediaType"] === "string"
+      ? (o["mediaType"] as string)
+      : typeof o["mimeType"] === "string"
+        ? (o["mimeType"] as string)
+        : "";
+    let base64 = rawData;
+    const m = /^data:([^;,]+);base64,(.*)$/s.exec(rawData);
+    if (m) {
+      if (!mediaType) mediaType = m[1]!;
+      base64 = m[2]!;
+    }
+    if (!mediaType) mediaType = "image/png";
+    const id = typeof o["id"] === "string" && o["id"]
+      ? (o["id"] as string)
+      : typeof o["name"] === "string" && o["name"]
+        ? (o["name"] as string)
+        : `img-${i}`;
+    images.push({ id, base64, mediaType });
+  }
+  return images.length > 0 ? images : undefined;
+}
+
 function expectPermissionMode(
   params: Record<string, unknown>,
   key: string,
@@ -690,7 +733,9 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.submitTurn", (params) => {
     const p = expectObject(params, "session.submitTurn");
     const input = expectString(p, "input", "session.submitTurn");
-    return fireAndForgetTurn(() => session.turn(input));
+    const inlineImages = parseInlineImages(p["attachments"]);
+    return fireAndForgetTurn(() =>
+      session.turn(input, inlineImages ? { inlineImages } : undefined));
   });
 
   server.on("session.resumePendingTurn", () =>

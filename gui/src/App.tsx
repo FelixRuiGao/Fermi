@@ -28,11 +28,11 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (autoDraftDoneRef.current) return
     if (!bootstrapped) return
-    const firstWorkDir = history[0]?.workDir
-    if (!firstWorkDir) return
+    const recentWorkDir = mostRecentWorkDir(history)
+    if (!recentWorkDir) return
     autoDraftDoneRef.current = true
     if (tabs.length > 0) return
-    createDraftTab(firstWorkDir)
+    createDraftTab(recentWorkDir)
   }, [bootstrapped, tabs.length, history, createDraftTab])
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export function App(): JSX.Element {
       if (!event.metaKey || event.shiftKey || event.altKey || event.ctrlKey || event.key.toLowerCase() !== 'n') {
         return
       }
-      const workDir = activeTab?.workDir ?? history[0]?.workDir
+      const workDir = activeTab?.workDir ?? mostRecentWorkDir(history)
       if (!workDir) return
       event.preventDefault()
       createDraftTab(workDir)
@@ -68,4 +68,14 @@ export function App(): JSX.Element {
       </div>
     </div>
   )
+}
+
+function mostRecentWorkDir(
+  history: readonly { readonly workDir: string; readonly lastActiveAt: string }[],
+): string | undefined {
+  let best: { workDir: string; lastActiveAt: string } | undefined
+  for (const g of history) {
+    if (!best || (g.lastActiveAt || '') > (best.lastActiveAt || '')) best = g
+  }
+  return best?.workDir
 }

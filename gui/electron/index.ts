@@ -6,6 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { SessionManager } from './sessionManager.js'
+import { ensurePathEnv } from './paths.js'
 import type {
   ArchiveSessionInput,
   GitBulkActionInput,
@@ -27,6 +28,10 @@ import type {
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// A GUI-launched process doesn't inherit the login-shell PATH; fix it up front
+// so git / ripgrep / bun resolve for every child process we spawn.
+ensurePathEnv()
 
 const DEV = !app.isPackaged
 const DEV_SERVER_URL = process.env.ELECTRON_RENDERER_URL ?? 'http://localhost:5174'
@@ -368,6 +373,9 @@ function listWorkspaceHistory(): WorkspaceHistoryGroup[] {
     const project = readJsonObject(path.join(projectDir, 'project.json'))
     const workDir = typeof project?.original_path === 'string' ? project.original_path : ''
     if (!workDir) continue
+    // Skip workspaces whose directory has since been deleted/moved — spawning a
+    // session there fails with a misleading ENOENT and they clutter the list.
+    if (!safeIsDirectory(workDir)) continue
 
     const sessions = listSessionsInProjectDir(projectDir)
     groups.push({
