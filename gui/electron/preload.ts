@@ -55,6 +55,9 @@ const api = {
     unstage: (input: GitFileActionInput): Promise<void> => ipcRenderer.invoke('git:unstage', input),
     stageAll: (input: GitBulkActionInput): Promise<void> => ipcRenderer.invoke('git:stageAll', input),
     unstageAll: (input: GitBulkActionInput): Promise<void> => ipcRenderer.invoke('git:unstageAll', input),
+    branches: (workDir: string): Promise<string[]> => ipcRenderer.invoke('git:branches', workDir),
+    commits: (workDir: string): Promise<Array<{ sha: string; subject: string }>> =>
+      ipcRenderer.invoke('git:commits', workDir),
   },
   settings: {
     get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),

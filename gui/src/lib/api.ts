@@ -51,6 +51,8 @@ interface FermiApi {
     unstage(input: GitFileActionInput): Promise<void>
     stageAll(input: GitBulkActionInput): Promise<void>
     unstageAll(input: GitBulkActionInput): Promise<void>
+    branches(workDir: string): Promise<string[]>
+    commits(workDir: string): Promise<Array<{ sha: string; subject: string }>>
   }
   settings: {
     get(): Promise<SettingsSnapshot>

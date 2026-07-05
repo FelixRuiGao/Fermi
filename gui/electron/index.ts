@@ -177,6 +177,14 @@ function registerIpc(): void {
     await execGit(input.workDir, ['add', '-A', '--'])
   })
 
+  ipcMain.handle('git:branches', async (_e, workDir: string) => {
+    return listGitBranches(workDir)
+  })
+
+  ipcMain.handle('git:commits', async (_e, workDir: string) => {
+    return listGitCommits(workDir)
+  })
+
   ipcMain.handle('git:unstageAll', async (_e, input: GitBulkActionInput) => {
     await unstageAllGitFiles(input)
   })
@@ -783,6 +791,46 @@ async function readGitStatus(workDir: string): Promise<GitStatus> {
       ...base,
       error: err instanceof Error ? err.message : String(err),
     }
+  }
+}
+
+async function listGitBranches(workDir: string): Promise<string[]> {
+  try {
+    const current = (await execGit(workDir, ['branch', '--show-current'])).trim()
+    const raw = await execGit(workDir, ['branch', '-a', '--format=%(refname:short)'])
+    const branches = raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .filter((b) => b !== current && !b.endsWith('/HEAD'))
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const b of branches) {
+      const short = b.replace(/^origin\//, '')
+      if (!seen.has(short)) {
+        seen.add(short)
+        deduped.push(b)
+      }
+    }
+    return deduped
+  } catch {
+    return []
+  }
+}
+
+async function listGitCommits(workDir: string): Promise<Array<{ sha: string; subject: string }>> {
+  try {
+    const raw = await execGit(workDir, ['log', '--oneline', '-20'])
+    return raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const idx = line.indexOf(' ')
+        return idx > 0 ? { sha: line.slice(0, idx), subject: line.slice(idx + 1) } : { sha: line, subject: '' }
+      })
+  } catch {
+    return []
   }
 }
 

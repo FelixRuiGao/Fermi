@@ -4,15 +4,31 @@
  * above, minimal status bar (accept edits / attach / model picker / theme).
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Square, Paperclip, Zap, ChevronDown, Check, Brain, Image, History, FolderOpen, Search, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUp, Square, Paperclip, Zap, ChevronDown, Check, Brain, Image, History, FolderOpen, Search, X, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/cn.js'
 import { compactModelLabel, providerBrandLabel, stripProviderPrefix } from '@/lib/modelDisplay.js'
 import { projectName } from '@/lib/path.js'
 import { useSessionStore } from '@/state/sessionStore.js'
 import { api } from '@/lib/api.js'
+import { CommandPanel } from '@/components/CommandPanel.js'
+import { buildCommands, type CommandCtx } from '@/lib/commands.js'
 import type { ModelDescriptor, PermissionMode, SessionTab } from '@shared/rpc.js'
 import type { TabState } from '@/state/sessionStore.js'
+
+const AGENT_MODES = ['default', 'vibe', 'scale', 'auto'] as const
+const MODE_LABELS: Record<string, string> = {
+  default: 'Default',
+  vibe: 'Vibe',
+  scale: 'Scale',
+  auto: 'Auto',
+}
+const MODE_HINTS: Record<string, string> = {
+  default: 'Balanced everyday collaboration',
+  vibe: 'You steer by outcomes; agent owns implementation',
+  scale: 'Large multi-part work; design first, checkpoint',
+  auto: 'Long-running self-directed loops',
+}
 
 const PERMISSION_MODES: PermissionMode[] = ['read_only', 'reversible', 'yolo']
 const PERMISSION_LABELS: Record<PermissionMode, string> = {
@@ -50,8 +66,52 @@ export function Composer({
   const historyDraftRef = useRef('')
   const selectModel = useSessionStore((s) => s.selectModel)
   const refreshStatus = useSessionStore((s) => s.refreshStatus)
+  const refreshMode = useSessionStore((s) => s.refreshMode)
+  const refreshGoal = useSessionStore((s) => s.refreshGoal)
+  const refreshSkills = useSessionStore((s) => s.refreshSkills)
+  const createDraftTab = useSessionStore((s) => s.createDraftTab)
   const globalModels = useSessionStore((s) => s.globalModels)
   const isDraft = tab.status === 'draft'
+
+  // Slash-command palette state. `panelInFlow` keeps the panel mounted after a
+  // command clears the "/xxx" filter text and drills into a picker/input flow —
+  // otherwise clearing the text would unmount the panel mid-flow.
+  const slashTrigger = !isDraft && text.startsWith('/') && !/\s/.test(text)
+  const [panelInFlow, setPanelInFlow] = useState(false)
+  const panelOpen = slashTrigger || panelInFlow
+  const closePanel = (): void => {
+    setPanelInFlow(false)
+    setText('')
+  }
+  const visibleModels = state?.models && state.models.length > 0 ? state.models : globalModels
+
+  const commandCtx: CommandCtx = useMemo(
+    () => ({
+      workDir: tab.workDir,
+      request: (method, params) => api.rpc.request(tab.tabId, method, params),
+      hasCapability: (name) => (state?.meta?.capabilities ?? []).includes(name),
+      submitTurn: (input) => onSubmit(input),
+      newDraft: () => createDraftTab(tab.workDir),
+      refreshMode: () => refreshMode(tab.tabId),
+      refreshGoal: () => refreshGoal(tab.tabId),
+      refreshSkills: () => refreshSkills(tab.tabId),
+      restoreSession: async (sessionId) => {
+        await api.rpc.request(tab.tabId, 'session.restoreSession', { sessionId })
+      },
+      gitBranches: () => api.git.branches(tab.workDir),
+      gitCommits: () => api.git.commits(tab.workDir),
+      conversation: state?.conversation ?? [],
+      skills: state?.skills ?? [],
+      models: visibleModels,
+      modelCatalog: state?.modelCatalog ?? [],
+      status: state?.status ?? null,
+      meta: state?.meta ?? null,
+      goal: state?.goal ?? null,
+      agentMode: state?.agentMode ?? 'default',
+    }),
+    [tab.workDir, tab.tabId, state, visibleModels, onSubmit, createDraftTab, refreshMode, refreshGoal, refreshSkills],
+  )
+  const commands = useMemo(() => (panelOpen ? buildCommands(commandCtx) : []), [panelOpen, commandCtx])
 
   useEffect(() => {
     setPromptHistory(readPromptHistory(tab.workDir))
@@ -148,9 +208,6 @@ export function Composer({
   const meta = state?.meta
   const status = state?.status
   const modelName = meta?.modelConfigName ?? tab.selectedModel ?? ''
-  // Drafts have no subprocess to call listAvailableModels — fall back to the
-  // shared cache populated by other live tabs.
-  const visibleModels = state?.models && state.models.length > 0 ? state.models : globalModels
   const activeModel = visibleModels.find((model) => model.name === modelName)
   const modelLabelRaw = compactModelLabel(modelName, activeModel?.model)
   // Strip `provider:` prefix on the picker trigger to mirror the grouped
@@ -178,12 +235,26 @@ export function Composer({
       />
 
       <div data-composer-shell className="relative mx-auto max-w-[840px]">
+        {panelOpen && (
+          <CommandPanel
+            commands={commands}
+            filter={text}
+            onClose={closePanel}
+            onFlowStarted={() => {
+              setPanelInFlow(true)
+              setText('')
+            }}
+            onCommandRun={closePanel}
+          />
+        )}
         <div className="input-focus-shell rounded-xl border border-line-soft bg-pane-2 px-3.5 py-2 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
           <textarea
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              // While the slash palette is open it owns the nav keys.
+              if (panelOpen) return
               if (e.key === 'Escape' && disabled) {
                 e.preventDefault()
                 void interrupt()
@@ -234,6 +305,15 @@ export function Composer({
               >
                 {tokens}
               </span>
+            )}
+            {!isDraft && (
+              <ModeSelector
+                current={state?.agentMode ?? 'default'}
+                onSelect={async (mode) => {
+                  await api.rpc.request(tab.tabId, 'session.setMode', { mode })
+                  await refreshMode(tab.tabId)
+                }}
+              />
             )}
             <PermissionPicker
               current={status?.permissionMode ?? 'reversible'}
@@ -290,6 +370,87 @@ function WorkspaceContextChip({ workDir }: { workDir: string }): JSX.Element {
       <FolderOpen className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
       <span className="hidden max-w-[160px] truncate whitespace-nowrap sm:inline">{name}</span>
     </StatusPill>
+  )
+}
+
+function ModeSelector({
+  current,
+  onSelect,
+}: {
+  current: string
+  onSelect: (mode: string) => void | Promise<void>
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const nonDefault = current !== 'default'
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (target instanceof Node && rootRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative min-w-0">
+      <StatusPill label={`Mode: ${MODE_LABELS[current] ?? current}`} onClick={() => setOpen((v) => !v)} expanded={open} hasPopup="menu">
+        <Sparkles className={cn('h-3.5 w-3.5', nonDefault ? 'text-accent' : '')} strokeWidth={1.7} />
+        <span className={cn('hidden max-w-[80px] truncate whitespace-nowrap sm:inline', nonDefault && 'text-accent')}>
+          {MODE_LABELS[current] ?? current}
+        </span>
+        <ChevronDown className={cn('h-2.5 w-2.5 opacity-50 transition-transform', open && 'rotate-180')} strokeWidth={2} />
+      </StatusPill>
+      {open && (
+        <div
+          role="menu"
+          aria-label="Agent mode"
+          className="absolute bottom-full right-0 z-50 mb-2 w-[240px] overflow-hidden rounded-xl border border-line bg-pane-2 p-1.5 shadow-2xl"
+        >
+          {AGENT_MODES.map((mode) => {
+            const active = mode === current
+            return (
+              <button
+                type="button"
+                key={mode}
+                role="menuitemradio"
+                aria-checked={active}
+                onClick={() => {
+                  setOpen(false)
+                  void onSelect(mode)
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition',
+                  active ? 'bg-line-soft text-ink' : 'text-ink-2 hover:bg-line-soft/70 hover:text-ink',
+                )}
+              >
+                <span className="grid h-5 w-5 shrink-0 place-items-center">
+                  {active ? (
+                    <Check className="h-3.5 w-3.5 text-success" strokeWidth={2.2} />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 text-ink-4" strokeWidth={1.7} />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-medium">{MODE_LABELS[mode]}</span>
+                  <span className="block truncate text-[12px] text-ink-3">{MODE_HINTS[mode]}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
