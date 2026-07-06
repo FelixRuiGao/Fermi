@@ -12,7 +12,7 @@
  *     edits inline as diff cards — diffs are never hidden behind a fold.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Bot,
@@ -72,7 +72,19 @@ export function Transcript({
   tabId: string
   emptyLabel?: string | null
 }): JSX.Element {
-  const blocks = useMemo(() => buildBlocks(entries), [entries])
+  const blocksRef = useRef<{ entries: readonly ConversationEntry[]; blocks: Block[] }>({ entries: [], blocks: [] })
+  const blocks = useMemo(() => {
+    const prev = blocksRef.current
+    if (
+      prev.entries.length === entries.length &&
+      prev.entries.every((e, i) => e === entries[i])
+    ) {
+      return prev.blocks
+    }
+    const next = buildBlocks(entries)
+    blocksRef.current = { entries, blocks: next }
+    return next
+  }, [entries])
   const ctx: RenderCtx = { activeId, running, workDir, markdownMode, tabId }
 
   const lastIsWork = blocks.length > 0 && blocks[blocks.length - 1]!.type === 'work'

@@ -13,6 +13,7 @@
 
 import { create } from 'zustand'
 import { api } from '@/lib/api.js'
+import { reconcileEntries } from '@/lib/reconcile.js'
 import type {
   AgentQuestionAnswer,
   AskPayload,
@@ -410,8 +411,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         entries: ConversationEntry[]
         activeLogEntryId: string | null
       }>(tabId, 'session.getProjectedLog', { lightweight: true })
-      patchTabState(tabId, () => ({
-        conversation: result.entries,
+      patchTabState(tabId, (prev) => ({
+        conversation: reconcileEntries(prev.conversation, result.entries),
         logRevision: result.revision,
         activeLogEntryId: result.activeLogEntryId,
       }))
