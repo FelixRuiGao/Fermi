@@ -24,9 +24,11 @@ const CODE_BLOCK_RE = /<pre><code class="language-([a-zA-Z0-9_+-]+)">([\s\S]*?)<
 export function Markdown({
   text,
   className,
+  streaming,
 }: {
   text: string
   className?: string
+  streaming?: boolean
 }): JSX.Element {
   const baseHtml = useMemo(() => {
     try {
@@ -63,7 +65,12 @@ export function Markdown({
 
   // After render, find any unhighlighted code blocks and request highlighting.
   // Results go into `highlightCache` which triggers a re-render.
+  // Skip during streaming: each chunk appends text, producing a new baseHtml
+  // whose code blocks are intermediate prefixes. Highlighting those would
+  // accumulate stale cache entries (each growing prefix is a unique key) and
+  // trigger O(chunks × blocks) Shiki invocations.
   useEffect(() => {
+    if (streaming) return
     const matches = [...baseHtml.matchAll(CODE_BLOCK_RE)]
     if (matches.length === 0) return
     const pending = matches.filter((m) => {
@@ -99,7 +106,7 @@ export function Markdown({
     return () => {
       stillMounted = false
     }
-  }, [baseHtml, highlightCache, theme])
+  }, [baseHtml, highlightCache, theme, streaming])
 
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -141,11 +148,7 @@ export function Markdown({
       })
       pre.appendChild(btn)
     })
-    // Re-run on every render — dangerouslySetInnerHTML wipes child DOM even
-    // when `html` is unchanged (object identity differs), so we need to
-    // re-attach. The `:not([data-copy-attached])` selector keeps it cheap
-    // when the buttons survived.
-  })
+  }, [html])
 
   return (
     <div

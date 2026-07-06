@@ -210,7 +210,7 @@ function renderWorkItem(
   if (item.type === 'tool') {
     const running = ctx.running && (item.view.pending || (ctx.activeId != null && item.view.key === ctx.activeId))
     if (item.view.fileModify) {
-      return <FileEditCard key={item.view.key} view={item.view} running={running} workDir={ctx.workDir} />
+      return <FileEditCard key={item.view.key} view={item.view} running={running} workDir={ctx.workDir} defaultOpen={opts.streaming} />
     }
     return <ToolCallRow key={item.view.key} view={item.view} running={running} workDir={ctx.workDir} />
   }
@@ -309,7 +309,7 @@ function AssistantText({
           {text}
         </div>
       ) : (
-        <Markdown text={text} className={cn(active && 'shimmer-text')} />
+        <Markdown text={text} className={cn(active && 'shimmer-text')} streaming={active} />
       )}
     </div>
   )
@@ -532,12 +532,14 @@ function FileEditCard({
   view,
   running,
   workDir,
+  defaultOpen = false,
 }: {
   view: ToolCallView
   running: boolean
   workDir?: string
+  defaultOpen?: boolean
 }): JSX.Element {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(defaultOpen)
   const fm = view.fileModify!
   const isNew = fm.mode === 'write' && fm.hunks.length === 0
   const basename = (view.filePath ?? fm.filePath).split(/[\\/]/).pop() ?? fm.filePath
