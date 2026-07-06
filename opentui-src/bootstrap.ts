@@ -95,6 +95,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   verbose?: boolean;
   homeDir?: string;
   projectPath?: string;
+  /** Deprecated: Shiki now always initializes lazily on first highlight. */
   initHighlighter?: boolean;
 }): Promise<OpenTuiRuntime> {
   const homeDir = opts?.homeDir ?? getFermiHomeDir();
@@ -252,22 +253,15 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   session.applySettings(settings, modelState);
   await refreshActiveOpenAICodexToken(session);
 
-  // ── Shiki syntax highlighter (disable with FERMI_SHIKI=0) ──
-  if (opts?.initHighlighter !== false) {
-    if (process.env.FERMI_SHIKI !== "0") {
-      import("./forked/shiki-highlighter.js").then(async ({ initShikiHighlighter }) => {
-        await initShikiHighlighter();
-      }).catch(() => {
-        // Shiki unavailable — silently fall back to hljs.
-        import("./forked/patch-opentui-markdown.js").then(({ setUseShikiHighlighter }) => {
-          setUseShikiHighlighter(false);
-        });
-      });
-    } else {
-      import("./forked/patch-opentui-markdown.js").then(({ setUseShikiHighlighter }) => {
-        setUseShikiHighlighter(false);
-      });
-    }
+  // ── Shiki syntax highlighter ──
+  // No longer initialized here: the engine + themes + preload grammars cost
+  // ~90MB RSS, so init is lazy — the first highlight request kicks it off
+  // (falling back to hljs until ready), and the CLI --resume path prewarms it
+  // (main.tsx). FERMI_SHIKI=0 pins the hljs path permanently.
+  if (process.env.FERMI_SHIKI === "0") {
+    import("./forked/patch-opentui-markdown.js").then(({ setUseShikiHighlighter }) => {
+      setUseShikiHighlighter(false);
+    }).catch(() => { /* markdown patch unavailable — nothing to disable */ });
   }
 
   const commandRegistry = buildDefaultRegistry();

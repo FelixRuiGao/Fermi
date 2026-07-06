@@ -16,7 +16,7 @@ import {
 } from "./core/lib/diagnostic.js";
 import { clipboard } from "../../src/platform/index.js";
 import type { DisplayTheme } from "../display/theme/types.js";
-import { isShikiReady, setShikiTheme, shikiHighlightToChunks } from "./shiki-highlighter.js";
+import { setShikiTheme, shikiHighlightToChunks } from "./shiki-highlighter.js";
 
 /**
  * When `true`, `highlightToChunks` uses Shiki (TextMate grammars, VS Code
@@ -168,10 +168,13 @@ function hljsHtmlToChunks(html: string): TextChunk[] {
 
 export function highlightToChunks(code: string, lang: string | undefined): TextChunk[] | null {
   // ── Shiki path (opt-in) ──────────────────────────────────────────────────
-  if (useShikiHighlighter && isShikiReady()) {
+  // Not-ready is handled inside shikiHighlightToChunks: it lazily kicks off
+  // init and returns null, so we fall through to hljs until Shiki is ready
+  // (same as a highlight racing the old startup init).
+  if (useShikiHighlighter) {
     const shikiResult = shikiHighlightToChunks(code, lang);
     if (shikiResult) return shikiResult;
-    // Language not loaded yet or unsupported — fall through to hljs.
+    // Init pending, language not loaded yet, or unsupported — fall through.
   }
 
   // ── highlight.js path (default) ──────────────────────────────────────────

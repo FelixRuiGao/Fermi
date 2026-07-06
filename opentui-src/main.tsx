@@ -147,6 +147,12 @@ export async function launchTui(): Promise<void> {
   const resumeDir = process.env["FERMI_RESUME_SESSION_DIR"];
   if (resumeDir) {
     delete process.env["FERMI_RESUME_SESSION_DIR"];
+    // Prewarm the (otherwise lazy) Shiki highlighter: a restored transcript
+    // renders code blocks on first paint, and init usually beats the restore
+    // parse — matching the old startup-eager visual behavior for resumes.
+    void import("./forked/shiki-highlighter.js")
+      .then(({ initShikiHighlighter }) => initShikiHighlighter())
+      .catch(() => { /* hljs fallback remains available */ });
     const { applySessionRestore } = await import("../src/session-resume.js");
     const result = applySessionRestore(runtime.session, runtime.store, resumeDir);
     if (!result.ok && result.error) {

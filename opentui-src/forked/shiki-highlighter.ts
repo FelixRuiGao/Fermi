@@ -148,10 +148,18 @@ interface ShikiHighlighter {
 /**
  * Initialize the Shiki highlighter singleton.  Safe to call multiple times —
  * subsequent calls return the same promise.
+ *
+ * NOT called at startup: the engine + two themes + preload grammars cost
+ * ~90MB RSS, which sessions without code blocks should never pay. The first
+ * `shikiHighlightToChunks` call kicks it off (callers fall back to hljs until
+ * ready — the same behavior as a highlight racing init at startup), and the
+ * CLI `--resume` path prewarms it so restored transcripts render with Shiki
+ * from the first paint (see main.tsx).
  */
 export async function initShikiHighlighter(): Promise<void> {
   if (highlighter) return;
   if (initPromise) return initPromise;
+  if (process.env["FERMI_SHIKI"] === "0") return;
 
   initPromise = (async () => {
     try {
@@ -202,7 +210,13 @@ export function shikiHighlightToChunks(
   code: string,
   lang: string | undefined,
 ): TextChunk[] | null {
-  if (!highlighter || !lang) return null;
+  if (!highlighter) {
+    // Lazy init on first demand; this call falls back to hljs (null) and
+    // subsequent renders pick Shiki up once ready.
+    void initShikiHighlighter();
+    return null;
+  }
+  if (!lang) return null;
 
   const resolved = resolveLang(lang);
 

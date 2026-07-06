@@ -103,7 +103,7 @@ import {
   type GateAdvisor,
 } from "./tool-runtime.js";
 import { BackgroundShellManager, type BackgroundShellSnapshot, type BackgroundShellDetail } from "./background-shell-manager.js";
-import { PermissionAdvisor, PermissionRuleStore, initBashParser, type PermissionMode, type PermissionRule, type ApprovalOffer } from "./permissions/index.js";
+import { PermissionAdvisor, PermissionRuleStore, type PermissionMode, type PermissionRule, type ApprovalOffer } from "./permissions/index.js";
 import { HookRuntime, type HookEvent, type HookPayload } from "./hooks/index.js";
 import type { HookManifest } from "./hooks/types.js";
 import { assembleFullSystemPrompt, readAgentsMemory, renderPromptVariables } from "./prompt-assembler.js";
@@ -924,8 +924,12 @@ export class Session {
     this._ensureSkillTool();
     this._persistedModelSelection = this._buildPersistedModelSelection();
 
-    // Init tree-sitter bash parser (async, non-blocking)
-    initBashParser();
+    // Tree-sitter shell parser is NOT initialized here: web-tree-sitter plus
+    // the bash grammar cost ~100MB (67MB JS heap + 33MB wasm memory), which a
+    // session should only pay when a bash tool call actually needs
+    // classification — classifyToolAsync self-initializes on first use
+    // (src/permissions/classify.ts), adding one sub-second await to the first
+    // bash call of the process.
 
     // Fire SessionStart hook (fire-and-forget)
     this.hookRuntime.fireAndForget("SessionStart", {
