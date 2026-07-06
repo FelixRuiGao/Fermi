@@ -602,6 +602,40 @@ function store(): SessionStoreState {
   return useSessionStore.getState()
 }
 
+// ── Throttled log refresh ──
+// During streaming, log.changed fires on every chunk (hundreds per turn).
+// A full refreshLog serializes the entire projected log over IPC each time.
+// We throttle to at most one refresh per THROTTLE_MS, with an immediate
+// flush on turn.ended so the final state is never stale.
+const LOG_REFRESH_THROTTLE_MS = 200
+const pendingLogRefresh = new Map<string, ReturnType<typeof setTimeout>>()
+
+function scheduleLogRefresh(tabId: string): void {
+  if (pendingLogRefresh.has(tabId)) return
+  const timer = setTimeout(() => {
+    pendingLogRefresh.delete(tabId)
+    void store().refreshLog(tabId)
+  }, LOG_REFRESH_THROTTLE_MS)
+  pendingLogRefresh.set(tabId, timer)
+}
+
+function flushLogRefresh(tabId: string): void {
+  const timer = pendingLogRefresh.get(tabId)
+  if (timer != null) {
+    clearTimeout(timer)
+    pendingLogRefresh.delete(tabId)
+  }
+  void store().refreshLog(tabId)
+}
+
+function cancelLogRefresh(tabId: string): void {
+  const timer = pendingLogRefresh.get(tabId)
+  if (timer != null) {
+    clearTimeout(timer)
+    pendingLogRefresh.delete(tabId)
+  }
+}
+
 function isDraft(get: () => SessionStoreState, tabId: string): boolean {
   return get().tabs.find((tab) => tab.tabId === tabId)?.status === 'draft'
 }
@@ -710,7 +744,7 @@ function handleEvent(e: RpcEvent): void {
     }
 
     case 'session.starting': {
-      // A new session is (re)starting in this tab — clear per-session state.
+      cancelLogRefresh(tabId)
       patchTabState(tabId, () => ({
         conversation: [],
         logRevision: -1,
@@ -734,11 +768,10 @@ function handleEvent(e: RpcEvent): void {
         ...(p.status ? { status: p.status } : {}),
         activeLogEntryId: p.activeLogEntryId ?? prev.activeLogEntryId,
       }))
-      if (typeof p.revision === 'number' && p.revision !== s.perTab[tabId]?.logRevision) {
-        void s.refreshLog(tabId)
-      } else {
-        void s.refreshLog(tabId)
+      if (typeof p.revision === 'number' && p.revision === s.perTab[tabId]?.logRevision) {
+        break
       }
+      scheduleLogRefresh(tabId)
       break
     }
 
@@ -845,7 +878,7 @@ function handleEvent(e: RpcEvent): void {
           : {}),
       }))
       void s.refreshStatus(tabId)
-      void s.refreshLog(tabId)
+      flushLogRefresh(tabId)
       void s.refreshHistory()
       break
     }
@@ -871,6 +904,7 @@ function handleEvent(e: RpcEvent): void {
     }
 
     case 'tab.closed': {
+      cancelLogRefresh(tabId)
       const tabs = store().tabs.filter((t) => t.tabId !== tabId)
       const perTab = { ...store().perTab }
       delete perTab[tabId]
