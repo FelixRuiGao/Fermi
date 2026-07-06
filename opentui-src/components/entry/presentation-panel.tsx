@@ -106,7 +106,10 @@ function PresentationPanelInner(
   const windowRef = React.useRef(window);
   windowRef.current = window;
 
-  const virtualize = items.length > MIN_VIRTUALIZE_COUNT;
+  // FERMI_VIRT_OFF=1 is a debugging escape hatch: render every entry like the
+  // pre-virtualization panel did (memory cost of the full transcript applies).
+  const virtualize = items.length > MIN_VIRTUALIZE_COUNT
+    && process.env["FERMI_VIRT_OFF"] !== "1";
 
   const itemsRef = React.useRef(items);
   itemsRef.current = items;

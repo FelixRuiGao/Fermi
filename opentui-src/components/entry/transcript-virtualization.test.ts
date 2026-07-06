@@ -139,6 +139,37 @@ describe("buildPrefixTops / computeMountWindow", () => {
     expect(win.end).toBe(-1);
   });
 
+  test("appends at the tail advance the window start (streaming parks old entries)", () => {
+    const model = new TranscriptHeightModel();
+    let items = makeItems(50); // 4 rows each
+    let tops = buildPrefixTops(items, model, 80, 0);
+    const viewportHeight = 40;
+    let win = computeMountWindow({
+      tops,
+      scrollTop: tops[tops.length - 1]! - viewportHeight,
+      viewportHeight,
+      prev: null,
+    });
+    expect(win.atTail).toBe(true);
+    const startBefore = win.start;
+
+    // Stream: append 100 more entries, staying pinned to the bottom.
+    items = items.concat(makeItems(100).map((e, i) => ({ ...e, id: `tail-${i}` })));
+    tops = buildPrefixTops(items, model, 80, 0);
+    win = computeMountWindow({
+      tops,
+      scrollTop: tops[tops.length - 1]! - viewportHeight,
+      viewportHeight,
+      prev: win,
+    });
+    expect(win.atTail).toBe(true);
+    expect(win.end).toBe(149);
+    // Old entries far above the viewport must be parked again.
+    expect(win.start).toBeGreaterThan(startBefore + 50);
+    const scrollTop = tops[tops.length - 1]! - viewportHeight;
+    expect(scrollTop - tops[win.start]!).toBeLessThanOrEqual(PARK_SLACK_ROWS);
+  });
+
   test("window indices always valid after shrink", () => {
     const model = new TranscriptHeightModel();
     const items = makeItems(10);

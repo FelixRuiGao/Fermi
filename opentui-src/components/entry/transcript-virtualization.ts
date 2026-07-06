@@ -34,8 +34,16 @@ export const MOUNT_CHUNK_ROWS = 40;
  * the viewport (hysteresis, park side). Must exceed MOUNT_MARGIN + CHUNK. */
 export const PARK_SLACK_ROWS = 120;
 
-/** Entries in short transcripts are always fully mounted. */
-export const MIN_VIRTUALIZE_COUNT = 60;
+/**
+ * Entries in short transcripts are always fully mounted. Deliberately low:
+ * presentation entries hide huge render subtrees (a tool_group folds dozens
+ * of diffs into ONE entry), so an entry-count threshold cannot bound render
+ * cost — 60 entries of a diff-heavy live turn materialized 1100+ renderables
+ * and ~900MB RSS before windowing ever activated. Above the threshold the
+ * window math naturally mounts everything that fits ~2 screens, so small
+ * transcripts behave identically anyway.
+ */
+export const MIN_VIRTUALIZE_COUNT = 8;
 
 interface HeightRecord {
   rows: number;
