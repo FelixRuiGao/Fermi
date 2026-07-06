@@ -306,22 +306,7 @@ export class FermiComposerRenderable extends Renderable {
       // One unbounded row, windowed to [scrollX, scrollX + width).
       const line = lay.lines[0];
       if (!line) return;
-      for (const cell of line.cells) {
-        const x = cell.startCol - this._scrollX;
-        if (x < 0) continue; // straddling or left of the window edge
-        if (x >= this.width) break;
-        const selected = sel !== null && cell.graphemeIndex >= sel.start && cell.graphemeIndex < sel.end;
-        const fg =
-          cell.graphemeIndex === caretIdx
-            ? this._cursorTextColor
-            : selected
-              ? this._selectionFg
-              : cell.tokenId
-                ? this._tokenColor
-                : this._textColor;
-        const bg = selected ? this._selectionBg : undefined;
-        buffer.drawText(cell.grapheme, screenX + x, screenY, fg, bg);
-      }
+      this._drawLineCells(buffer, line.cells, screenY, screenX, this._scrollX, caretIdx, sel);
       return;
     }
 
@@ -329,21 +314,85 @@ export class FermiComposerRenderable extends Renderable {
     for (let row = this._scrollY; row < last; row++) {
       const line = lay.lines[row]!;
       const y = screenY + (row - this._scrollY);
-      for (const cell of line.cells) {
-        if (cell.startCol >= this.width) break;
-        const selected = sel !== null && cell.graphemeIndex >= sel.start && cell.graphemeIndex < sel.end;
-        const fg =
-          cell.graphemeIndex === caretIdx
-            ? this._cursorTextColor
-            : selected
-              ? this._selectionFg
-              : cell.tokenId
-                ? this._tokenColor
-                : this._textColor;
-        const bg = selected ? this._selectionBg : undefined;
-        buffer.drawText(cell.grapheme, screenX + cell.startCol, y, fg, bg);
+      this._drawLineCells(buffer, line.cells, y, screenX, 0, caretIdx, sel);
+    }
+  }
+
+  /**
+   * Draw one visual line's cells, batching runs of same-style width-1 ASCII
+   * graphemes into single drawText calls. Every native draw call costs a
+   * small permanent native allocation (prebuilt lib), and the previous
+   * one-call-per-grapheme loop made each keystroke's full redraw allocate
+   * proportionally to the text length — a 200-char paste measurably added
+   * hundreds of MB of RSS. Batching is restricted to printable ASCII (width
+   * exactly 1 in both our layout and the native width method) so cell
+   * positions are bit-identical to the per-cell path; wide graphemes, tabs,
+   * and style changes flush the run and draw individually as before.
+   */
+  private _drawLineCells(
+    buffer: OptimizedBuffer,
+    cells: readonly {
+      graphemeIndex: number;
+      grapheme: string;
+      width: number;
+      startCol: number;
+      tokenId?: string;
+    }[],
+    y: number,
+    screenX: number,
+    scrollX: number,
+    caretIdx: number,
+    sel: { start: number; end: number } | null,
+  ): void {
+    let runText = "";
+    let runStartX = 0;
+    let runEndX = 0;
+    let runFg: RGBA | null = null;
+    let runBg: RGBA | undefined;
+
+    const flush = (): void => {
+      if (runText !== "" && runFg) {
+        buffer.drawText(runText, screenX + runStartX, y, runFg, runBg);
+      }
+      runText = "";
+      runFg = null;
+      runBg = undefined;
+    };
+
+    for (const cell of cells) {
+      const x = cell.startCol - scrollX;
+      if (x < 0) continue; // straddling or left of the window edge
+      if (x >= this.width) break;
+      const selected = sel !== null && cell.graphemeIndex >= sel.start && cell.graphemeIndex < sel.end;
+      const fg =
+        cell.graphemeIndex === caretIdx
+          ? this._cursorTextColor
+          : selected
+            ? this._selectionFg
+            : cell.tokenId
+              ? this._tokenColor
+              : this._textColor;
+      const bg = selected ? this._selectionBg : undefined;
+
+      const code = cell.grapheme.length === 1 ? cell.grapheme.charCodeAt(0) : 0;
+      const batchable = code >= 0x20 && code <= 0x7e; // printable ASCII, width 1
+      if (batchable && runText !== "" && fg === runFg && bg === runBg && x === runEndX) {
+        runText += cell.grapheme;
+        runEndX = x + 1;
+        continue;
+      }
+      flush();
+      if (batchable) {
+        runText = cell.grapheme;
+        runStartX = x;
+        runEndX = x + 1;
+        runFg = fg;
+        runBg = bg;
+      } else {
+        buffer.drawText(cell.grapheme, screenX + x, y, fg, bg);
       }
     }
+    flush();
   }
 
   // renderAfter hook target — positions the caret after the text is drawn.

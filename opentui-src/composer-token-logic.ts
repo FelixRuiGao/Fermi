@@ -51,14 +51,63 @@ const graphemeSegmenter = typeof Intl !== "undefined" && typeof Intl.Segmenter =
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
   : null;
 
+/**
+ * Memoized non-ASCII segment widths. `stringWidth` re-runs Intl.Segmenter
+ * (native ICU allocations) on every call, and this module is invoked per
+ * keystroke over the whole composer text — CPU-profiled as the dominant
+ * keystroke cost and the source of a massive native-malloc churn (hundreds
+ * of MB RSS from one long paste). See opentui-src/composer/graphemes.ts for
+ * the same treatment on the composer model side.
+ */
+const segmentWidthCache = new Map<string, number>();
+const SEGMENT_WIDTH_CACHE_MAX = 8192;
+
 function segmentDisplayWidth(segment: string): number {
   if (segment === "\n") return 1;
   if (segment === "\t") return DEFAULT_TAB_WIDTH;
-  return stringWidth(segment);
+  if (segment.length === 1) {
+    const c = segment.charCodeAt(0);
+    if (c >= 0x20 && c <= 0x7e) return 1; // printable ASCII
+  }
+  const cached = segmentWidthCache.get(segment);
+  if (cached !== undefined) return cached;
+  const width = stringWidth(segment);
+  if (segmentWidthCache.size >= SEGMENT_WIDTH_CACHE_MAX) segmentWidthCache.clear();
+  segmentWidthCache.set(segment, width);
+  return width;
+}
+
+/**
+ * True when every char is printable ASCII / `\n` / `\t` (no `\r`: CRLF is a
+ * single grapheme cluster). Such text segments 1:1 into chars — no ICU needed.
+ */
+function isSimpleAscii(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if ((c < 0x20 && c !== 10 && c !== 9) || c > 0x7e) return false;
+  }
+  return true;
 }
 
 function* iterateDisplaySegments(text: string): Generator<DisplaySegment> {
   let offset = 0;
+
+  // ASCII fast path: identical segmentation (every char is its own grapheme)
+  // without touching Intl.Segmenter, whose every `.segment()` call allocates
+  // native ICU memory.
+  if (isSimpleAscii(text)) {
+    for (let i = 0; i < text.length; i++) {
+      const segment = text[i]!;
+      const width = segmentDisplayWidth(segment);
+      yield {
+        text: segment,
+        startOffset: offset,
+        endOffset: offset + width,
+      };
+      offset += width;
+    }
+    return;
+  }
 
   if (graphemeSegmenter) {
     for (const entry of graphemeSegmenter.segment(text)) {

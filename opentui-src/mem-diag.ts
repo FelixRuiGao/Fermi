@@ -27,9 +27,21 @@ export function maybeStartMemDiag(): void {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 50);
       const mu = process.memoryUsage();
+      let maxRenderableNum = 0;
+      const tall: Array<{ id: string; w: number; h: number }> = [];
+      for (const [num, r] of Renderable.renderablesByNumber) {
+        if (num > maxRenderableNum) maxRenderableNum = num;
+        const h = (r as { height?: number }).height ?? 0;
+        if (h > 200) {
+          tall.push({ id: String((r as { id?: unknown }).id ?? num), w: (r as { width?: number }).width ?? 0, h });
+        }
+      }
+      tall.sort((a, b) => b.h - a.h);
       const line = JSON.stringify({
         ts: Date.now(),
         rssMB: +(mu.rss / 1048576).toFixed(1),
+        maxRenderableNum,
+        tallest: tall.slice(0, 5),
         heapUsedMB: +(mu.heapUsed / 1048576).toFixed(1),
         externalMB: +(mu.external / 1048576).toFixed(1),
         arrayBuffersMB: +(mu.arrayBuffers / 1048576).toFixed(1),
