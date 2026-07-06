@@ -147,8 +147,9 @@ test("SliderRenderable > Vertical thumb size calculation", async () => {
   expect(thumbSize).toBe(9)
 
   slider.viewPortSize = 1
+  // Vertical minimum is a full cell = 2 virtual half-cells (drawability floor)
   // @ts-expect-error - Testing private method
-  expect(slider.getVirtualThumbSize()).toBe(1)
+  expect(slider.getVirtualThumbSize()).toBe(2)
 
   slider.viewPortSize = 150
   // @ts-expect-error - Testing private method
@@ -197,8 +198,9 @@ test("SliderRenderable > Edge cases in thumb size calculation", async () => {
   slider.max = 100000
   slider.viewPortSize = 1
 
+  // Vertical minimum is a full cell = 2 virtual half-cells (drawability floor)
   // @ts-expect-error - Testing private method
-  expect(slider.getVirtualThumbSize()).toBe(1)
+  expect(slider.getVirtualThumbSize()).toBe(2)
 
   slider.max = 30
   slider.viewPortSize = 30
@@ -232,8 +234,9 @@ test("SliderRenderable > Thumb size minimum clamping", async () => {
     viewPortSize: 0.01,
   })
 
+  // Vertical minimum is a full cell = 2 virtual half-cells (drawability floor)
   // @ts-expect-error - Testing private method
-  expect(extremeSlider.getVirtualThumbSize()).toBe(1)
+  expect(extremeSlider.getVirtualThumbSize()).toBe(2)
 
   expect(thumbSize).toBeGreaterThanOrEqual(1)
   // @ts-expect-error - Testing private method
@@ -265,8 +268,9 @@ test("SliderRenderable > Thumb size can be less than 2", async () => {
     viewPortSize: 1,
   })
 
+  // Vertical minimum is a full cell = 2 virtual half-cells (drawability floor)
   // @ts-expect-error - Testing private method
-  expect(largerRatioSlider.getVirtualThumbSize()).toBe(1)
+  expect(largerRatioSlider.getVirtualThumbSize()).toBe(2)
 
   const { slider: exactSlider } = await createSliderRenderable(currentRenderer, {
     orientation: "horizontal",
@@ -280,6 +284,67 @@ test("SliderRenderable > Thumb size can be less than 2", async () => {
 
   // @ts-expect-error - Testing private method
   expect(exactSlider.getVirtualThumbSize()).toBe(1)
+})
+
+test("SliderRenderable > Vertical minimum thumb is a full cell", async () => {
+  const { slider } = await createSliderRenderable(currentRenderer, {
+    orientation: "vertical",
+    min: 0,
+    max: 100000,
+    value: 0,
+    width: 2,
+    height: 40,
+    viewPortSize: 1,
+  })
+
+  // A thumb shorter than a cell can sit strictly inside one cell, which no
+  // glyph can draw — such positions collapse to a cell edge and scrolling
+  // degrades into stall-then-jump cycles. See getVerticalThumbUnits.
+  // @ts-expect-error - Testing private method
+  const { sizeUnits } = slider.getVerticalThumbUnits()
+  expect(sizeUnits).toBe(8)
+})
+
+test("SliderRenderable > Vertical minimum thumb scrolls linearly without stall-jump cycles", async () => {
+  const max = 10000
+  const height = 40
+  const { slider } = await createSliderRenderable(currentRenderer, {
+    orientation: "vertical",
+    min: 0,
+    max,
+    value: 0,
+    width: 2,
+    height, // trackUnits = 320
+    viewPortSize: 1, // thumb clamps to the one-cell minimum (8 units)
+  })
+
+  // @ts-expect-error - Testing private method
+  const { sizeUnits } = slider.getVerticalThumbUnits()
+  const trackUnits = height * 8
+  const maxStartUnits = trackUnits - sizeUnits
+
+  let previous = -1
+  const rendered: number[] = []
+  const steps = 2000
+  for (let i = 0; i <= steps; i++) {
+    slider.value = (max * i) / steps
+    // @ts-expect-error - Testing private method
+    const { startUnits } = slider.getVerticalThumbUnits()
+    const raw = Math.round((maxStartUnits * slider.value) / max)
+
+    // Every position is exactly drawable (the thumb always touches or spans
+    // a cell boundary), so the rendered start tracks the scroll progress
+    // 1:1 — no stalls, no jumps, monotone 1/8-cell motion.
+    expect(startUnits).toBe(raw)
+    expect(startUnits).toBeGreaterThanOrEqual(previous)
+    if (previous >= 0) expect(startUnits - previous).toBeLessThanOrEqual(1)
+    previous = startUnits
+    rendered.push(startUnits)
+  }
+
+  // Track ends are exact — the thumb lands flush at the very top/bottom.
+  expect(rendered[0]).toBe(0)
+  expect(rendered[rendered.length - 1]).toBe(maxStartUnits)
 })
 
 test("SliderRenderable > Mouse interaction - horizontal click on thumb", async () => {

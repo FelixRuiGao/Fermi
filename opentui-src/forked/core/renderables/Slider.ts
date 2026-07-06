@@ -389,11 +389,16 @@ export class SliderRenderable extends Renderable {
 
     const thumbRatio = viewportSize / contentSize
     const calculatedUnits = Math.round(trackUnits * thumbRatio)
-    // Floor at 2 units (one virtual half-cell, since getVirtualThumbSize divides by 4)
-    // to mirror the horizontal path's half-cell minimum — not a full cell. Otherwise a
-    // tiny vertical thumb is forced to a whole cell, breaking sub-cell symmetry with
-    // horizontal and contradicting the sub-cell rendering this slider already supports.
-    const minimumUnits = Math.max(2, Math.round(this._minThumbSize * verticalUnitsPerCell))
+    // The minimum must stay a FULL cell. A shorter thumb can sit strictly
+    // inside one cell, and no glyph can draw that: eighth-blocks anchor to the
+    // cell bottom, the reverse-video trick anchors to the top, nothing shows a
+    // band floating mid-cell — so those positions collapse to an anchor and
+    // continuous scrolling degrades into stall-then-jump cycles. At >= 8 units
+    // every 1/8-cell position is exactly drawable (the thumb always touches or
+    // spans a cell boundary) and motion is linear. This is NOT asymmetric with
+    // the horizontal path's half-cell minimum: horizontal positions move in
+    // half-cell steps and ▌/▐ can draw every one of them.
+    const minimumUnits = Math.max(verticalUnitsPerCell, Math.round(this._minThumbSize * verticalUnitsPerCell))
     const sizeUnits = Math.min(Math.max(calculatedUnits, minimumUnits), trackUnits)
     const maxStartUnits = Math.max(0, trackUnits - sizeUnits)
     const valueRatio = (this._value - this._min) / range
