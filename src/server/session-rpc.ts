@@ -705,20 +705,45 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   // server-side, so out-of-process UIs render the same conversation the TUI
   // does instead of re-implementing pairing/filtering over raw LogEntry[].
   // The raw-log methods above remain for legacy clients.
-  server.on("session.getProjectedLog", () => ({
-    revision: session.getLogRevision(),
-    activeLogEntryId: session.activeLogEntryId,
-    entries: projectToTuiEntries(session.log),
-  }));
+  server.on("session.getProjectedLog", (params) => {
+    const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
+    const lightweight = p.lightweight === true;
+    return {
+      revision: session.getLogRevision(),
+      activeLogEntryId: session.activeLogEntryId,
+      entries: projectToTuiEntries(session.log, { lightweight }),
+    };
+  });
 
   server.on("session.getProjectedChildLog", (params) => {
     const p = expectObject(params, "session.getProjectedChildLog");
     const childId = expectString(p, "childId", "session.getProjectedChildLog");
+    const lightweight = p["lightweight"] === true;
     const entries = session.getChildSessionLog(childId);
-    return entries ? projectToTuiEntries(entries) : null;
+    return entries ? projectToTuiEntries(entries, { lightweight }) : null;
   });
 
   server.on("session.getChildSnapshots", () => session.getChildSessionSnapshots());
+
+  // ── Entry detail (lazy-load heavy fields stripped by lightweight mode) ──
+  server.on("session.getEntryDetail", (params) => {
+    const p = expectObject(params, "session.getEntryDetail");
+    const entryId = expectString(p, "entryId", "session.getEntryDetail");
+    const entry = session.log.find((e: LogEntry) => e.id === entryId);
+    if (!entry) return null;
+    const result: Record<string, unknown> = { id: entryId };
+    if (entry.type === "tool_result") {
+      const content = entry.content as { content?: string } | undefined;
+      if (content?.content) result.fullText = content.content;
+    }
+    if (entry.type === "tool_call") {
+      const content = entry.content as { arguments?: Record<string, unknown> } | undefined;
+      if (content?.arguments) result.toolArgs = content.arguments;
+      const fmd = entry.meta["fileModifyData"];
+      if (fmd && typeof fmd === "object") result.fileModifyData = fmd;
+    }
+    return result;
+  });
 
   server.on("session.getPlanState", () => session.getPlanState());
 

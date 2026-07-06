@@ -387,7 +387,7 @@ function ChildTranscript({
 
   useEffect(() => {
     let cancelled = false
-    request<ConversationEntry[] | null>(tabId, 'session.getProjectedChildLog', { childId })
+    request<ConversationEntry[] | null>(tabId, 'session.getProjectedChildLog', { childId, lightweight: true })
       .then((r) => {
         if (!cancelled) setEntries(r)
       })

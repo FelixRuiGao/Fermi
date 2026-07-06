@@ -37,6 +37,12 @@ const DISPLAY_KIND_TO_ENTRY_KIND: Record<TuiDisplayKind, ConversationEntryKind> 
 export interface TuiProjectionOptions {
   /** Override the compact fold threshold (default: 3). */
   compactFoldThreshold?: number;
+  /**
+   * Strip large payloads (toolArgs.content, writeLines, fullText) for
+   * out-of-process consumers that transfer the projection over IPC.
+   * In-process TUI leaves this off and pays no serialization cost.
+   */
+  lightweight?: boolean;
 }
 
 const INTERRUPTED_MARKER_TEXT = "[Interrupted here.]";
@@ -495,6 +501,45 @@ function projectTuiWindow(entries: LogEntry[], toolElapsedMap: Map<string, numbe
   return result;
 }
 
+// ── Lightweight mode field stripping ──
+
+const LIGHTWEIGHT_MAX_FULL_TEXT = 8192;
+const LIGHTWEIGHT_MAX_WRITE_LINES = 150;
+const TOOL_ARGS_SUMMARY_KEYS = new Set([
+  "file_path", "path", "command", "query", "pattern", "url",
+  "description", "file", "name", "skill",
+]);
+
+function stripHeavyFields(ce: ConversationEntry): void {
+  const meta = ce.meta;
+  if (!meta) return;
+
+  if (meta.toolArgs && typeof meta.toolArgs === "object") {
+    const args = meta.toolArgs as Record<string, unknown>;
+    const slim: Record<string, unknown> = {};
+    for (const key of TOOL_ARGS_SUMMARY_KEYS) {
+      if (key in args) slim[key] = args[key];
+    }
+    meta.toolArgs = slim;
+  }
+
+  delete meta.rawArguments;
+
+  const fmd = meta.fileModifyData as Record<string, unknown> | undefined;
+  if (fmd && Array.isArray(fmd.writeLines)) {
+    const lines = fmd.writeLines as string[];
+    if (lines.length > LIGHTWEIGHT_MAX_WRITE_LINES) {
+      fmd.writeLines = lines.slice(0, LIGHTWEIGHT_MAX_WRITE_LINES);
+      fmd.truncatedLineCount = lines.length;
+    }
+  }
+
+  if (typeof ce.fullText === "string" && ce.fullText.length > LIGHTWEIGHT_MAX_FULL_TEXT) {
+    ce.fullText = ce.fullText.slice(0, LIGHTWEIGHT_MAX_FULL_TEXT)
+      + `\n\n… (${ce.fullText.length - LIGHTWEIGHT_MAX_FULL_TEXT} chars truncated)`;
+  }
+}
+
 /**
  * Project log entries into ConversationEntry[] for TUI rendering.
  *
@@ -551,6 +596,9 @@ export function projectToTuiEntries(
 
   result.push(...projectTuiWindow(entries.slice(foldEndIdx + 1), toolElapsedMap));
 
+  if (options?.lightweight) {
+    for (const ce of result) stripHeavyFields(ce);
+  }
   return result;
 }
 

@@ -409,7 +409,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         revision: number
         entries: ConversationEntry[]
         activeLogEntryId: string | null
-      }>(tabId, 'session.getProjectedLog', {})
+      }>(tabId, 'session.getProjectedLog', { lightweight: true })
       patchTabState(tabId, () => ({
         conversation: result.entries,
         logRevision: result.revision,
