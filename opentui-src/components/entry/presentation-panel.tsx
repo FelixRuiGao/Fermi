@@ -17,9 +17,13 @@ import {
 
 const ATTRS_BOLD = createTextAttributes({ bold: true });
 
-/** Entries mounted on first paint (bottom of the transcript) before the
- * frame callback measures the real viewport; corrected within one frame. */
-const INITIAL_MOUNT_COUNT = 40;
+/** Estimated rows covered by the first-paint window (bottom of the
+ * transcript) before the frame callback measures the real viewport —
+ * roughly two tall terminal screens; corrected within one frame. The first
+ * render is the transcript's allocation peak (everything it mounts is
+ * materialized before the window logic can correct it), so this must stay
+ * close to one viewport, not a fixed entry count. */
+const INITIAL_MOUNT_ROWS = 200;
 
 /**
  * Brand wordmark. Horizontally centered within its container; the
@@ -39,8 +43,19 @@ export function LogoBlock(
   );
 }
 
-function initialWindow(count: number): MountWindow {
-  return { start: Math.max(0, count - INITIAL_MOUNT_COUNT), end: count - 1, atTail: true };
+function initialWindow(
+  items: readonly PresentationEntry[],
+  model: TranscriptHeightModel,
+  contentWidth: number,
+): MountWindow {
+  const count = items.length;
+  let start = count;
+  let rows = 0;
+  while (start > 0 && rows < INITIAL_MOUNT_ROWS) {
+    start--;
+    rows += model.heightFor(items[start]!, contentWidth);
+  }
+  return { start, end: count - 1, atTail: true };
 }
 
 /**
@@ -85,7 +100,9 @@ function PresentationPanelInner(
   const wrapperRefs = React.useRef(new Map<string, { height: number } | null>());
   const headerRef = React.useRef<{ height: number } | null>(null);
 
-  const [window, setWindow] = React.useState<MountWindow>(() => initialWindow(items.length));
+  const [window, setWindow] = React.useState<MountWindow>(
+    () => initialWindow(items, modelRef.current, contentWidth),
+  );
   const windowRef = React.useRef(window);
   windowRef.current = window;
 
@@ -108,7 +125,7 @@ function PresentationPanelInner(
   // collide across logs, so cached heights are meaningless. Start over.
   React.useEffect(() => {
     modelRef.current.clear();
-    setWindow(initialWindow(itemsRef.current.length));
+    setWindow(initialWindow(itemsRef.current, modelRef.current, widthRef.current));
   }, [selectedChildId]);
 
   // Rendering context changed — every measured height is stale. Keep the

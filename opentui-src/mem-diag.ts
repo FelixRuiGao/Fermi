@@ -10,9 +10,16 @@ export function maybeStartMemDiag(): void {
   const outPath = process.env["FERMI_MEM_DIAG"];
   if (!outPath) return;
 
+  const shrinkEachTick = process.env["FERMI_MEM_DIAG_SHRINK"] === "1";
+
   const dump = async () => {
     try {
-      const { heapStats } = await import("bun:jsc");
+      const jsc = await import("bun:jsc");
+      if (shrinkEachTick) {
+        Bun.gc(true);
+        (jsc as { shrink?: () => void }).shrink?.();
+      }
+      const { heapStats } = jsc;
       const { appendFileSync } = await import("node:fs");
       const { Renderable } = await import("@opentui/core");
       const stats = heapStats();
@@ -38,7 +45,8 @@ export function maybeStartMemDiag(): void {
     }
   };
 
-  setInterval(dump, 10_000).unref?.();
+  const intervalMs = Number(process.env["FERMI_MEM_DIAG_INTERVAL"]) || 10_000;
+  setInterval(dump, intervalMs).unref?.();
   try {
     process.on("SIGUSR2", () => void dump());
   } catch {
