@@ -502,6 +502,7 @@ export function OpenTuiScreen({
                 selectedChildId={selectedChildId}
                 showLogoInScroll={showLogoInScroll}
                 branding={theme.branding}
+                scrollRef={mainScrollRef}
                 onEntryClick={onEntryClick}
                 onAgentClick={onAgentClick}
               />

@@ -1,4 +1,5 @@
 import type { SyntaxStyle } from "@opentui/core";
+import type React from "react";
 
 import type { PresentationEntry } from "../presentation/types.js";
 import type {
@@ -34,6 +35,8 @@ export interface PresentationPanelProps {
   selectedChildId: string | null;
   showLogoInScroll: boolean;
   branding: DisplayThemeBrandingTokens;
+  /** The enclosing ScrollViewport's scrollbox ref — drives transcript virtualization. */
+  scrollRef?: React.RefObject<any>;
   onEntryClick?: (entry: PresentationEntry) => void;
   onAgentClick?: (agentId: string) => void;
 }
