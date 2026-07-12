@@ -105,9 +105,16 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   const projectPath = opts?.projectPath ?? process.cwd();
   const store = new SessionStore({ projectPath, baseDir: homeDir });
 
+  // ── Workspace trust — gate repo-shipped executable config ──
+  const { evaluateWorkspaceTrust, workspaceExecutablesAllowed } = await import("../src/security/workspace-trust.js");
+  const bootTrust = evaluateWorkspaceTrust(projectPath, store.projectDir);
+  const workspaceTrusted = workspaceExecutablesAllowed(bootTrust);
+
   // ── Load settings (global + local merge) ──
   const globalSettings = loadGlobalSettings(homeDir);
-  const localSettings = loadLocalSettings(projectPath, store.projectDir);
+  const localSettings = loadLocalSettings(projectPath, store.projectDir, {
+    includeWorkspaceMcpServers: workspaceTrusted,
+  });
   let settings = mergeSettings(globalSettings, localSettings);
   settings = mergeSettings(settings, parseSettingsOverrides(opts?.configOverrides ?? []));
 
@@ -193,6 +200,16 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   skillRoots.push(...paths.skillRoots);
   const skills = loadSkillsMulti(skillRoots);
 
+  // ── Hooks (global > project > workspace; workspace behind the trust
+  // gate) — loaded BEFORE Session construction so the constructor's
+  // SessionStart fire actually sees them.
+  let hooksLoaded: import("../src/hooks/index.js").HookManifest[] = [];
+  try {
+    const { loadHooksMulti } = await import("../src/hooks/index.js");
+    const { filterHookRootsByTrust } = await import("../src/hooks/manage.js");
+    hooksLoaded = loadHooksMulti(filterHookRootsByTrust(paths.hookRoots, workspaceTrusted));
+  } catch { /* hooks module optional */ }
+
   // ── Session ──
   const contextBudgetPercent = settings.context_budget_percent ?? 100;
   const session = new Session({
@@ -208,6 +225,7 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     store: store as never,
     contextBudgetPercent,
     projectRoot: projectPath,
+    hooks: hooksLoaded,
   });
 
   // Notify TUI when eager MCP connect completes
@@ -220,14 +238,19 @@ export async function bootstrapOpenTuiRuntime(opts?: {
     });
   }
 
-  // ── Hooks (global > project > workspace) ──
-  try {
-    const { loadHooksMulti } = await import("../src/hooks/index.js");
-    const hooksLoaded = loadHooksMulti(paths.hookRoots);
-    if (hooksLoaded.length > 0) {
-      session.hookRuntime.setHooks(hooksLoaded);
-    }
-  } catch { /* hooks module optional */ }
+  // Untrusted workspace executable config: tell the user (ride-along
+  // notice — must not wake the agent) and point at /trust.
+  if (session.workspaceTrust.status === "untrusted") {
+    const s = session.workspaceTrust.summary;
+    const parts: string[] = [];
+    if (s.mcpServers.length) parts.push(`${s.mcpServers.length} MCP server(s)`);
+    if (s.hooks.length) parts.push(`${s.hooks.length} hook(s)`);
+    if (s.allowRuleCount) parts.push(`${s.allowRuleCount} allow rule(s)`);
+    session.queueSystemNotice(
+      `<system-message>This workspace ships executable configuration that was NOT loaded ` +
+      `(untrusted): ${parts.join(", ")}. The user can review and enable it with /trust.</system-message>`,
+    );
+  }
 
   // ── Restore model selection ──
   // Priority: settings.default_model > state/model-selection.json

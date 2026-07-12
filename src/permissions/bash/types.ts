@@ -29,6 +29,13 @@ export interface ParsedBashCommand {
   readonly name: string;
   readonly nameToken: BashToken;
   readonly argv: readonly BashToken[];
+  /**
+   * Variable names from command-scoped assignment prefixes
+   * (`PATH=./bin cmd` → ["PATH"]). The classifier escalates when one of
+   * these can change how the command name itself resolves or what code
+   * it loads (PATH, LD_*, ...) — the inner name is then untrustworthy.
+   */
+  readonly envAssignments?: readonly string[];
 }
 
 export interface ParsedBashSegment {
@@ -39,6 +46,12 @@ export interface ParsedBashSegment {
   readonly commands: readonly ParsedBashCommand[];
   /** Whether this segment redirects output to a real file (not /dev/null). */
   readonly hasFileWriteRedirect?: boolean;
+  /**
+   * Literal redirect target paths (excluding /dev/null), when statically
+   * resolvable. Feeds external-write-target extraction; `> $OUT` and
+   * concatenations stay unextractable (documented fail-open).
+   */
+  readonly fileRedirectTargets?: readonly string[];
 }
 
 export interface ParsedBashScript {

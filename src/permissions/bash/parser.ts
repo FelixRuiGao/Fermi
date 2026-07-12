@@ -85,9 +85,52 @@ async function initializeBashParser(): Promise<Parser> {
   return parser;
 }
 
+/**
+ * parse() with a hard time budget: a pathological input aborts inside
+ * the parser (returning null → unsupported → write_potent) instead of
+ * blocking the main thread until a post-hoc elapsed check notices.
+ * Uses the 0.25 progressCallback cancellation API (returning true
+ * cancels; setTimeoutMicros is deprecated and broken under Bun's
+ * BigInt coercion).
+ */
+function parseWithBudget(parser: Parser, command: string, timeoutMs: number) {
+  const deadline = performance.now() + timeoutMs;
+  return parser.parse(command, null, {
+    progressCallback: () => (performance.now() > deadline) as unknown as void,
+  });
+}
+
 export async function getParser(): Promise<Parser> {
   if (!bashParserInit) bashParserInit = initializeBashParser();
-  return bashParserInit;
+  const parser = await bashParserInit;
+  loadedBashParser = parser;
+  return parser;
+}
+
+// Set once getParser() has resolved; enables the synchronous re-parse
+// used by wrapper recursion (`bash -c '<literal>'`). Callers that reach
+// it always run after classifyToolAsync awaited the parser load.
+let loadedBashParser: Parser | null = null;
+
+/**
+ * Synchronous bash parse for already-loaded parsers. Returns null when
+ * the parser has not finished loading — callers must treat that as
+ * unsupported (conservative), never wait.
+ */
+export function parseBashCommandSync(command: string): BashParseResult | null {
+  if (!loadedBashParser) return null;
+  const tree = parseWithBudget(loadedBashParser, command, DEFAULT_TIMEOUT_MS);
+  if (tree === null) {
+    return unsupported("parse_error", "Shell parsing failed and requires manual approval.");
+  }
+  if (tree.rootNode.hasError) {
+    return unsupported("parse_error", "Shell parsing failed and requires manual approval.");
+  }
+  const segments: ParsedBashSegment[] = [];
+  const state = { connectorBefore: null as BashConnector | null };
+  const walked = walkNode(tree.rootNode, state, segments);
+  if (walked !== undefined) return walked;
+  return { kind: "ok", segments };
 }
 
 // PowerShell parser — lazy-loaded only when shellKind is pwsh/powershell,
@@ -115,14 +158,10 @@ export async function parseBashCommand(
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<BashParseResult> {
   const parser = await getParser();
-  const startedAt = performance.now();
-  const tree = parser.parse(command);
+  const tree = parseWithBudget(parser, command, timeoutMs);
   if (tree === null) {
-    return unsupported("parse_error", "Shell parsing failed and requires manual approval.");
-  }
-  const elapsedMs = performance.now() - startedAt;
-  if (elapsedMs > timeoutMs) {
-    return unsupported("timeout", "Shell parsing took too long and requires manual approval.");
+    // Budget-cancelled or parse failure — both land on the conservative path.
+    return unsupported("timeout", "Shell parsing failed or took too long; manual approval required.");
   }
   if (tree.rootNode.hasError) {
     return unsupported("parse_error", "Shell parsing failed and requires manual approval.");
@@ -249,6 +288,7 @@ function handleRedirectedStatement(
 ): void | UnsupportedBashScript {
   let innerNode: TreeNode | null = null;
   let hasFileWrite = false;
+  const redirectTargets: string[] = [];
 
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
@@ -264,6 +304,7 @@ function handleRedirectedStatement(
       const redirectTarget = getRedirectTarget(child);
       if (redirectTarget && redirectTarget !== "/dev/null") {
         hasFileWrite = true;
+        redirectTargets.push(redirectTarget);
       }
     }
   }
@@ -281,7 +322,11 @@ function handleRedirectedStatement(
     if (result) return result;
     if (hasFileWrite && segments.length > startIdx) {
       const last = segments[segments.length - 1]!;
-      segments[segments.length - 1] = { ...last, hasFileWriteRedirect: true };
+      segments[segments.length - 1] = {
+        ...last,
+        hasFileWriteRedirect: true,
+        fileRedirectTargets: redirectTargets.length > 0 ? redirectTargets : undefined,
+      };
     }
     return;
   }
@@ -307,6 +352,7 @@ function handleRedirectedStatement(
     connectorBefore: state.connectorBefore,
     commands,
     hasFileWriteRedirect: hasFileWrite || undefined,
+    fileRedirectTargets: hasFileWrite && redirectTargets.length > 0 ? redirectTargets : undefined,
   });
   state.connectorBefore = null;
 }
@@ -330,10 +376,17 @@ function getRedirectTarget(fileRedirectNode: TreeNode): string | null {
 function tokenizeCommandNode(node: TreeNode): ParsedBashCommand | UnsupportedBashScript {
   const tokens: BashToken[] = [];
   let nameToken: BashToken | null = null;
+  const envAssignments: string[] = [];
 
   for (const child of namedChildren(node)) {
-    // VAR=val prefix before a command — skip, classify the real command
-    if (child.type === "variable_assignment") continue;
+    // VAR=val prefix before a command — record the variable name (the
+    // classifier escalates on resolution-affecting ones), classify the
+    // real command.
+    if (child.type === "variable_assignment") {
+      const varName = child.text.split("=", 1)[0]?.trim();
+      if (varName) envAssignments.push(varName);
+      continue;
+    }
 
     const forbidden = findForbiddenNode(child);
     if (forbidden) return forbidden;
@@ -350,7 +403,13 @@ function tokenizeCommandNode(node: TreeNode): ParsedBashCommand | UnsupportedBas
     return unsupported("unsupported_node", "Shell command is missing a command name.", node);
   }
 
-  return { text: node.text, name: nameToken.value, nameToken, argv: tokens };
+  return {
+    text: node.text,
+    name: nameToken.value,
+    nameToken,
+    argv: tokens,
+    envAssignments: envAssignments.length > 0 ? envAssignments : undefined,
+  };
 }
 
 function tokenizeNode(node: TreeNode): BashToken {
@@ -502,14 +561,9 @@ export async function parsePowerShellCommand(
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<BashParseResult> {
   const parser = await getPSParser();
-  const startedAt = performance.now();
-  const tree = parser.parse(command);
+  const tree = parseWithBudget(parser, command, timeoutMs);
   if (tree === null) {
-    return unsupported("parse_error", "PowerShell parsing failed and requires manual approval.");
-  }
-  const elapsedMs = performance.now() - startedAt;
-  if (elapsedMs > timeoutMs) {
-    return unsupported("timeout", "PowerShell parsing took too long and requires manual approval.");
+    return unsupported("timeout", "PowerShell parsing failed or took too long; manual approval required.");
   }
   if (tree.rootNode.hasError) {
     return unsupported("parse_error", "PowerShell parsing failed and requires manual approval.");

@@ -1,6 +1,7 @@
 import {
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -87,12 +88,44 @@ describe("path security integration", () => {
         expect(result.content).toContain("project root boundary");
       }
 
+      // Approved prefix (canonical, from a write-capable rule) → allowed.
+      // Rules store canonical prefixes (advisor canonicalizes at ask
+      // time), so the test mirrors that with realpath.
+      const canonicalExternal = realpathSync(externalRoot).replace(/\\/g, "/") + "/";
       const allowedWrite = await executeTool(
         "write_file",
         { path: join(externalRoot, "new.txt"), content: "x" },
-        { projectRoot, externalPathAllowlist: [externalRoot] },
+        {
+          projectRoot,
+          getExternalWritePolicy: () => ({
+            allowAllExternal: false,
+            prefixes: [canonicalExternal],
+          }),
+        },
       );
       expect(allowedWrite.content).toContain("OK: Wrote");
+
+      // A read-only policy must NOT satisfy writes (accessKind split).
+      const stillDenied = await executeTool(
+        "write_file",
+        { path: join(externalRoot, "new2.txt"), content: "x" },
+        {
+          projectRoot,
+          getExternalWritePolicy: () => ({ allowAllExternal: false, prefixes: [] }),
+        },
+      );
+      expect(stillDenied.content).toContain("project root boundary");
+
+      // yolo: allowAllExternal writes anywhere without a magic "/" root.
+      const yoloWrite = await executeTool(
+        "write_file",
+        { path: join(externalRoot, "new3.txt"), content: "x" },
+        {
+          projectRoot,
+          getExternalWritePolicy: () => ({ allowAllExternal: true, prefixes: [] }),
+        },
+      );
+      expect(yoloWrite.content).toContain("OK: Wrote");
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
       rmSync(externalRoot, { recursive: true, force: true });

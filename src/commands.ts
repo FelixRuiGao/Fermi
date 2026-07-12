@@ -2510,6 +2510,8 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/agents", description: "Toggle agents panel", handler: cmdAgents });
   registry.register({ name: "/todos", description: "Toggle todo panel", handler: cmdTodos });
   registry.register({ name: "/permission", description: "Set permission mode", handler: cmdPermission });
+  registry.register({ name: "/permissions", description: "Manage permission rules (list / revoke / add deny)", handler: cmdPermissions, options: permissionsRulesOptions, pickerTitle: "Permission Rules" });
+  registry.register({ name: "/trust", description: "Review workspace-shipped executable config (MCP / hooks / allow rules)", handler: cmdTrust });
   registry.register({ name: "/rewind", description: "Rewind to a previous turn", handler: cmdRewind, aliases: ["/undo"] });
   registry.register({ name: "/hooks", description: "Manage registered hooks", handler: cmdHooks, options: hooksOptions, pickerTitle: "Hooks" });
   registry.register({ name: "/copy", description: "Copy the agent's most recent text response", handler: cmdCopy });
@@ -3108,6 +3110,203 @@ function persistPermissionMode(ctx: CommandContext): void {
 }
 
 // ------------------------------------------------------------------
+// /permissions — manage persisted permission rules (list / revoke / deny)
+// ------------------------------------------------------------------
+
+function describePermissionRule(rule: Record<string, any>): string {
+  if (rule.type === "external_path") {
+    return `[${rule.scope}] allow ${rule.accessKind} from ${rule.pathPrefix}`;
+  }
+  const pattern = rule.pattern ? ` "${rule.pattern}"` : "";
+  const ceiling = rule.action === "allow" ? `  (≤ ${rule.maxClass ?? "write_reversible"})` : "";
+  return `[${rule.scope}] ${rule.action} ${rule.tool}${pattern}${ceiling}`;
+}
+
+function permissionsRulesOptions(ctx: CommandOptionsContext): CommandOption[] {
+  const options: CommandOption[] = [];
+  const store = ctx.session?.permissionRuleStore;
+  const rules: Array<Record<string, any>> =
+    typeof store?.getAllRules === "function" ? store.getAllRules() : [];
+  for (const rule of rules) {
+    const revocable = rule.scope !== "workspace";
+    options.push({
+      label: describePermissionRule(rule),
+      value: revocable ? `revoke:${rule.id}` : "workspace-readonly",
+      detail: revocable ? "revoke" : "read-only file",
+    });
+  }
+  const errors: Array<{ sourcePath: string; index: number; reason: string }> =
+    typeof store?.getLoadErrors === "function" ? store.getLoadErrors() : [];
+  for (const err of errors) {
+    options.push({
+      label: `⚠ invalid rule in ${basename(err.sourcePath)}#${err.index}: ${err.reason}`,
+      value: "noop",
+    });
+  }
+  options.push({
+    label: "Add deny rule…",
+    value: "deny",
+    customInput: true,
+    inputLabel: "tool [pattern]",
+    inputPlaceholder: "e.g. \"bash git push\" or \"web_fetch\"",
+  });
+  if (rules.length === 0 && errors.length === 0) {
+    options.unshift({ label: "No permission rules recorded.", value: "noop" });
+  }
+  return options;
+}
+
+function addDenyRuleFromInput(ctx: CommandContext, input: string): string {
+  const parts = input.trim().split(/\s+/);
+  const tool = parts[0];
+  if (!tool) return "Usage: <tool> [pattern] — e.g. \"bash git push\" or \"web_fetch\"";
+  const pattern = parts.slice(1).join(" ");
+  const store = ctx.session?.permissionRuleStore;
+  if (!store || typeof store.addRule !== "function") return "Permission rule store unavailable.";
+  // Deny rules default to the widest scope the session can persist —
+  // they are protective, and a session-only deny silently expiring is
+  // the surprising outcome.
+  const scope = "global";
+  const rule = store.addRule({
+    type: "tool_pattern",
+    action: "deny",
+    tool,
+    ...(pattern ? { pattern } : {}),
+    scope,
+  });
+  return `Deny rule added (${scope}): ${describePermissionRule(rule)}`;
+}
+
+async function cmdPermissions(ctx: CommandContext, args: string): Promise<void> {
+  const session = ctx.session;
+  const store = session?.permissionRuleStore;
+  const hint = ctx.showHint ?? ctx.showMessage;
+  if (!store) {
+    ctx.showMessage("Permission rule store unavailable.");
+    return;
+  }
+
+  const trimmed = args.trim();
+  // Inline advanced usage: /permissions revoke <id> | /permissions deny <tool> [pattern]
+  if (trimmed) {
+    if (trimmed.startsWith("revoke ") || trimmed.startsWith("revoke:")) {
+      const id = trimmed.replace(/^revoke[ :]/, "").trim();
+      hint(store.revokeRule(id) ? `Rule ${id} revoked.` : `Rule ${id} not found (workspace rules are file-managed).`);
+      return;
+    }
+    if (trimmed.startsWith("deny ")) {
+      hint(addDenyRuleFromInput(ctx, trimmed.slice(5)));
+      return;
+    }
+    if (trimmed !== "list") {
+      ctx.showMessage("Usage: /permissions [list | revoke <id> | deny <tool> [pattern]]");
+      return;
+    }
+  }
+
+  if (!ctx.promptCommandPicker) {
+    const rules = store.getAllRules();
+    const lines = rules.length
+      ? rules.map((r: Record<string, any>) => `  ${r.id}  ${describePermissionRule(r)}`)
+      : ["  (no rules recorded)"];
+    const errors = store.getLoadErrors();
+    for (const err of errors) {
+      lines.push(`  ⚠ ${err.sourcePath}#${err.index}: ${err.reason}`);
+    }
+    ctx.showMessage(`Permission rules:\n${lines.join("\n")}`);
+    return;
+  }
+
+  for (;;) {
+    const picked = await ctx.promptCommandPicker(
+      permissionsRulesOptions({ session, store: ctx.store }),
+      { title: "Permission Rules" },
+    );
+    if (!picked) return;
+    if (picked.value === "noop") continue;
+    if (picked.value === "workspace-readonly") {
+      hint("Workspace rules live in .fermi/permissions.json — edit the file to change them.");
+      continue;
+    }
+    if (picked.value.startsWith("revoke:")) {
+      const id = picked.value.slice("revoke:".length);
+      hint(store.revokeRule(id) ? `Rule ${id} revoked.` : `Failed to revoke ${id}.`);
+      continue; // reopen with the updated list
+    }
+    if (picked.value === "deny") {
+      hint(addDenyRuleFromInput(ctx, picked.note ?? ""));
+      continue;
+    }
+    return;
+  }
+}
+
+// ------------------------------------------------------------------
+// /trust — review & decide on workspace-shipped executable config
+// ------------------------------------------------------------------
+
+function formatWorkspaceTrustSummary(trust: Record<string, any>): string {
+  const s = trust.summary ?? { mcpServers: [], hooks: [], allowRuleCount: 0 };
+  const lines: string[] = [`Workspace executable configuration — status: ${trust.status}`];
+  if (s.mcpServers.length) {
+    lines.push("  MCP servers:");
+    for (const m of s.mcpServers) lines.push(`    ${m.name}: ${m.detail}`);
+  }
+  if (s.hooks.length) {
+    lines.push("  Hooks:");
+    for (const h of s.hooks) lines.push(`    ${h.name}: ${h.detail}`);
+  }
+  if (s.allowRuleCount) {
+    lines.push(`  Allow rules in .fermi/permissions.json: ${s.allowRuleCount}`);
+  }
+  if (!s.mcpServers.length && !s.hooks.length && !s.allowRuleCount) {
+    lines.push("  (none — nothing to trust)");
+  }
+  return lines.join("\n");
+}
+
+async function cmdTrust(ctx: CommandContext, args: string): Promise<void> {
+  const session = ctx.session;
+  if (typeof session?.refreshWorkspaceTrust !== "function") {
+    ctx.showMessage("Workspace trust is not available in this session.");
+    return;
+  }
+  const trust = session.refreshWorkspaceTrust();
+
+  let action = args.trim().toLowerCase();
+  if (!action && ctx.promptCommandPicker) {
+    if (trust.status === "empty") {
+      ctx.showMessage(formatWorkspaceTrustSummary(trust));
+      return;
+    }
+    const picked = await ctx.promptCommandPicker(
+      [
+        { label: `Status: ${trust.status} — show details`, value: "details" },
+        { label: "Trust — load this workspace's MCP servers / hooks / allow rules", value: "trust" },
+        { label: "Deny — never load them (silences the notice)", value: "deny" },
+      ],
+      { title: "Workspace Trust" },
+    );
+    if (!picked) return;
+    action = picked.value;
+  }
+
+  if (action === "details" || !action) {
+    ctx.showMessage(formatWorkspaceTrustSummary(trust));
+    return;
+  }
+  if (action === "trust" || action === "deny") {
+    const report = await session.resolveWorkspaceTrust(action === "trust" ? "trusted" : "denied");
+    // Trusting also activates workspace hooks — re-wire the runtime.
+    const trusted = session.workspaceTrust?.status === "trusted" || session.workspaceTrust?.status === "empty";
+    reloadHooksIntoRuntime(session, { workspaceTrusted: trusted });
+    ctx.showMessage(report);
+    return;
+  }
+  ctx.showMessage("Usage: /trust [trust | deny | details]");
+}
+
+// ------------------------------------------------------------------
 // /rewind — rewind to a previous turn
 // ------------------------------------------------------------------
 
@@ -3357,6 +3556,12 @@ function hooksOptions(_ctx: CommandOptionsContext): CommandOption[] {
   return opts;
 }
 
+/** Whether workspace-scope hooks may load for this session (trust gate). */
+function sessionWorkspaceTrusted(session: any): boolean {
+  const t = typeof session?.refreshWorkspaceTrust === "function" ? session.refreshWorkspaceTrust() : undefined;
+  return t ? (t.status === "trusted" || t.status === "empty") : false;
+}
+
 async function cmdHooks(ctx: CommandContext, args: string): Promise<void> {
   const session = ctx.session;
   const hookRuntime = session.hookRuntime;
@@ -3379,7 +3584,7 @@ async function cmdHooks(ctx: CommandContext, args: string): Promise<void> {
   }
 
   if (action === "__reload__") {
-    const count = reloadHooksIntoRuntime(session);
+    const count = reloadHooksIntoRuntime(session, { workspaceTrusted: sessionWorkspaceTrusted(session) });
     hint(count >= 0 ? `Hooks reloaded: ${count} active` : "Failed to reload hooks.");
     return;
   }
@@ -3399,7 +3604,7 @@ async function cmdHooks(ctx: CommandContext, args: string): Promise<void> {
     if (op === "enable" || op === "disable") {
       const disabled = op === "disable";
       if (hook._sourcePath && setHookDisabled(hook._sourcePath, disabled)) {
-        reloadHooksIntoRuntime(session);
+        reloadHooksIntoRuntime(session, { workspaceTrusted: sessionWorkspaceTrusted(session) });
         hint(`${hookName}: ${disabled ? "disabled" : "enabled"}`);
       } else {
         hint(`Failed to ${op} "${hookName}" — check hook.json`);

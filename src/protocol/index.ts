@@ -33,7 +33,9 @@ export type ProtocolCapability =
   | "childMeta"
   | "modelCatalog"
   | "turnAttachments"
-  | "providerControl";
+  | "providerControl"
+  | "workspaceTrust"
+  | "permissionRules";
 
 export type PermissionMode = "read_only" | "reversible" | "yolo";
 
@@ -385,6 +387,49 @@ export interface HooksStatusPayload {
     readonly failClosed: boolean;
     /** Present on disk-backed listings (capability "hooksControl"). */
     readonly disabled?: boolean;
+  }[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Workspace trust + permission rules (capabilities "workspaceTrust",
+// "permissionRules")
+// ─────────────────────────────────────────────────────────────────────────
+
+/** session.getWorkspaceTrust / resolveWorkspaceTrust payload. */
+export interface WorkspaceTrustPayload {
+  readonly status: "trusted" | "untrusted" | "denied" | "empty";
+  readonly digest: string | null;
+  readonly summary: {
+    readonly mcpServers: readonly { readonly name: string; readonly detail: string }[];
+    readonly hooks: readonly { readonly name: string; readonly detail: string }[];
+    readonly allowRuleCount: number;
+  };
+}
+
+export type PermissionRuleScope = "session" | "workspace" | "project" | "global";
+
+/** One rule as listed by session.listPermissionRules. */
+export interface PermissionRulePayload {
+  readonly id: string;
+  readonly type: "tool_pattern" | "external_path";
+  readonly action: "allow" | "deny";
+  readonly scope: PermissionRuleScope;
+  readonly createdAt: number;
+  /** tool_pattern only */
+  readonly tool?: string;
+  readonly pattern?: string;
+  readonly maxClass?: string;
+  /** external_path only */
+  readonly accessKind?: "read" | "write_reversible";
+  readonly pathPrefix?: string;
+}
+
+export interface PermissionRulesPayload {
+  readonly rules: readonly PermissionRulePayload[];
+  readonly loadErrors: readonly {
+    readonly sourcePath: string;
+    readonly index: number;
+    readonly reason: string;
   }[];
 }
 

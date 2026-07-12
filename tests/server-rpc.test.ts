@@ -97,6 +97,10 @@ describe("protocol handshake", () => {
         "watchEvents",
         "childMeta",
         "modelCatalog",
+        "turnAttachments",
+        "providerControl",
+        "workspaceTrust",
+        "permissionRules",
       ]);
       expect(PROTOCOL_VERSION).toBe(1);
       expect(meta.capabilities).toEqual(PROTOCOL_CAPABILITIES);

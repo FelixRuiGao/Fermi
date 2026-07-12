@@ -47,14 +47,30 @@ export function setHookDisabled(sourcePath: string, disabled: boolean): boolean 
   }
 }
 
+/**
+ * Drop the workspace hook root unless the workspace is trusted —
+ * repo-shipped hooks spawn processes on session events and sit behind
+ * the workspace trust gate (security/workspace-trust.ts).
+ */
+export function filterHookRootsByTrust<T extends { scope: string }>(
+  roots: T[],
+  workspaceTrusted: boolean,
+): T[] {
+  return workspaceTrusted ? roots : roots.filter((r) => r.scope !== "workspace");
+}
+
 /** Reload hooks from disk into a session's HookRuntime. Returns active count, -1 on failure. */
-export function reloadHooksIntoRuntime(session: {
-  hookRuntime?: { setHooks(hooks: HookManifest[]): void } | null;
-}): number {
+export function reloadHooksIntoRuntime(
+  session: {
+    hookRuntime?: { setHooks(hooks: HookManifest[]): void } | null;
+  },
+  opts?: { workspaceTrusted?: boolean },
+): number {
   try {
     const { loadHooksMulti } = require("./index.js") as typeof import("./index.js");
     const paths = resolveAssetPaths();
-    const hooks = loadHooksMulti(paths.hookRoots);
+    const roots = filterHookRootsByTrust(paths.hookRoots, opts?.workspaceTrusted === true);
+    const hooks = loadHooksMulti(roots);
     session.hookRuntime?.setHooks(hooks);
     return hooks.length;
   } catch {

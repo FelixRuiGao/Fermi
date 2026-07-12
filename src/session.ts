@@ -103,7 +103,13 @@ import {
   type GateAdvisor,
 } from "./tool-runtime.js";
 import { BackgroundShellManager, type BackgroundShellSnapshot, type BackgroundShellDetail } from "./background-shell-manager.js";
-import { PermissionAdvisor, PermissionRuleStore, type PermissionMode, type PermissionRule, type ApprovalOffer } from "./permissions/index.js";
+import { PermissionAdvisor, PermissionRuleStore, buildPersistentWarning, type PermissionMode, type PermissionRule, type ApprovalOffer, type PermissionClass } from "./permissions/index.js";
+import {
+  evaluateWorkspaceTrust,
+  recordWorkspaceTrustDecision,
+  workspaceExecutablesAllowed,
+  type WorkspaceTrustState,
+} from "./security/workspace-trust.js";
 import { HookRuntime, type HookEvent, type HookPayload } from "./hooks/index.js";
 import type { HookManifest } from "./hooks/types.js";
 import { assembleFullSystemPrompt, readAgentsMemory, renderPromptVariables } from "./prompt-assembler.js";
@@ -396,6 +402,10 @@ export class Session {
   /** Permission advisor — classifies tools and enforces permission mode. */
   private _permissionAdvisor!: PermissionAdvisor;
   private _permissionRuleStore!: PermissionRuleStore;
+  /** Live workspace trust state (repo-shipped executable config gate). */
+  private _workspaceTrust!: WorkspaceTrustState;
+  /** Subscribers to permission-mode changes (server relay + TUI status). */
+  private _permissionModeListeners = new Set<(mode: PermissionMode) => void>();
 
   /** Hook runtime — fires events and evaluates hook commands. */
   readonly hookRuntime = new HookRuntime();
@@ -704,11 +714,41 @@ export class Session {
     return this._permissionAdvisor.sessionMode;
   }
 
+  /** Thin delegate — every assignment routes through setPermissionMode. */
   set permissionMode(mode: PermissionMode) {
+    this.setPermissionMode(mode);
+  }
+
+  /**
+   * Single permission-mode state transition. Every caller (TUI cycle,
+   * /permission command, server RPC, approval mode_upgrade) lands here,
+   * so subscribers — the server's `permission.changed` relay included —
+   * see every change regardless of origin. The advisor reads the mode
+   * live per evaluation, so a mid-turn switch applies to the very next
+   * tool call. Persistence stays with the callers (session-only by
+   * default).
+   */
+  setPermissionMode(
+    mode: PermissionMode,
+    opts?: { source?: "user" | "approval" | "rpc" | "startup" },
+  ): void {
+    const changed = this._permissionAdvisor.sessionMode !== mode;
     this._permissionAdvisor.sessionMode = mode;
     for (const handle of this._childSessions.values()) {
-      if (handle.session) handle.session.permissionMode = mode;
+      if (handle.session) handle.session.setPermissionMode(mode, opts);
     }
+    if (changed) {
+      for (const listener of this._permissionModeListeners) {
+        try { listener(mode); } catch { /* subscriber errors don't break the transition */ }
+      }
+    }
+  }
+
+  subscribePermissionMode(listener: (mode: PermissionMode) => void): () => void {
+    this._permissionModeListeners.add(listener);
+    return () => {
+      this._permissionModeListeners.delete(listener);
+    };
   }
 
   get permissionRuleStore(): PermissionRuleStore {
@@ -717,6 +757,52 @@ export class Session {
 
   get permissionAdvisor(): PermissionAdvisor {
     return this._permissionAdvisor;
+  }
+
+  // -- Workspace trust ------------------------------------------------
+
+  get workspaceTrust(): WorkspaceTrustState {
+    return this._workspaceTrust;
+  }
+
+  /** Re-evaluate workspace trust from disk (content may have changed). */
+  refreshWorkspaceTrust(): WorkspaceTrustState {
+    this._workspaceTrust = evaluateWorkspaceTrust(this._projectRoot, this._store?.projectDir);
+    return this._workspaceTrust;
+  }
+
+  /**
+   * Record the user's trust decision for the CURRENT workspace content
+   * and apply it: rules go live via the store's predicate immediately;
+   * MCP servers are (re)loaded here; hooks are re-wired by the caller
+   * (command/RPC layer owns hook loading). Returns a human-readable
+   * summary.
+   */
+  async resolveWorkspaceTrust(decision: "trusted" | "denied"): Promise<string> {
+    const state = this.refreshWorkspaceTrust();
+    if (state.status === "empty") {
+      return "Workspace has no executable configuration — nothing to trust.";
+    }
+    const projectStoreDir = this._store?.projectDir;
+    if (!projectStoreDir) {
+      return "Cannot record a trust decision: no project store is attached to this session.";
+    }
+    recordWorkspaceTrustDecision(projectStoreDir, state.digest!, decision);
+    this.refreshWorkspaceTrust();
+    if (decision === "denied") {
+      return "Workspace executable configuration marked as denied — it will not load.";
+    }
+    // Trusted: workspace MCP servers may now connect.
+    const mcpReport = await this.reloadMcpFromCommand("the user trusted this workspace's configuration");
+    return `Workspace trusted. ${mcpReport}`;
+  }
+
+  /** MCP tool risk lookup for the advisor (config-declared sensitive_tools). */
+  private _mcpToolRisk(toolName: string): "normal" | "sensitive" {
+    const mgr = this._mcpManager as unknown as {
+      isSensitiveTool?: (namespacedName: string) => boolean;
+    } | undefined;
+    return mgr?.isSensitiveTool?.(toolName) ? "sensitive" : "normal";
   }
 
   get lifetimeToolCallCount(): number {
@@ -835,6 +921,13 @@ export class Session {
     promptCacheKey?: string;
     /** Permission mode for this session. Default: "reversible". */
     permissionMode?: PermissionMode;
+    /**
+     * Hard permission ceiling for this session (agent templates declare
+     * it — e.g. reviewer agents cap at read_only). The effective mode is
+     * min(sessionMode, ceiling); parent mode changes still cascade but
+     * never lift the ceiling.
+     */
+    permissionCeiling?: PermissionMode;
     /** Shared rule store for child sessions. If omitted, a new store is created. */
     permissionRuleStore?: PermissionRuleStore;
     /** Pre-loaded hook manifests. Each session keeps its own runtime; hooks are copied in. */
@@ -899,16 +992,26 @@ export class Session {
     });
     this._subAgentFactory = this._buildSubAgentFactory();
 
-    // Permission system
+    // Permission system. Workspace trust is evaluated up front so the
+    // rule store's live predicate has an answer before the first tool
+    // call; /trust and reloads re-evaluate via refreshWorkspaceTrust().
+    this._workspaceTrust = evaluateWorkspaceTrust(this._projectRoot, this._store?.projectDir);
     this._permissionRuleStore = opts.permissionRuleStore ?? new PermissionRuleStore({
-      projectStoreDir: this._store?.projectDir ?? this._projectRoot,
+      // No store → project-scoped persistence unavailable (offers omit
+      // that scope). The old fallback wrote permissions.json into the
+      // repo root — a footgun, removed.
+      projectStoreDir: this._store?.projectDir,
       workspaceRoot: this._projectRoot,
+      isWorkspaceTrusted: () => workspaceExecutablesAllowed(this._workspaceTrust),
     });
     this._permissionAdvisor = new PermissionAdvisor({
       ruleStore: this._permissionRuleStore,
       sessionMode: opts.permissionMode ?? "reversible",
+      agentCeiling: opts.permissionCeiling,
       projectRoot: this._projectRoot,
       shellKind: shell.kind,
+      getSessionArtifactsDir: () => this._getArtifactsDirIfAvailable() ?? null,
+      getMcpToolRisk: (toolName) => this._mcpToolRisk(toolName),
     });
     this.toolGate.addAdvisor(this._permissionAdvisor);
 
@@ -1336,6 +1439,21 @@ export class Session {
       sender: source,
       content,
       timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Non-waking system notice: queued into the inbox and delivered when
+   * something else wakes the agent. Used by bootstrap for the
+   * workspace-trust heads-up — it must not start a turn by itself.
+   */
+  queueSystemNotice(content: string): void {
+    this._deliverMessage({
+      type: "system_notice",
+      sender: "system",
+      content,
+      timestamp: Date.now(),
+      wake: false,
     });
   }
 
@@ -2532,10 +2650,13 @@ export class Session {
       onFileWrite: undefined,
       isPlanFile: (filePath) => this._isPlanFilePath(filePath),
       onPlanFileWrite: () => this._refreshPlanState(),
-      getApprovedExternalPrefixes: () => {
-        if (this._permissionAdvisor.sessionMode === "yolo") return ["/"];
-        return this._permissionRuleStore.getApprovedExternalPrefixes();
-      },
+      // Live per-call policy: yolo is an explicit capability (not a
+      // magic "/" root — that broke Windows cross-drive targets), and
+      // the prefix list only carries write-capable rules.
+      getExternalWritePolicy: () => ({
+        allowAllExternal: this._permissionAdvisor.sessionMode === "yolo",
+        prefixes: this._permissionRuleStore.getApprovedExternalPrefixes("write_reversible"),
+      }),
       adoptShell: (req) => {
         const entry = this._shellManager.adoptRunningProcess(req);
         return { id: entry.id, logPath: entry.logPath };
@@ -2823,14 +2944,48 @@ export class Session {
    * reconfigures the MCPClientManager, and notifies the TUI.
    * Returns a human-readable summary of what changed.
    */
-  async reloadMcp(options?: { notice?: boolean; reason?: string }): Promise<string> {
+  async reloadMcp(options?: {
+    notice?: boolean;
+    reason?: string;
+    /**
+     * Whether NEW or command-changed stdio/remote servers may start.
+     * User-initiated paths (/mcp, /trust) pass true; the model-invoked
+     * `reload` tool leaves it false so "write settings.json + reload"
+     * cannot silently spawn processes — the report tells the user to
+     * connect explicitly.
+     */
+    allowNewServers?: boolean;
+  }): Promise<string> {
     const before = this._snapshotMcpAvailability();
+    // Workspace trust gates repo-shipped MCP servers at every reload,
+    // not just at bootstrap: the digest may have changed on disk.
+    const trust = this.refreshWorkspaceTrust();
     const globalSettings = loadGlobalSettings();
-    const localSettings = loadLocalSettings(this._projectRoot);
+    const localSettings = loadLocalSettings(this._projectRoot, this._store?.projectDir, {
+      includeWorkspaceMcpServers: workspaceExecutablesAllowed(trust),
+    });
     const effective = Object.keys(localSettings).length > 0
       ? mergeSettings(globalSettings, localSettings)
       : globalSettings;
-    const { mcpServers } = settingsToConfigInputs(effective);
+    let { mcpServers } = settingsToConfigInputs(effective);
+
+    // Withhold new/changed executable configs from non-user-initiated
+    // reloads: keep the old config for changed servers, drop additions.
+    let withheld: string[] = [];
+    if (options?.allowNewServers !== true && this._mcpManager &&
+        typeof this._mcpManager.previewReconfigure === "function") {
+      const preview = this._mcpManager.previewReconfigure(mcpServers);
+      if (preview.added.length > 0 || preview.changed.length > 0) {
+        withheld = [...preview.added, ...preview.changed];
+        const current = new Map(this._mcpManager.getCurrentConfigs().map((c) => [c.name, c]));
+        mcpServers = mcpServers
+          .filter((c) => !preview.added.includes(c.name))
+          .map((c) => preview.changed.includes(c.name) ? current.get(c.name)! : c);
+      }
+    }
+    const withheldNote = withheld.length > 0
+      ? ` — skipped ${withheld.length} new/changed server(s) pending user approval (${withheld.join(", ")}); run /mcp to connect`
+      : "";
 
     if (this._mcpManager) {
       const mcpResult = await this._mcpManager.reconfigure(mcpServers);
@@ -2863,10 +3018,17 @@ export class Session {
       }
 
       return `MCP: ${allTools.length} tool(s)` +
-        (changes.length ? ` (${changes.join("; ")})` : " (no changes)");
+        (changes.length ? ` (${changes.join("; ")})` : " (no changes)") +
+        withheldNote;
     }
 
     if (mcpServers.length > 0) {
+      // No manager yet — every server would be a fresh process spawn.
+      // Same withholding rule as above for non-user-initiated reloads.
+      if (options?.allowNewServers !== true) {
+        return `MCP: ${mcpServers.length} configured server(s) not started pending user approval ` +
+          `(${mcpServers.map((c) => c.name).join(", ")}); run /mcp to connect`;
+      }
       const { MCPClientManager } = await import("./mcp-client.js");
       this._mcpManager = new MCPClientManager(mcpServers) as unknown as MCPClientManager;
       this._mcpConnected = false;
@@ -2924,7 +3086,8 @@ export class Session {
   // TOOL (_execReload) already runs inside the turn lock, and _withTurnLock is
   // not reentrant, so re-locking there would deadlock.
   async reloadMcpFromCommand(reason: string): Promise<string> {
-    return this._withTurnLock(() => this.reloadMcp({ reason }));
+    // User-initiated: new/changed servers may start.
+    return this._withTurnLock(() => this.reloadMcp({ reason, allowNewServers: true }));
   }
 
   async reconnectMcpServerFromCommand(serverName: string): Promise<boolean> {
@@ -4053,19 +4216,6 @@ export class Session {
     });
   }
 
-  /** Returns true if the path is strictly inside the session artifacts dir. */
-  private _isInsideArtifactsDir(rawPath: unknown): boolean {
-    if (typeof rawPath !== "string" || !rawPath) return false;
-    const artifactsDir = this._getArtifactsDirIfAvailable();
-    if (!artifactsDir) return false;
-    const absPath = isAbsolute(rawPath) ? rawPath : resolve(this._projectRoot, rawPath);
-    const rel = relative(artifactsDir, absPath);
-    if (!rel) return false; // exact match means writing the artifacts dir itself
-    if (rel.startsWith("..")) return false;
-    if (isAbsolute(rel)) return false;
-    return true;
-  }
-
   private _beforeToolExecute = async (
     ctx: ToolPreflightContext,
   ): Promise<ToolPreflightDecision | void> => {
@@ -4079,62 +4229,15 @@ export class Session {
       }
     }
 
-    // 0b. Artifacts-dir bypass: file tools (read/write/edit/list/glob/grep)
-    //    operating inside session artifacts/ don't need approval (agent-owned
-    //    scratch space). Bash is excluded — its cwd-tracking is a separate gate.
-    const ARTIFACTS_BYPASS_TOOLS = new Set([
-      "read_file", "write_file", "edit_file", "list_dir", "glob", "grep",
-    ]);
-    const skipPermissionGate =
-      ARTIFACTS_BYPASS_TOOLS.has(ctx.toolName) &&
-      this._isInsideArtifactsDir((ctx.toolArgs as Record<string, unknown>)["path"]);
-
-    // 1. Permission gate check (skip for artifacts-dir file ops)
-    if (!skipPermissionGate) {
-      const decision = await this.toolGate.evaluate(ctx);
-      switch (decision.kind) {
-        case "deny":
-          return { kind: "deny", message: decision.message };
-        case "ask": {
-          const options = decision.offers.map((o) => o.label);
-          options.push("Deny");
-
-          const BROAD_RULE_COMMANDS = new Set(["cp", "mv", "rm", "chmod", "chown"]);
-          const hasPersistent = decision.offers.some(o => o.type === "tool_pattern");
-          const pattern = decision.assessment.canonicalPattern ?? "";
-          const persistentWarning = hasPersistent && BROAD_RULE_COMMANDS.has(pattern)
-            ? `Persistent rules below will apply to ALL "${pattern}" commands, which may cause DANGER.`
-            : undefined;
-
-          const ask: ApprovalRequest = {
-            id: `approval-${randomUUID().slice(0, 8)}`,
-            kind: "approval",
-            createdAt: new Date().toISOString(),
-            source: { agentId: ctx.agentName },
-            summary: decision.question,
-            roundIndex: undefined,
-            payload: {
-              toolCallId: ctx.toolCallId,
-              toolName: ctx.toolName,
-              toolSummary: ctx.summary,
-              permissionClass: decision.assessment.permissionClass,
-              offers: decision.offers.map((o) => ({
-                type: o.type,
-                label: o.label,
-                scope: o.scope,
-                rule: o.rule as Record<string, unknown> | undefined,
-              })),
-              persistentWarning,
-            },
-            options,
-          };
-          return { kind: "ask", ask };
-        }
-      }
-    }
-
-    // 2. PreToolUse hooks (run after permission gate allows)
-    if (this.hookRuntime.hooks.length > 0) {
+    // 1. PreToolUse hooks — BEFORE the permission gate, so the gate
+    //    evaluates the final (post-transform) arguments and an approval
+    //    covers exactly what will execute. Runs once per tool call: the
+    //    flag persists in the tool_call meta so approval resume
+    //    (including after a restore) never re-transforms and the grant
+    //    digest stays valid. A gate-denied call has thus already run its
+    //    PreToolUse hooks — same ordering as observed elsewhere; see
+    //    hooks.md.
+    if (this.hookRuntime.hooks.length > 0 && !this._preflightHooksAlreadyRan(ctx.toolCallId)) {
       const hookPayload: HookPayload = {
         event: "PreToolUse",
         timestamp: Date.now(),
@@ -4143,17 +4246,76 @@ export class Session {
         toolCallId: ctx.toolCallId,
       };
       const hookResult = await this.hookRuntime.evaluate("PreToolUse", hookPayload);
+      this._markPreflightHooksRan(ctx.toolCallId);
       if (hookResult.decision === "deny") {
         return { kind: "deny", message: hookResult.denyReason ?? "Denied by hook" };
       }
-      // Apply updatedInput from hooks (merge into tool args)
+      // Apply updatedInput from hooks (merge into tool args). This is
+      // the LAST mutation point — from here to the executor the
+      // arguments are stable.
       if (hookResult.updatedInput) {
         Object.assign(ctx.toolArgs, hookResult.updatedInput);
       }
     }
 
+    // 2. Permission gate. The advisor internally handles the
+    //    artifacts-dir bypass and one-shot grant redemption, so this
+    //    runs unconditionally — nothing skips the gate anymore.
+    const decision = await this.toolGate.evaluate(ctx);
+    switch (decision.kind) {
+      case "deny":
+        return { kind: "deny", message: decision.message };
+      case "ask": {
+        const options = decision.offers.map((o) => o.label);
+        options.push("Deny");
+
+        const persistentWarning = buildPersistentWarning(decision.assessment, decision.offers);
+
+        const ask: ApprovalRequest = {
+          id: `approval-${randomUUID().slice(0, 8)}`,
+          kind: "approval",
+          createdAt: new Date().toISOString(),
+          source: { agentId: ctx.agentName },
+          summary: decision.question,
+          roundIndex: undefined,
+          payload: {
+            toolCallId: ctx.toolCallId,
+            toolName: ctx.toolName,
+            toolSummary: ctx.summary,
+            permissionClass: decision.assessment.permissionClass,
+            offers: decision.offers.map((o) => ({
+              type: o.type,
+              label: o.label,
+              scope: o.scope,
+              rule: o.rule as Record<string, unknown> | undefined,
+            })),
+            persistentWarning,
+          },
+          options,
+        };
+        return { kind: "ask", ask };
+      }
+    }
+
     return undefined;
   };
+
+  /** In-memory + persisted (tool_call meta) once-per-call hook tracking. */
+  private _preflightHooksRan = new Set<string>();
+
+  private _preflightHooksAlreadyRan(toolCallId: string): boolean {
+    if (this._preflightHooksRan.has(toolCallId)) return true;
+    const entry = this._logStore.findToolCallByCallId(toolCallId);
+    return entry ? (entry.meta as Record<string, unknown>)["preflightHooksRan"] === true : false;
+  }
+
+  private _markPreflightHooksRan(toolCallId: string): void {
+    this._preflightHooksRan.add(toolCallId);
+    const entry = this._logStore.findToolCallByCallId(toolCallId);
+    if (entry) {
+      (entry.meta as Record<string, unknown>)["preflightHooksRan"] = true;
+    }
+  }
 
 
   // ==================================================================
@@ -4365,62 +4527,41 @@ export class Session {
         summary: `${next.agentName} is calling ${next.toolName}`,
       };
 
+      // Single path: everything (approval resume included) goes through
+      // _beforeToolExecute. Hooks already ran during the original
+      // preflight (tracked via tool_call meta) and are skipped; the
+      // advisor redeems the one-shot grant internally, so an approved
+      // call passes the gate with its arguments verified unchanged.
       let denyMessage: string | undefined;
-      let allowOnce = false;
-      // Skip the permission gate if this tool_call was already approved
-      // (allow-once grant was set in resolveApprovalAsk before resume).
-      allowOnce = this._permissionAdvisor["_allowOnceGrants"].has(next.toolCallId);
-      if (!allowOnce) {
-        const decision = await this._beforeToolExecute(ctx);
-        if (signal?.aborted) {
-          this._updateToolCallExecState(next.toolCallId, "not_started");
-          return { kind: "interrupted" };
-        }
-        if (decision && decision.kind === "ask") {
-          const ask = decision.ask;
-          ask.turnIndex = next.turnIndex;
-          const askContextId = this._findToolCallContextId(next.toolCallId, next.roundIndex);
-          this._updateToolCallExecState(next.toolCallId, "not_started");
-          this._activeAsk = ask;
-          this._agentState = "waiting";
-          this._emitAskRequestedProgress(this._activeAsk);
-          this._appendEntry(createAskRequest(
-            this._nextLogId("ask_request"),
-            next.turnIndex,
-            this._activeAsk.payload,
-            this._activeAsk.id,
-            this._activeAsk.kind,
-            next.toolCallId,
-            next.roundIndex,
-            askContextId,
-          ), false);
-          this._pendingTurnState = { stage: "activation" };
-          this.onSaveRequest?.();
-          return { kind: "suspended", ask, toolCallId: next.toolCallId };
-        }
-        if (decision && decision.kind === "deny") {
-          denyMessage = decision.message;
-        }
-      } else {
-        // Gate already passed; still run hooks
-        if (this.hookRuntime.hooks.length > 0) {
-          const hookResult = await this.hookRuntime.evaluate("PreToolUse", {
-            event: "PreToolUse",
-            timestamp: Date.now(),
-            toolName: next.toolName,
-            toolArgs: next.toolArgs,
-            toolCallId: next.toolCallId,
-          });
-          if (signal?.aborted) {
-            this._updateToolCallExecState(next.toolCallId, "not_started");
-            return { kind: "interrupted" };
-          }
-          if (hookResult.decision === "deny") {
-            denyMessage = hookResult.denyReason ?? "Denied by hook";
-          } else if (hookResult.updatedInput) {
-            Object.assign(next.toolArgs, hookResult.updatedInput);
-          }
-        }
+      const decision = await this._beforeToolExecute(ctx);
+      if (signal?.aborted) {
+        this._updateToolCallExecState(next.toolCallId, "not_started");
+        return { kind: "interrupted" };
+      }
+      if (decision && decision.kind === "ask") {
+        const ask = decision.ask;
+        ask.turnIndex = next.turnIndex;
+        const askContextId = this._findToolCallContextId(next.toolCallId, next.roundIndex);
+        this._updateToolCallExecState(next.toolCallId, "not_started");
+        this._activeAsk = ask;
+        this._agentState = "waiting";
+        this._emitAskRequestedProgress(this._activeAsk);
+        this._appendEntry(createAskRequest(
+          this._nextLogId("ask_request"),
+          next.turnIndex,
+          this._activeAsk.payload,
+          this._activeAsk.id,
+          this._activeAsk.kind,
+          next.toolCallId,
+          next.roundIndex,
+          askContextId,
+        ), false);
+        this._pendingTurnState = { stage: "activation" };
+        this.onSaveRequest?.();
+        return { kind: "suspended", ask, toolCallId: next.toolCallId };
+      }
+      if (decision && decision.kind === "deny") {
+        denyMessage = decision.message;
       }
 
       // Execute (or deny)
@@ -6020,13 +6161,15 @@ export class Session {
         { isError: true, contextId },
       ), false);
     } else {
-      // Apply the offer. The approved tool_call's grant is consumed in
-      // _drainPendingToolCalls during resume.
+      // Apply the offer. The one-shot grant is redeemed inside the
+      // advisor when the drain re-runs the gate; it binds the argument
+      // digest at approval time, so a post-approval mutation or a
+      // reused tool-call id can never ride this approval.
       if (offer?.type === "tool_once") {
-        this._permissionAdvisor.grantAllowOnce(payload.toolCallId);
+        this._grantExecutionForApprovedCall(payload);
       } else if (offer?.type === "mode_upgrade") {
-        this.permissionMode = "reversible";
-        this._permissionAdvisor.grantAllowOnce(payload.toolCallId);
+        this.setPermissionMode("reversible", { source: "approval" });
+        this._grantExecutionForApprovedCall(payload);
       } else if ((offer?.type === "tool_pattern" || offer?.type === "external_path") && offer.rule) {
         this._permissionAdvisor.acceptOffer({
           type: offer.type as ApprovalOffer["type"],
@@ -6034,7 +6177,7 @@ export class Session {
           scope: offer.scope as ApprovalOffer["scope"],
           rule: offer.rule as unknown as PermissionRule,
         });
-        this._permissionAdvisor.grantAllowOnce(payload.toolCallId);
+        this._grantExecutionForApprovedCall(payload);
       }
     }
 
@@ -6052,6 +6195,22 @@ export class Session {
     this._pendingTurnState = { stage: "activation" };
 
     this.onSaveRequest?.();
+  }
+
+  /**
+   * Record a one-shot execution grant for the approved pending call,
+   * bound to the arguments as they stand in the tool_call entry (hooks
+   * already ran pre-ask, so these are final).
+   */
+  private _grantExecutionForApprovedCall(payload: ApprovalRequest["payload"]): void {
+    const entry = this._logStore.findToolCallByCallId(payload.toolCallId);
+    const args = (entry?.content as { arguments?: Record<string, unknown> } | undefined)?.arguments ?? {};
+    this._permissionAdvisor.grantExecution({
+      toolCallId: payload.toolCallId,
+      toolName: payload.toolName,
+      toolArgs: args,
+      approvedClass: (payload.permissionClass as PermissionClass | undefined) ?? "catastrophic",
+    });
   }
 
   private _findChildWithPendingAsk(askId: string): ChildSessionHandle | null {
@@ -6850,6 +7009,7 @@ export class Session {
           deferQueuedMessageInjectionOnTurnExit: true,
           promptCacheKey: o.promptCacheKey,
           permissionMode: this.permissionMode,
+          permissionCeiling: o.permissionCeiling,
           progress: this._progress,
           permissionRuleStore: this._permissionRuleStore,
           mcpManager: this.config.subAgentInheritMcp ? this._mcpManager : undefined,

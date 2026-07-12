@@ -5,4 +5,7 @@ system_prompt_file: system_prompt.md
 # read + shell + util, deliberately no edit pack: the reviewer's own prompt
 # promises "You cannot modify files", and the spawn guide advertises the same.
 tools: [read, shell, util]
+# Hard permission ceiling: even under a yolo parent the reviewer's
+# effective mode stays read_only (its prompt promises no modifications).
+permission_ceiling: read_only
 max_tool_rounds: 200

@@ -228,8 +228,8 @@ export interface ExecutorDeps {
   /** Called after a file write to check if plan.md was modified */
   isPlanFile?: (filePath: string) => boolean;
   onPlanFileWrite?: () => void;
-  /** Dynamic getter for approved external path prefixes from permission rules. */
-  getApprovedExternalPrefixes?: () => string[];
+  /** Live external-write policy from permission mode + rules (per-call). */
+  getExternalWritePolicy?: () => import("./tools/basic.js").ExternalWritePolicy;
   /** Hand a timed-out synchronous bash process over to the background shell manager. */
   adoptShell?: AdoptShellFn;
 }
@@ -244,17 +244,14 @@ export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecu
     onFileWrite,
     isPlanFile,
     onPlanFileWrite,
-    getApprovedExternalPrefixes,
+    getExternalWritePolicy,
     adoptShell,
   } = deps;
 
   const scopedBuiltin = (toolName: string): ToolExecutor =>
     (args, rtCtx) => executeTool(toolName, args, {
       projectRoot,
-      externalPathAllowlist: [
-        getSessionArtifactsDir(),
-        ...(getApprovedExternalPrefixes?.() ?? []),
-      ],
+      getExternalWritePolicy,
       sessionArtifactsDir: getSessionArtifactsDir(),
       supportsMultimodal,
       signal: rtCtx?.signal,
@@ -304,10 +301,8 @@ export function buildToolExecutors(deps: ExecutorDeps): Record<string, ToolExecu
     web_fetch: (args, rtCtx) => executeTool("web_fetch", args, { signal: rtCtx?.signal }),
     bash: (args, rtCtx) => executeTool("bash", args, {
       projectRoot,
-      externalPathAllowlist: [
-        getSessionArtifactsDir(),
-        ...(getApprovedExternalPrefixes?.() ?? []),
-      ],
+      getExternalWritePolicy,
+      sessionArtifactsDir: getSessionArtifactsDir(),
       signal: rtCtx?.signal,
     }),
     ...commExecutors,
@@ -435,25 +430,4 @@ export class ToolGate {
     return { kind: "allow" };
   }
 
-  /**
-   * Create a BeforeToolExecuteCallback compatible with tool-loop.ts.
-   * Not used directly — Session wraps this with additional logic
-   * (artifacts-dir bypass, hooks, ApprovalRequest construction).
-   * Kept as a reference implementation of the Gate→ToolPreflight bridge.
-   */
-  asBeforeToolExecute(): (ctx: ToolPreflightContext) => Promise<ToolPreflightDecision | void> {
-    return async (ctx: ToolPreflightContext): Promise<ToolPreflightDecision | void> => {
-      const decision = await this.evaluate(ctx);
-      switch (decision.kind) {
-        case "allow":
-          return undefined;
-        case "deny":
-          return { kind: "deny", message: decision.message };
-        case "ask":
-          // Callers that need the full ask flow should use evaluate() directly
-          // and construct the ApprovalRequest themselves.
-          return undefined;
-      }
-    };
-  }
 }

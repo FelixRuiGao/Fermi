@@ -118,6 +118,8 @@ export interface ChildSessionSpawnOpts {
   promptCacheKey: string;
   onTurnOutput: (text: string) => void;
   onSaveRequest: () => void;
+  /** Template-declared permission ceiling (e.g. reviewer → read_only). */
+  permissionCeiling?: "read_only" | "reversible" | "yolo";
 }
 
 export interface ChildSessionManagerDeps {
@@ -479,12 +481,14 @@ export class ChildSessionManager {
       settleResolve: null,
     };
 
+    const ceiling = (agent as unknown as { _permissionCeiling?: "read_only" | "reversible" | "yolo" })._permissionCeiling;
     const childSession = this.deps.createChildSession({
       primaryAgent: agent,
       artifactsDir,
       promptCacheKey: taskId,
       onTurnOutput: (text: string) => this._handleChildTurnOutput(taskId, text),
       onSaveRequest: () => this.deps.saveChildSession(handle),
+      ...(ceiling ? { permissionCeiling: ceiling } : {}),
     });
     handle.session = childSession;
     return handle;

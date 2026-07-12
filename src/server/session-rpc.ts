@@ -94,6 +94,10 @@ export const PROTOCOL_CAPABILITIES = [
   "turnAttachments",
   /** provider.* — add/configure providers, set keys, OAuth login in session mode */
   "providerControl",
+  /** session.getWorkspaceTrust / resolveWorkspaceTrust (repo-shipped executable config gate) */
+  "workspaceTrust",
+  /** session.listPermissionRules / revokePermissionRule / addPermissionRule (deny only) */
+  "permissionRules",
 ] as const;
 
 interface SessionStoreAccess {
@@ -258,6 +262,13 @@ async function buildMcpStatus(s: Session): Promise<McpStatusPayload> {
       ...disabledEntries.filter((d) => !byServer.has(d.name)),
     ],
   };
+}
+
+/** Whether workspace-scope hooks may load (trust gate; empty = nothing gated). */
+function workspaceHooksTrusted(s: Session): boolean {
+  if (typeof s.refreshWorkspaceTrust !== "function") return false;
+  const trust = s.refreshWorkspaceTrust();
+  return trust.status === "trusted" || trust.status === "empty";
 }
 
 function buildHooksStatus(s: Session): HooksStatusPayload {
@@ -827,8 +838,10 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.setPermissionMode", (params) => {
     const p = expectObject(params, "session.setPermissionMode");
     const mode = expectPermissionMode(p, "mode", "session.setPermissionMode");
-    session.permissionMode = mode;
-    server.emit("permission.changed", { mode });
+    // The subscription installed below relays permission.changed for
+    // EVERY transition source (this RPC, approval mode_upgrade, TUI) —
+    // no direct emit here or approval-driven upgrades would be missed.
+    session.setPermissionMode(mode, { source: "rpc" });
     return buildStatus(session);
   });
 
@@ -856,7 +869,18 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.resolveApprovalAsk", (params) => {
     const p = expectObject(params, "session.resolveApprovalAsk");
     const askId = expectString(p, "askId", "session.resolveApprovalAsk");
-    const choiceIndex = optNumber(p, "choiceIndex") ?? 0;
+    // Fail-closed: choiceIndex is REQUIRED and validated. Option 0 is an
+    // approval, so a missing/garbled field must never default into
+    // silently granting permission — it's a protocol error that leaves
+    // the pending ask untouched.
+    const choiceIndex = optNumber(p, "choiceIndex");
+    if (choiceIndex === undefined || !Number.isInteger(choiceIndex) || choiceIndex < 0) {
+      throw new Error("session.resolveApprovalAsk: 'choiceIndex' must be a non-negative integer (no default is applied)");
+    }
+    const pending = session.getPendingAsk();
+    if (pending && Array.isArray(pending.options) && choiceIndex >= pending.options.length) {
+      throw new Error(`session.resolveApprovalAsk: 'choiceIndex' ${choiceIndex} out of range (0..${pending.options.length - 1})`);
+    }
     resolveThenResume(() => session.resolveApprovalAsk(askId, choiceIndex));
     return { ok: true };
   });
@@ -1192,17 +1216,76 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     if (!setHookDisabled(hook._sourcePath, !enabled)) {
       throw new Error(`session.setHookEnabled: failed to update ${hook._sourcePath}`);
     }
-    reloadHooksIntoRuntime(session);
+    reloadHooksIntoRuntime(session, { workspaceTrusted: workspaceHooksTrusted(session) });
     const status = buildHooksStatus(session);
     server.emit("hooks.changed", status);
     return status;
   });
 
   server.on("session.reloadHooks", () => {
-    const count = reloadHooksIntoRuntime(session);
+    const count = reloadHooksIntoRuntime(session, { workspaceTrusted: workspaceHooksTrusted(session) });
     const status = buildHooksStatus(session);
     server.emit("hooks.changed", status);
     return { count, status };
+  });
+
+  // ── Workspace trust (capability "workspaceTrust") ──
+  server.on("session.getWorkspaceTrust", () => {
+    return typeof session.refreshWorkspaceTrust === "function"
+      ? session.refreshWorkspaceTrust()
+      : { status: "empty", digest: null, summary: { mcpServers: [], hooks: [], allowRuleCount: 0 } };
+  });
+
+  server.on("session.resolveWorkspaceTrust", async (params) => {
+    const p = expectObject(params, "session.resolveWorkspaceTrust");
+    const decision = p["decision"];
+    if (decision !== "trusted" && decision !== "denied") {
+      throw new Error("session.resolveWorkspaceTrust: 'decision' must be \"trusted\" or \"denied\"");
+    }
+    const report = await session.resolveWorkspaceTrust(decision);
+    // Trusting activates workspace hooks too — re-wire and notify.
+    reloadHooksIntoRuntime(session, { workspaceTrusted: workspaceHooksTrusted(session) });
+    server.emit("hooks.changed", buildHooksStatus(session));
+    server.emit("mcp.changed", await buildMcpStatus(session));
+    return { report, trust: session.workspaceTrust };
+  });
+
+  // ── Permission rules management (capability "permissionRules") ──
+  server.on("session.listPermissionRules", () => {
+    const store = session.permissionRuleStore;
+    return {
+      rules: store.getAllRules(),
+      loadErrors: store.getLoadErrors(),
+    };
+  });
+
+  server.on("session.revokePermissionRule", (params) => {
+    const p = expectObject(params, "session.revokePermissionRule");
+    const ruleId = expectString(p, "ruleId", "session.revokePermissionRule");
+    return { revoked: session.permissionRuleStore.revokeRule(ruleId) };
+  });
+
+  server.on("session.addPermissionRule", (params) => {
+    const p = expectObject(params, "session.addPermissionRule");
+    // Only deny rules can be created remotely — allow rules must come
+    // from the approval flow where the user sees exactly what they grant.
+    if (p["action"] !== "deny") {
+      throw new Error("session.addPermissionRule: only action \"deny\" rules can be created via RPC");
+    }
+    const tool = expectString(p, "tool", "session.addPermissionRule");
+    const pattern = typeof p["pattern"] === "string" && p["pattern"].trim() ? p["pattern"] : undefined;
+    const scope = p["scope"];
+    if (scope !== "session" && scope !== "project" && scope !== "global") {
+      throw new Error("session.addPermissionRule: 'scope' must be session|project|global");
+    }
+    const rule = session.permissionRuleStore.addRule({
+      type: "tool_pattern",
+      action: "deny",
+      tool,
+      ...(pattern ? { pattern } : {}),
+      scope,
+    } as never);
+    return { rule };
   });
 
   const readSharedSettings = (): SharedSettingsPayload => {
@@ -1492,6 +1575,15 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     });
   });
   disposers.push(unsubscribeLifecycle);
+
+  // Permission-mode changes — relayed for EVERY transition source
+  // (setPermissionMode RPC, approval mode_upgrade, in-process TUI),
+  // so a remote UI can never show a stale mode after an approval
+  // upgraded the session.
+  const unsubscribePermission = session.subscribePermissionMode((mode) => {
+    server.emit("permission.changed", { mode });
+  });
+  disposers.push(unsubscribePermission);
 
   // Save-on-checkpoint: Session expects an external persister.
   session.onSaveRequest = () => {

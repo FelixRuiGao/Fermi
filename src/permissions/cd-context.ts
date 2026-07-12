@@ -1,21 +1,50 @@
 /**
  * cd-aware context resolution for compound bash commands.
  *
- * Used by the permission classifier (to decide whether rules apply).
- * The bash executor has its own inlined cd parser in tools/basic.ts
- * to avoid a circular dependency.
+ * Used by the permission classifier (to decide whether rules apply and
+ * whether segments run in an external cwd). The bash executor has its
+ * own inlined cd parser in tools/basic.ts to avoid a circular dependency.
+ *
+ * Externality is judged canonically (via path-access) so `cd link`
+ * through a project-internal symlink pointing outside is external.
  */
 
 import path from "node:path";
 import { homedir } from "node:os";
+import { canonicalizePath } from "./path-access.js";
+import { osCapabilities } from "../platform/index.js";
+
+export interface SegmentCwdInfo {
+  /** Effective cwd this segment runs in (lexical resolution). */
+  cwd: string;
+  /** Canonical cwd is outside the canonical projectRoot. */
+  isExternal: boolean;
+  /** The cwd is unknowable (`cd -`, `cd $VAR`, `cd ~user` upstream). */
+  unresolvable: boolean;
+}
 
 export interface ParsedCdContext {
   /** Segments with pure-cd segments removed. */
   segments: import("./bash/types.js").ParsedBashSegment[];
+  /** Per kept segment: the cwd it effectively runs in. Parallel to `segments`. */
+  segmentCwds: SegmentCwdInfo[];
   /** Effective cwd after resolving all cd segments. */
   effectiveCwd: string;
   /** Whether ANY non-cd segment runs outside projectRoot. */
   isExternal: boolean;
+  /** Externality came from an unresolvable cd target somewhere upstream. */
+  unresolvable: boolean;
+}
+
+function foldCase(p: string): string {
+  return osCapabilities.caseInsensitiveFilesystem ? p.toLowerCase() : p;
+}
+
+function isWithin(baseAbs: string, candidateAbs: string): boolean {
+  const rel = path.relative(foldCase(baseAbs), foldCase(candidateAbs));
+  if (rel === "") return true;
+  if (path.isAbsolute(rel)) return false;
+  return !rel.startsWith("..");
 }
 
 /**
@@ -27,10 +56,16 @@ export function resolveCdContextParsed(
   projectRoot: string,
   cwd: string,
 ): ParsedCdContext {
-  const resolvedProjectRoot = path.resolve(projectRoot);
+  const rootCanonical = canonicalizePath(path.resolve(projectRoot));
   let effectiveCwd = path.resolve(cwd);
+  let cwdUnresolvable = false;
   let everExternal = false;
+  let everUnresolvable = false;
   const kept: import("./bash/types.js").ParsedBashSegment[] = [];
+  const segmentCwds: SegmentCwdInfo[] = [];
+
+  const cwdIsExternal = (): boolean =>
+    cwdUnresolvable || !isWithin(rootCanonical, canonicalizePath(effectiveCwd));
 
   for (const seg of segments) {
     // A segment is a pure cd if it has exactly one command named "cd"
@@ -40,26 +75,32 @@ export function resolveCdContextParsed(
       if (name === "cd") {
         const target = extractCdTargetParsed(cmd);
         if (target === null) {
-          // Unresolvable cd → treat as external
+          // Unresolvable cd (`cd -`, `cd $VAR`, `cd ~user`): every
+          // subsequent segment runs in an unknown directory.
+          cwdUnresolvable = true;
           everExternal = true;
-        } else {
+          everUnresolvable = true;
+        } else if (!cwdUnresolvable) {
           effectiveCwd = path.isAbsolute(target)
             ? path.resolve(target)
             : path.resolve(effectiveCwd, target);
-          if (!isWithinBase(resolvedProjectRoot, effectiveCwd)) {
-            everExternal = true;
-          }
         }
         continue;
       }
     }
-    if (!isWithinBase(resolvedProjectRoot, effectiveCwd)) {
-      everExternal = true;
-    }
+    const external = cwdIsExternal();
+    if (external) everExternal = true;
     kept.push(seg);
+    segmentCwds.push({ cwd: effectiveCwd, isExternal: external, unresolvable: cwdUnresolvable });
   }
 
-  return { segments: kept, effectiveCwd, isExternal: everExternal };
+  return {
+    segments: kept,
+    segmentCwds,
+    effectiveCwd,
+    isExternal: everExternal,
+    unresolvable: everUnresolvable,
+  };
 }
 
 function extractCdTargetParsed(cmd: import("./bash/types.js").ParsedBashCommand): string | null {
@@ -67,7 +108,7 @@ function extractCdTargetParsed(cmd: import("./bash/types.js").ParsedBashCommand)
   if (cmd.argv.length === 0) return homedir();
 
   // First non-flag argument
-  const targetToken = cmd.argv.find(t => !t.value.startsWith("-"));
+  const targetToken = cmd.argv.find(t => !t.value.startsWith("-") || t.value === "-");
   if (!targetToken) return homedir();
 
   const val = targetToken.value;
@@ -77,13 +118,8 @@ function extractCdTargetParsed(cmd: import("./bash/types.js").ParsedBashCommand)
   if (targetToken.kind === "home_reference" || val === "$HOME") return homedir();
   if (val === "~") return homedir();
   if (val.startsWith("~/")) return path.join(homedir(), val.slice(2));
+  // `~user` — another user's home; not resolvable without NSS lookup.
+  if (val.startsWith("~")) return null;
 
   return val;
-}
-
-function isWithinBase(baseAbs: string, candidateAbs: string): boolean {
-  const rel = path.relative(baseAbs, candidateAbs);
-  if (rel === "") return true;
-  if (path.isAbsolute(rel)) return false;
-  return !rel.startsWith("..");
 }

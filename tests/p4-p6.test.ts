@@ -79,7 +79,7 @@ describe("P4 shell governance", () => {
     }
   });
 
-  it("asks before running bash in an external cwd", async () => {
+  it("allows read-only bash in an external cwd (reads are free)", async () => {
     const projectRoot = makeTempDir("fermi-p4-preflight-proj-");
     const externalRoot = makeTempDir("fermi-p4-preflight-ext-");
     try {
@@ -89,6 +89,28 @@ describe("P4 shell governance", () => {
         agentName: "Primary",
         toolName: "bash",
         toolArgs: { command: "pwd", cwd: externalRoot },
+        toolCallId: "tc1",
+        summary: "",
+      });
+      // External context whose segments are all reads no longer asks —
+      // consistent with `cat /external/file` being free.
+      expect(preflight).toBeUndefined();
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(externalRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("asks before running mutating bash in an external cwd", async () => {
+    const projectRoot = makeTempDir("fermi-p4-preflight-proj-");
+    const externalRoot = makeTempDir("fermi-p4-preflight-ext-");
+    try {
+      const session = makeSession(projectRoot);
+
+      const preflight = await (session as any)._beforeToolExecute({
+        agentName: "Primary",
+        toolName: "bash",
+        toolArgs: { command: "npm install", cwd: externalRoot },
         toolCallId: "tc1",
         summary: "",
       });

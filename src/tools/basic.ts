@@ -44,6 +44,7 @@ import {
   truncateLine,
 } from "./shared.js";
 import { coercePathString } from "./arg-repair.js";
+import { canonicalizePath } from "../permissions/path-access.js";
 import {
   type FileModifyDisplayData,
   type MatchInfo,
@@ -2263,9 +2264,24 @@ export interface AdoptShellRequest {
 }
 export type AdoptShellFn = (req: AdoptShellRequest) => { id: string; logPath: string };
 
+/**
+ * Executor-level policy for writes outside projectRoot — defense in
+ * depth behind the advisor. `allowAllExternal` is yolo: no containment
+ * (the per-target drive root becomes the safePath base, so Windows
+ * cross-drive targets work), but canonical resolution and type checks
+ * still run. `prefixes` are canonical forward-slash directory prefixes
+ * from approved write-capable external_path rules.
+ */
+export interface ExternalWritePolicy {
+  allowAllExternal: boolean;
+  prefixes: string[];
+}
+
 export interface ExecuteToolContext {
   projectRoot?: string;
-  externalPathAllowlist?: string[];
+  /** Live per-call policy — read at execution time so mid-turn
+   * mode/rule changes apply immediately. */
+  getExternalWritePolicy?: () => ExternalWritePolicy;
   sessionArtifactsDir?: string;
   supportsMultimodal?: boolean;
   signal?: AbortSignal;
@@ -2446,6 +2462,16 @@ function requiredIntegerArg(
 
 const READ_ACCESS_KINDS = new Set<PathAccessKind>(["read", "list", "search", "attach"]);
 
+/** Canonical forward-slash prefix match (case-folded on case-insensitive FS). */
+function canonicalPrefixMatches(canonicalPath: string, prefix: string): boolean {
+  const ci = osCapabilities.caseInsensitiveFilesystem;
+  const subject = canonicalPath.replace(/\\/g, "/");
+  const p = prefix.endsWith("/") ? prefix : prefix + "/";
+  const s = ci ? subject.toLowerCase() : subject;
+  const pp = ci ? p.toLowerCase() : p;
+  return s.startsWith(pp) || s === pp.slice(0, -1);
+}
+
 function scopedPath(
   requestedPath: string,
   accessKind: PathAccessKind,
@@ -2458,9 +2484,9 @@ function scopedPath(
   },
 ): string {
   const baseDir = toolRoot(ctx);
-  const attempt = (scopeBaseDir: string): string => safePath({
+  const attempt = (scopeBaseDir: string, target: string = requestedPath): string => safePath({
     baseDir: scopeBaseDir,
-    requestedPath,
+    requestedPath: target,
     cwd: baseDir,
     accessKind,
     mustExist: opts.mustExist,
@@ -2469,34 +2495,52 @@ function scopedPath(
     expectDirectory: opts.expectDirectory,
   }).safePath!;
 
+  const isBoundaryError = (err: unknown): err is SafePathError =>
+    err instanceof SafePathError &&
+    (err.code === "PATH_OUTSIDE_SCOPE" || err.code === "PATH_SYMLINK_ESCAPES_SCOPE");
+
   try {
     return attempt(baseDir);
   } catch (err) {
-    if (!(err instanceof SafePathError)) throw err;
-    if (err.code !== "PATH_OUTSIDE_SCOPE" && err.code !== "PATH_SYMLINK_ESCAPES_SCOPE") {
-      throw err;
-    }
+    if (!isBoundaryError(err)) throw err;
 
-    const allowlist = ctx?.externalPathAllowlist ?? [];
-    for (const allowedRoot of allowlist) {
+    // Session artifacts dir: agent-owned scratch space, reads and writes.
+    const artifacts = ctx?.sessionArtifactsDir;
+    if (artifacts) {
       try {
-        return attempt(allowedRoot);
+        return attempt(artifacts);
       } catch (inner) {
-        if (inner instanceof SafePathError &&
-            (inner.code === "PATH_OUTSIDE_SCOPE" || inner.code === "PATH_SYMLINK_ESCAPES_SCOPE")) {
-          continue;
-        }
-        throw inner;
+        if (!isBoundaryError(inner)) throw inner;
       }
     }
 
-    // Read-like operations outside scope: advisor is the sole gate for external reads,
-    // executor does not double-enforce.
+    // Read-like operations outside scope: advisor is the sole gate for
+    // external reads, executor does not double-enforce.
     if (READ_ACCESS_KINDS.has(accessKind)) {
       const resolved = path.isAbsolute(requestedPath)
         ? path.resolve(requestedPath)
         : path.resolve(baseDir, requestedPath);
       return resolved;
+    }
+
+    // Write-like: consult the external write policy. Matching is done
+    // on the CANONICAL target against canonical rule prefixes — the same
+    // judgment the advisor made, so the two layers cannot disagree
+    // (writes through an approved symlinked spelling resolve to the
+    // approved canonical location and proceed there).
+    const policy = ctx?.getExternalWritePolicy?.();
+    if (policy) {
+      const resolved = path.isAbsolute(requestedPath)
+        ? path.resolve(requestedPath)
+        : path.resolve(baseDir, requestedPath);
+      const canonical = canonicalizePath(resolved);
+      if (policy.allowAllExternal) {
+        return attempt(path.parse(canonical).root, canonical);
+      }
+      for (const prefix of policy.prefixes) {
+        if (!canonicalPrefixMatches(canonical, prefix)) continue;
+        return attempt(path.resolve(prefix), canonical);
+      }
     }
 
     throw err;

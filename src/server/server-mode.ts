@@ -76,8 +76,16 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
 
   const store = new SessionStore({ projectPath });
 
+  // Workspace trust — gate repo-shipped executable config (MCP servers,
+  // hooks, allow rules) behind a recorded user decision.
+  const { evaluateWorkspaceTrust, workspaceExecutablesAllowed } = await import("../security/workspace-trust.js");
+  const bootTrust = evaluateWorkspaceTrust(projectPath, store.projectDir);
+  const workspaceTrusted = workspaceExecutablesAllowed(bootTrust);
+
   const globalSettings = loadGlobalSettings(homeDir);
-  const localSettings = loadLocalSettings(projectPath, store.projectDir);
+  const localSettings = loadLocalSettings(projectPath, store.projectDir, {
+    includeWorkspaceMcpServers: workspaceTrusted,
+  });
   let settings = mergeSettings(globalSettings, localSettings);
   settings = mergeSettings(settings, parseSettingsOverrides(opts.configOverrides ?? []));
 
@@ -175,11 +183,13 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
   skillRoots.push(...paths.skillRoots);
   const skills = loadSkillsMulti(skillRoots);
 
-  // Hooks
+  // Hooks (workspace root behind the trust gate) — loaded BEFORE the
+  // Session so the constructor's SessionStart fire actually sees them.
   let hooksLoaded: import("../hooks/index.js").HookManifest[] = [];
   try {
     const { loadHooksMulti } = await import("../hooks/index.js");
-    hooksLoaded = loadHooksMulti(paths.hookRoots);
+    const { filterHookRootsByTrust } = await import("../hooks/manage.js");
+    hooksLoaded = loadHooksMulti(filterHookRootsByTrust(paths.hookRoots, workspaceTrusted));
   } catch { /* optional */ }
 
   // Session
@@ -196,10 +206,21 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
     promptsDirs,
     store: store as never,
     contextBudgetPercent,
+    hooks: hooksLoaded,
   });
 
-  if (hooksLoaded.length > 0) {
-    session.hookRuntime.setHooks(hooksLoaded);
+  // Untrusted workspace executable config: ride-along notice (also
+  // queryable via session.getWorkspaceTrust for client UIs).
+  if (session.workspaceTrust.status === "untrusted") {
+    const s = session.workspaceTrust.summary;
+    const parts: string[] = [];
+    if (s.mcpServers.length) parts.push(`${s.mcpServers.length} MCP server(s)`);
+    if (s.hooks.length) parts.push(`${s.hooks.length} hook(s)`);
+    if (s.allowRuleCount) parts.push(`${s.allowRuleCount} allow rule(s)`);
+    session.queueSystemNotice(
+      `<system-message>This workspace ships executable configuration that was NOT loaded ` +
+      `(untrusted): ${parts.join(", ")}. The user can review and enable it with /trust.</system-message>`,
+    );
   }
 
   // Restore model selection

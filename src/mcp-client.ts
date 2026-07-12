@@ -223,6 +223,49 @@ export class MCPClientManager {
     this._configByName = new Map(serverConfigs.map((c) => [c.name, c]));
   }
 
+  /**
+   * Whether a namespaced tool (`mcp__server__tool`) is declared
+   * sensitive in its server's config (`sensitive_tools`). The permission
+   * advisor escalates these to write_danger and withholds persistent
+   * allow offers. Entries match the original tool name or the
+   * namespaced form.
+   */
+  isSensitiveTool(namespacedName: string): boolean {
+    const serverName = this._toolServer.get(namespacedName);
+    if (!serverName) return false;
+    const cfg = this._configByName.get(serverName);
+    const sensitive = cfg?.sensitiveTools;
+    if (!sensitive || sensitive.length === 0) return false;
+    const original = this._toolOriginal.get(namespacedName);
+    return sensitive.includes(namespacedName) || (original !== undefined && sensitive.includes(original));
+  }
+
+  /**
+   * Preview what reconfigure(newConfigs) would do, without applying.
+   * Used by reloadMcp to withhold new/changed executable configs from
+   * non-user-initiated reloads (the `reload` tool).
+   */
+  previewReconfigure(newConfigs: MCPServerConfig[]): { added: string[]; removed: string[]; changed: string[] } {
+    const newByName = new Map(newConfigs.map((c) => [c.name, c]));
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+    for (const name of this._configByName.keys()) {
+      if (!newByName.has(name)) removed.push(name);
+    }
+    for (const [name, cfg] of newByName) {
+      const old = this._configByName.get(name);
+      if (!old) added.push(name);
+      else if (!mcpConfigEqual(old, cfg)) changed.push(name);
+    }
+    return { added, removed, changed };
+  }
+
+  /** Current applied server configs (for reload filtering). */
+  getCurrentConfigs(): MCPServerConfig[] {
+    return [...this._configs];
+  }
+
   // ------------------------------------------------------------------
   // Connection
   // ------------------------------------------------------------------

@@ -723,5 +723,19 @@ function buildAgent(
   // Keep MCP selection intent for runtime lazy wiring in Session._ensureMcp().
   (agent as any)._mcpToolsSpec = spec["mcp_tools"] ?? undefined;
 
+  // Optional permission ceiling: the sub-agent session's effective mode
+  // is min(inherited mode, ceiling) — reviewer-style templates declare
+  // `permission_ceiling: read_only` so a yolo parent still gets a
+  // read-only reviewer. Carried on the agent; consumed at child-session
+  // creation (child-session-manager → Session opts.permissionCeiling).
+  const ceiling = spec["permission_ceiling"];
+  if (ceiling === "read_only" || ceiling === "reversible" || ceiling === "yolo") {
+    (agent as any)._permissionCeiling = ceiling;
+  } else if (ceiling !== undefined) {
+    throw new Error(
+      `Invalid permission_ceiling '${String(ceiling)}'. Must be one of: read_only, reversible, yolo`,
+    );
+  }
+
   return agent;
 }

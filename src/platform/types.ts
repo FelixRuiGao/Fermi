@@ -206,6 +206,18 @@ export interface OsCapabilities {
   readonly platformSpecificCatastrophicCommands: ReadonlySet<string>;
 
   /**
+   * Executable filename extensions the OS resolves implicitly when a
+   * command is invoked without one (Windows PATHEXT: `rm.exe`,
+   * `format.com`, `deploy.cmd` all run from a bare or suffixed
+   * spelling). The shell classifier strips these before matching a
+   * command name against its safety sets — otherwise `rm.exe -rf /`
+   * misses the `rm` entry and lands on the permissive unknown-command
+   * branch. Empty on POSIX, where `rm.exe` is genuinely a different
+   * file from `rm`. Stored lowercased with the leading dot.
+   */
+  readonly strippableExecutableExtensions: readonly string[];
+
+  /**
    * Glyph used as the left-side indicator on completed tool-call
    * entries in the TUI.
    *

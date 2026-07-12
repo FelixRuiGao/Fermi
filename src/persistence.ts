@@ -1466,7 +1466,21 @@ export function loadGlobalSettings(homeDir?: string): FermiSettings {
  * When projectStoreDir is omitted, only the workspace layer is loaded
  * (backwards-compatible with callers that don't have the slug yet).
  */
-export function loadLocalSettings(projectPath: string, projectStoreDir?: string): FermiSettings {
+export function loadLocalSettings(
+  projectPath: string,
+  projectStoreDir?: string,
+  opts?: {
+    /**
+     * Whether the WORKSPACE layer's `mcp_servers` may load. Repo-shipped
+     * MCP configs spawn processes on the user's machine, so they sit
+     * behind the workspace trust gate (security/workspace-trust.ts).
+     * Defaults to false (fail-safe) — callers pass true only after
+     * evaluating trust. The projectStore layer is user-owned (outside
+     * the repo) and is never stripped.
+     */
+    includeWorkspaceMcpServers?: boolean;
+  },
+): FermiSettings {
   let base: FermiSettings = {};
 
   if (projectStoreDir) {
@@ -1481,7 +1495,11 @@ export function loadLocalSettings(projectPath: string, projectStoreDir?: string)
   const workspacePath = join(projectPath, ".fermi", SETTINGS_FILE);
   if (!existsSync(workspacePath)) return base;
   try {
-    const workspace = parseJsonc<FermiSettings>(readFileSync(workspacePath, "utf-8")) ?? {};
+    let workspace = parseJsonc<FermiSettings>(readFileSync(workspacePath, "utf-8")) ?? {};
+    if (opts?.includeWorkspaceMcpServers !== true && workspace.mcp_servers) {
+      const { mcp_servers: _stripped, ...rest } = workspace;
+      workspace = rest as FermiSettings;
+    }
     return Object.keys(base).length > 0 ? mergeSettings(base, workspace) : workspace;
   } catch {
     return base;

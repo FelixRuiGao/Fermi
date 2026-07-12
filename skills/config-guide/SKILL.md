@@ -10,6 +10,7 @@ description: Explains Fermi's configuration system, settings.json, local project
 ```
 ~/.fermi/                              # Global config
 ├── settings.json                      # User-editable settings (JSONC, supports comments)
+├── permissions.json                   # Global permission rules (see Permissions below)
 ├── .env                               # API keys (override mode: wins over shell env)
 ├── state/                             # System-managed (do not edit)
 │   └── model-selection.json           #   Last /model selection
@@ -20,6 +21,8 @@ description: Explains Fermi's configuration system, settings.json, local project
 ├── projects/                          # Per-project session storage
 │   └── <name>_<sha256[:6]>/           #   Per-project directory
 │       ├── project.json               #     Project metadata
+│       ├── permissions.json           #     Project permission rules (system-managed)
+│       ├── trust.json                 #     Workspace trust decision (see below)
 │       ├── .fermi/                     #     Project-store layer
 │       │   ├── settings.json          #       Project-store settings
 │       │   ├── skills/                #       Project-store skills
@@ -33,6 +36,7 @@ description: Explains Fermi's configuration system, settings.json, local project
 
 {PROJECT}/.fermi/                      # Workspace layer (user creates manually)
 ├── settings.json                      # Local overrides (can be committed to git)
+├── permissions.json                   # Workspace permission rules (trust-gated, see below)
 ├── skills/                            # Workspace skills
 ├── hooks/                             # Workspace hooks
 ├── agent_templates/                   # Workspace agent templates
@@ -134,6 +138,8 @@ The single user-editable config file. Supports `//` and `/* */` comments (JSONC)
   "disabled_skills": [],
 
   // ── MCP Servers ──
+  // NOTE: mcp_servers declared in the WORKSPACE layer ({cwd}/.fermi/settings.json)
+  // are gated by workspace trust — see "Workspace Trust" below.
   "mcp_servers": {
     "my-server": {
       "transport": "stdio",                       // "stdio" (default) or "sse"
@@ -141,7 +147,7 @@ The single user-editable config file. Supports `//` and `/* */` comments (JSONC)
       "args": ["-y", "@some/mcp-server"],
       "env": { "TOKEN": "${MY_TOKEN}" },          // env var refs resolved at startup
       "env_allowlist": ["HOME"],                  // passthrough from shell env
-      "sensitive_tools": ["delete_all"]           // tools requiring explicit approval
+      "sensitive_tools": ["delete_all"]           // always ask; never persistently allowed
     }
   },
 
@@ -254,7 +260,56 @@ MCP servers are configured via the `mcp_servers` field in `settings.json` (globa
 
 Environment variable references (`${VAR}`) in the `env` block are resolved at startup.
 
-After editing MCP config (or SKILL.md files, or AGENTS.md), call the `reload` tool to apply changes live without restarting the session. The reload tool re-reads settings from disk, diffs MCP server configs (adding new servers, removing deleted ones, reconnecting changed ones), refreshes skills, and rebuilds the system prompt.
+After editing SKILL.md files or AGENTS.md, call the `reload` tool to apply changes live without restarting the session — it refreshes skills and rebuilds the system prompt.
+
+**Starting MCP servers is a user action.** `reload` re-reads MCP config and applies *removals*, but it never starts a server that is new or whose command changed: that would spawn a process on the machine. Those servers are listed in the reload report as skipped; connect them with `/mcp` (or `/trust`, if they ship with the repository). `sensitive_tools` entries always require approval per call and are never covered by a persistent allow rule.
+
+## Permissions
+
+Three orthogonal pieces: the **mode**, the **rules**, and **workspace trust**.
+
+**Mode** (`permission_mode`, or `/permission`, or Shift+Tab): `read_only` (only reads auto-allowed) → `reversible` (default; read + reversible writes) → `yolo` (everything except catastrophic). A mode change takes effect on the very next tool call, even mid-turn.
+
+`yolo` means *allow arbitrary code execution*. Fermi still prompts on commands it recognizes as catastrophic (`rm -rf /`, `mkfs`, …), but that detection is a best-effort last reminder for obvious spellings, not a security boundary — a script, an interpreter, or an unusual spelling gets through.
+
+**Rules** — persisted allow/deny entries created from approval prompts, or by hand. Four layers, most specific first:
+
+| Layer | File | Written by |
+|---|---|---|
+| session | memory | approval choices (dies with the session) |
+| workspace | `{PROJECT}/.fermi/permissions.json` | the user (system never writes it) |
+| project | `~/.fermi/projects/<slug>/permissions.json` | approval choices |
+| global | `~/.fermi/permissions.json` | approval choices |
+
+```jsonc
+{
+  "version": 1,
+  "rules": [
+    { "type": "tool_pattern", "action": "allow", "tool": "bash",
+      "pattern": "npm test", "maxClass": "write_potent" },
+    { "type": "tool_pattern", "action": "deny", "tool": "bash", "pattern": "git push" },
+    { "type": "external_path", "action": "allow", "accessKind": "read",
+      "pathPrefix": "/Users/me/notes/" }
+  ]
+}
+```
+
+- `deny` beats everything: it applies in every mode, before any approval or rule.
+- `allow` rules carry `maxClass` — the risk tier recorded when the rule was created. The rule only covers invocations at or below it, so approving `git push` never silently covers `git push --force`. Rules written by hand without the field are capped at `write_reversible`.
+- `scope` is derived from the file a rule lives in; a `scope` field inside the file is ignored.
+- `external_path` rules grant access outside the project root (`accessKind`: `read` or `write_reversible`). A read grant never widens writes.
+- Manage with `/permissions` (list, revoke, add a deny rule). Invalid entries are isolated and reported rather than silently dropping the file.
+
+## Workspace Trust
+
+A repository can ship configuration that executes code the moment the project is opened: `mcp_servers` in `{PROJECT}/.fermi/settings.json`, hooks in `{PROJECT}/.fermi/hooks/`, and `allow` rules in `{PROJECT}/.fermi/permissions.json`. **None of it loads until the user trusts that exact content once.**
+
+- The decision lives outside the repository (`~/.fermi/projects/<slug>/trust.json`) and is bound to a digest of the content. Any change to it flips the workspace back to untrusted and re-asks.
+- `deny` rules in a workspace permissions file always apply — there is nothing to exploit in a deny.
+- Review and decide with `/trust` (shows the MCP commands, hook commands, and allow-rule count). Repos with none of these three things never see a prompt.
+- Workspace skills, templates, and prompts are *not* gated — they are prompt content, not execution.
+
+**Control-plane files** (`permissions.json`, `settings.json`, `hooks/**`, `trust.json`, in both the workspace and `~/.fermi/`) always require approval to write — in every mode, yolo included — and no rule can pre-approve those writes. A config file must not be able to authorize edits to itself.
 
 ## Slash Commands
 
@@ -265,6 +320,8 @@ After editing MCP config (or SKILL.md files, or AGENTS.md), call the `reload` to
 | `/theme` | Set theme mode (auto / light / dark) |
 | `/diff` | Set write/edit diff display (compact / full) |
 | `/permission` | Set permission mode (read_only / reversible / yolo) |
+| `/permissions` | Manage permission rules (list by source, revoke, add a deny rule) |
+| `/trust` | Review & decide on repo-shipped executable config (MCP servers / hooks / allow rules) |
 | `/mode` | Switch agent mode (default / vibe / scale / auto) — picker; **Tab** cycles modes, **Shift+Tab** cycles permission modes, and both bottom-row labels click-to-cycle |
 | `/goal` | Set a completion condition the session keeps working toward across turns (status / clear / replace via picker) |
 | `/key` | Manage provider API keys |

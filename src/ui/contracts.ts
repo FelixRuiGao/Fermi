@@ -137,6 +137,14 @@ export interface Session {
   resolveAgentQuestionAsk?(askId: string, decision: AgentQuestionDecision): void;
   resolveApprovalAsk?(askId: string, choiceIndex: number): void;
   permissionMode?: string;
+  /**
+   * Single permission-mode transition: cascades to children and notifies
+   * subscribers (status row, server `permission.changed` relay). Assigning
+   * `permissionMode` routes here too; UIs call this so the source is recorded.
+   */
+  setPermissionMode?(mode: string, opts?: { source?: string }): void;
+  /** Fires on every mode change, whatever the source (approval upgrades included). */
+  subscribePermissionMode?(listener: (mode: string) => void): () => void;
   hookRuntime?: { hooks: readonly any[]; getAdditionalContext(): string | null };
   getGlobalPreferences?(): any;
   getRewindTargets?(): Array<{

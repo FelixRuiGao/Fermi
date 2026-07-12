@@ -42,6 +42,20 @@ export type PermissionClass =
   | "write_danger"
   | "catastrophic";
 
+/** Severity ordering for PermissionClass comparisons (rules maxClass, segment folding). */
+export const PERMISSION_CLASS_ORDER: Record<PermissionClass, number> = {
+  read: 0,
+  spawn: 1,
+  write_reversible: 2,
+  write_potent: 3,
+  write_danger: 4,
+  catastrophic: 5,
+};
+
+export function isValidPermissionClass(v: unknown): v is PermissionClass {
+  return typeof v === "string" && v in PERMISSION_CLASS_ORDER;
+}
+
 // ------------------------------------------------------------------
 // Invocation assessment — output of tool classification
 // ------------------------------------------------------------------
@@ -51,17 +65,37 @@ export interface InvocationAssessment {
   toolName: string;
   /** For bash: the parsed command name(s). */
   commands?: string[];
-  /** For bash: detected path arguments. */
+  /** For bash: literal path arguments extracted for external-path gating. */
   pathTargets?: string[];
   /** For bash: canonical pattern for rule matching (e.g. "npm test"). */
   canonicalPattern?: string;
   /** Whether a tool_pattern rule is meaningful for this invocation. */
   canMemoize?: boolean;
-  /** For bash: effective cwd after cd resolution, set when outside projectRoot. */
+  /**
+   * For bash: effective cwd after cd resolution, set when a non-read
+   * segment runs outside projectRoot. The sentinel value
+   * `EXTERNAL_CWD_UNKNOWN` means the cwd could not be resolved
+   * (`cd -`, `cd $VAR`, `cd ~user`).
+   */
   externalCwd?: string;
-  /** For file tools: resolved path that is outside projectRoot. */
+  /** For file tools: resolved path prefix that is outside projectRoot. */
   externalPathPrefix?: string;
+  /**
+   * For bash: literal write targets (canonical) that resolve outside
+   * projectRoot — cp/mv/mkdir/touch/ln/tee targets and file redirects.
+   * The advisor routes these through the external_path gate.
+   */
+  externalWriteTargets?: string[];
+  /**
+   * Target is a permission-system control-plane file (permissions/
+   * settings/hooks). Always asks in every mode; never satisfiable by
+   * rules.
+   */
+  controlPlane?: boolean;
 }
+
+/** Sentinel for externalCwd when the effective cwd cannot be resolved. */
+export const EXTERNAL_CWD_UNKNOWN = "(unresolved)";
 
 // ------------------------------------------------------------------
 // Decision — what the advisor tells the gate
@@ -98,7 +132,16 @@ export interface ToolPatternRule {
   tool: string;
   /** For bash: command pattern (e.g. "npm test", "git *"). */
   pattern?: string;
-  scope: "session" | "project" | "global";
+  /**
+   * Ceiling recorded at creation time: the rule only matches
+   * invocations whose class is <= maxClass. Rules from older files
+   * without the field are capped at write_reversible — the safe
+   * fallback re-asks once for potent/danger commands and the re-grant
+   * writes the field. Deny rules ignore the ceiling (deny always
+   * applies).
+   */
+  maxClass?: PermissionClass;
+  scope: "session" | "workspace" | "project" | "global";
   createdAt: number;
 }
 
@@ -107,9 +150,9 @@ export interface ExternalPathRule {
   type: "external_path";
   action: "allow";
   accessKind: "read" | "write_reversible";
-  /** Directory prefix (resolved absolute path). */
+  /** Directory prefix (canonical absolute path, forward-slash form). */
   pathPrefix: string;
-  scope: "session" | "project";
+  scope: "session" | "workspace" | "project";
   createdAt: number;
 }
 

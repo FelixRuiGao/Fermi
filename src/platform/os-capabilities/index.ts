@@ -17,6 +17,9 @@ const POSIX_SHARED: Omit<OsCapabilities, "caseInsensitiveFilesystem"> = {
   // mkfs/fdisk/dd respectively).
   platformSpecificDangerCommands: new Set(),
   platformSpecificCatastrophicCommands: new Set(),
+  // POSIX has no implicit executable extensions — `rm.exe` is a
+  // different file from `rm` and must not fold into it.
+  strippableExecutableExtensions: [],
   // POSIX execs every $PATH entry directly — no shell needed for shims.
   scriptShimsRequireShell: false,
   toolIndicatorGlyph: "⏺", // ⏺ BLACK CIRCLE FOR RECORD
@@ -59,6 +62,10 @@ const WIN32_CAPS: OsCapabilities = {
   caseInsensitiveFilesystem: true,
   platformSpecificDangerCommands: WIN32_DANGER_COMMANDS,
   platformSpecificCatastrophicCommands: WIN32_CATASTROPHIC_COMMANDS,
+  // PATHEXT resolution: `rm.exe`/`format.com`/`x.cmd` run from either
+  // spelling, so the classifier folds these suffixes away before
+  // matching safety sets (see OsCapabilities JSDoc).
+  strippableExecutableExtensions: [".exe", ".cmd", ".bat", ".com", ".ps1"],
   // `.cmd`/`.bat` shims (npm/npx/prettier) need a shell to launch.
   scriptShimsRequireShell: true,
   toolIndicatorGlyph: "⬤", // ⬤ BLACK LARGE CIRCLE — see OsCapabilities JSDoc

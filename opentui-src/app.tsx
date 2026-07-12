@@ -736,7 +736,14 @@ export function OpenTuiApp({
     const current = session.permissionMode ?? "reversible";
     const idx = modes.indexOf(current as any);
     const next = modes[(idx + 1) % modes.length];
-    session.permissionMode = next;
+    // Single transition API: cascades to children and notifies subscribers
+    // (status row, server relay). Takes effect on the next tool call, even
+    // mid-turn — the advisor reads the mode live per evaluation.
+    if (typeof session.setPermissionMode === "function") {
+      session.setPermissionMode(next, { source: "user" });
+    } else {
+      session.permissionMode = next;
+    }
     setPermissionModeState(next);
     try {
       saveGlobalSettingsPatch({ permission_mode: next });
@@ -920,8 +927,15 @@ export function OpenTuiApp({
     const unsubscribe = typeof session.subscribeLog === "function"
       ? session.subscribeLog(syncFromLog)
       : undefined;
+    // Mode can also change from inside an approval ("Switch session to
+    // reversible and allow") — subscribe so the status row reflects it
+    // immediately instead of on the next 250ms poll.
+    const unsubscribePermission = typeof session.subscribePermissionMode === "function"
+      ? session.subscribePermissionMode((mode: string) => setPermissionModeState(mode))
+      : undefined;
     const poller = setInterval(syncFromLog, 250);
     return () => {
+      unsubscribePermission?.();
       if (unsubscribe) unsubscribe();
       clearInterval(poller);
     };
