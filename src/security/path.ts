@@ -110,7 +110,11 @@ function isWithinBase(baseAbs: string, candidateAbs: string): boolean {
   const rel = path.relative(base, candidate);
   if (rel === "") return true;
   if (path.isAbsolute(rel)) return false; // Windows cross-drive safety
-  return !rel.startsWith("..");
+  // Prefix test, not a bare startsWith("..): an entry literally named
+  // `..data` is inside the base. Must stay in lockstep with the advisor's
+  // isWithin (permissions/path-access.ts), or the advisor approves what
+  // this executor check then hard-rejects.
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`);
 }
 
 function nearestExistingAncestor(targetAbs: string): string | null {

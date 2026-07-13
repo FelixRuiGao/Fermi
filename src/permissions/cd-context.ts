@@ -44,7 +44,7 @@ function isWithin(baseAbs: string, candidateAbs: string): boolean {
   const rel = path.relative(foldCase(baseAbs), foldCase(candidateAbs));
   if (rel === "") return true;
   if (path.isAbsolute(rel)) return false;
-  return !rel.startsWith("..");
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`);
 }
 
 /**

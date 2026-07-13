@@ -110,6 +110,65 @@ describe("protocol handshake", () => {
   });
 });
 
+describe("permission RPC surface", () => {
+  it("does not expose a remote deny-rule authoring endpoint", async () => {
+    const h = makeScriptedSession({ rounds: [] });
+    const { rpc, dispose } = bind(h);
+    try {
+      await expect(rpc.call("session.addPermissionRule", {
+        action: "deny",
+        tool: "bash",
+        scope: "global",
+      })).rejects.toThrow("no handler");
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+
+  it("does not revoke file-managed deny policy through RPC", async () => {
+    const h = makeScriptedSession({ rounds: [] });
+    const { rpc, dispose } = bind(h);
+    try {
+      const deny = h.session.permissionRuleStore.addRule({
+        type: "tool_pattern",
+        action: "deny",
+        tool: "bash",
+        scope: "session",
+      });
+      expect(await rpc.call("session.revokePermissionRule", { ruleId: deny.id })).toEqual({
+        revoked: false,
+        fileManaged: true,
+      });
+      expect(h.session.permissionRuleStore.getAllRules().some((rule) => rule.id === deny.id)).toBe(true);
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+
+  it("rejects a missing approval choice as INVALID_PARAMS without resolving the ask", async () => {
+    const h = makeScriptedSession({
+      rounds: [{ toolCalls: [{ id: "call-choice", name: "write_file", arguments: {} }] }],
+      tools: [testToolDef("write_file")],
+    });
+    const { rpc, dispose } = bind(h);
+    try {
+      stageApprovalGate(h, "write_file");
+      await rpc.call("session.submitTurn", { input: "write it" });
+      await waitFor(() => rpc.eventsOf("ask.pending").length > 0);
+
+      await expect(rpc.call("session.resolveApprovalAsk", {
+        askId: "approval-test-1",
+      })).rejects.toMatchObject({ code: -32602 });
+      expect(h.session.getPendingAsk()?.id).toBe("approval-test-1");
+    } finally {
+      dispose();
+      h.dispose();
+    }
+  });
+});
+
 describe("turn lifecycle over RPC", () => {
   it("submitTurn → started + ended(completed) from the runtime", async () => {
     const h = makeScriptedSession({ rounds: [{ text: "hi" }] });

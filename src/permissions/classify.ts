@@ -28,6 +28,7 @@ import {
   classifyPSCommand,
   envAssignmentsEscalate,
   extractGitCwdOverride,
+  gitArgvParseIsAmbiguous,
   isPathQualifiedName,
   isPSCwdCommand,
   makeClassifyCtx,
@@ -286,7 +287,10 @@ export async function classifyToolAsync(
     // Path-qualified names and resolution-affecting env prefixes make
     // the inner name untrustworthy; a persisted rule would over-grant.
     !isPathQualifiedName(singleStripped.name) &&
-    !envAssignmentsEscalate(singleStripped);
+    !envAssignmentsEscalate(singleStripped) &&
+    // A git flag cluster the arity table cannot fully parse may carry
+    // phantom risk flags; a pattern built from it could over-cover.
+    !gitArgvParseIsAmbiguous(singleStripped, caps);
 
   const canonicalPattern = canMemoize && singleStripped
     ? (usePS

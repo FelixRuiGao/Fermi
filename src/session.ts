@@ -1002,7 +1002,11 @@ export class Session {
       // repo root — a footgun, removed.
       projectStoreDir: this._store?.projectDir,
       workspaceRoot: this._projectRoot,
-      isWorkspaceTrusted: () => workspaceExecutablesAllowed(this._workspaceTrust),
+      // Trust is content-bound, so the predicate must compare the CURRENT
+      // digest whenever a workspace allow rule is considered. Keeping the
+      // constructor-time snapshot here let a changed permissions.json load
+      // new allow rules while the cached state still said "trusted".
+      isWorkspaceTrusted: () => workspaceExecutablesAllowed(this.refreshWorkspaceTrust()),
     });
     this._permissionAdvisor = new PermissionAdvisor({
       ruleStore: this._permissionRuleStore,
@@ -4300,20 +4304,20 @@ export class Session {
     return undefined;
   };
 
-  /** In-memory + persisted (tool_call meta) once-per-call hook tracking. */
-  private _preflightHooksRan = new Set<string>();
-
   private _preflightHooksAlreadyRan(toolCallId: string): boolean {
-    if (this._preflightHooksRan.has(toolCallId)) return true;
-    const entry = this._logStore.findToolCallByCallId(toolCallId);
+    // Bind hook execution to the concrete, newest tool_call entry rather
+    // than the provider-supplied ID. Providers may reuse IDs across rounds;
+    // a lifetime Set<string> made the later call inherit the earlier call's
+    // `hooks already ran` state and skip deny/transform hooks entirely.
+    const entry = this._findToolCallEntry(toolCallId);
     return entry ? (entry.meta as Record<string, unknown>)["preflightHooksRan"] === true : false;
   }
 
   private _markPreflightHooksRan(toolCallId: string): void {
-    this._preflightHooksRan.add(toolCallId);
-    const entry = this._logStore.findToolCallByCallId(toolCallId);
+    const entry = this._findToolCallEntry(toolCallId);
     if (entry) {
       (entry.meta as Record<string, unknown>)["preflightHooksRan"] = true;
+      this._touchLog();
     }
   }
 
@@ -4701,7 +4705,7 @@ export class Session {
     toolCallId: string,
     state: "not_started" | "running" | "completed" | "failed",
   ): void {
-    const entry = this._logStore.findToolCallByCallId(toolCallId);
+    const entry = this._findToolCallEntry(toolCallId);
     if (!entry) return;
     (entry.meta as Record<string, unknown>)["toolExecState"] = state;
     this._touchLog();
@@ -6203,7 +6207,7 @@ export class Session {
    * already ran pre-ask, so these are final).
    */
   private _grantExecutionForApprovedCall(payload: ApprovalRequest["payload"]): void {
-    const entry = this._logStore.findToolCallByCallId(payload.toolCallId);
+    const entry = this._findToolCallEntry(payload.toolCallId);
     const args = (entry?.content as { arguments?: Record<string, unknown> } | undefined)?.arguments ?? {};
     this._permissionAdvisor.grantExecution({
       toolCallId: payload.toolCallId,

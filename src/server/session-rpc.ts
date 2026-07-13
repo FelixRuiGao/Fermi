@@ -11,7 +11,7 @@
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import type { RpcServer } from "./rpc-transport.js";
+import { invalidParams, type RpcServer } from "./rpc-transport.js";
 import type { Session, InlineImageInput } from "../session.js";
 import type { LogEntry } from "../log-entry.js";
 import type { PermissionMode } from "../permissions/index.js";
@@ -96,7 +96,7 @@ export const PROTOCOL_CAPABILITIES = [
   "providerControl",
   /** session.getWorkspaceTrust / resolveWorkspaceTrust (repo-shipped executable config gate) */
   "workspaceTrust",
-  /** session.listPermissionRules / revokePermissionRule / addPermissionRule (deny only) */
+  /** session.listPermissionRules / revokePermissionRule */
   "permissionRules",
 ] as const;
 
@@ -875,11 +875,11 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
     // the pending ask untouched.
     const choiceIndex = optNumber(p, "choiceIndex");
     if (choiceIndex === undefined || !Number.isInteger(choiceIndex) || choiceIndex < 0) {
-      throw new Error("session.resolveApprovalAsk: 'choiceIndex' must be a non-negative integer (no default is applied)");
+      throw invalidParams("session.resolveApprovalAsk: 'choiceIndex' must be a non-negative integer (no default is applied)");
     }
     const pending = session.getPendingAsk();
     if (pending && Array.isArray(pending.options) && choiceIndex >= pending.options.length) {
-      throw new Error(`session.resolveApprovalAsk: 'choiceIndex' ${choiceIndex} out of range (0..${pending.options.length - 1})`);
+      throw invalidParams(`session.resolveApprovalAsk: 'choiceIndex' ${choiceIndex} out of range (0..${pending.options.length - 1})`);
     }
     resolveThenResume(() => session.resolveApprovalAsk(askId, choiceIndex));
     return { ok: true };
@@ -1262,30 +1262,13 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   server.on("session.revokePermissionRule", (params) => {
     const p = expectObject(params, "session.revokePermissionRule");
     const ruleId = expectString(p, "ruleId", "session.revokePermissionRule");
-    return { revoked: session.permissionRuleStore.revokeRule(ruleId) };
-  });
-
-  server.on("session.addPermissionRule", (params) => {
-    const p = expectObject(params, "session.addPermissionRule");
-    // Only deny rules can be created remotely — allow rules must come
-    // from the approval flow where the user sees exactly what they grant.
-    if (p["action"] !== "deny") {
-      throw new Error("session.addPermissionRule: only action \"deny\" rules can be created via RPC");
+    const store = session.permissionRuleStore;
+    const rule = store.getAllRules().find((candidate) => candidate.id === ruleId);
+    if (!rule) return { revoked: false };
+    if (rule.action !== "allow" || rule.scope === "workspace") {
+      return { revoked: false, fileManaged: true };
     }
-    const tool = expectString(p, "tool", "session.addPermissionRule");
-    const pattern = typeof p["pattern"] === "string" && p["pattern"].trim() ? p["pattern"] : undefined;
-    const scope = p["scope"];
-    if (scope !== "session" && scope !== "project" && scope !== "global") {
-      throw new Error("session.addPermissionRule: 'scope' must be session|project|global");
-    }
-    const rule = session.permissionRuleStore.addRule({
-      type: "tool_pattern",
-      action: "deny",
-      tool,
-      ...(pattern ? { pattern } : {}),
-      scope,
-    } as never);
-    return { rule };
+    return { revoked: store.revokeRule(ruleId) };
   });
 
   const readSharedSettings = (): SharedSettingsPayload => {

@@ -109,7 +109,7 @@ export class PermissionRuleStore {
    */
   findMatching(assessment: InvocationAssessment): RuleMatch {
     const allRules = this._getEffectiveRules();
-    const trusted = this._isWorkspaceTrusted();
+    const trusted = this._lazyWorkspaceTrusted();
 
     let deny: PermissionRule | null = null;
     let allow: PermissionRule | null = null;
@@ -121,7 +121,7 @@ export class PermissionRuleStore {
         if (!deny) deny = rule;
       } else {
         if (allow) continue;
-        if (rule.scope === "workspace" && !trusted) continue;
+        if (rule.scope === "workspace" && !trusted()) continue;
         const ceiling = rule.maxClass ?? "write_reversible";
         if (PERMISSION_CLASS_ORDER[assessment.permissionClass] > PERMISSION_CLASS_ORDER[ceiling]) continue;
         allow = rule;
@@ -130,6 +130,17 @@ export class PermissionRuleStore {
     }
 
     return { deny, allow };
+  }
+
+  /**
+   * Evaluating workspace trust re-reads the workspace's executable
+   * config from disk (the decision is content-bound to a digest). Pay
+   * that only when a workspace-scoped rule is actually considered —
+   * most projects carry none — and at most once per query.
+   */
+  private _lazyWorkspaceTrusted(): () => boolean {
+    let trusted: boolean | undefined;
+    return () => (trusted ??= this._isWorkspaceTrusted());
   }
 
   /** Get all effective rules, ordered: session > workspace > project > global. */
@@ -252,12 +263,12 @@ export class PermissionRuleStore {
     const ci = osCapabilities.caseInsensitiveFilesystem;
     const subject = toPosixPath(resolvedPath);
     const subjectCmp = ci ? subject.toLowerCase() : subject;
-    const trusted = this._isWorkspaceTrusted();
+    const trusted = this._lazyWorkspaceTrusted();
     const allRules = this._getEffectiveRules();
     for (const rule of allRules) {
       if (rule.type !== "external_path") continue;
       if (rule.action !== "allow") continue;
-      if (rule.scope === "workspace" && !trusted) continue;
+      if (rule.scope === "workspace" && !trusted()) continue;
       // A write needs a write-capable rule; a read is satisfied by either.
       if (accessKind === "write_reversible" && rule.accessKind !== "write_reversible") continue;
       const normalized = toPosixPath(rule.pathPrefix);
@@ -276,13 +287,13 @@ export class PermissionRuleStore {
    * executor's write scope.
    */
   getApprovedExternalPrefixes(accessKind: "read" | "write_reversible"): string[] {
-    const trusted = this._isWorkspaceTrusted();
+    const trusted = this._lazyWorkspaceTrusted();
     const allRules = this._getEffectiveRules();
     const prefixes: string[] = [];
     for (const rule of allRules) {
       if (rule.type !== "external_path") continue;
       if (rule.action !== "allow") continue;
-      if (rule.scope === "workspace" && !trusted) continue;
+      if (rule.scope === "workspace" && !trusted()) continue;
       if (accessKind === "write_reversible" && rule.accessKind !== "write_reversible") continue;
       const normalized = toPosixPath(rule.pathPrefix);
       prefixes.push(normalized.endsWith("/") ? normalized : normalized + "/");

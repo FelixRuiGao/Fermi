@@ -250,9 +250,50 @@ function stripOneWrapper(cmd: ParsedBashCommand, caps: OsCapabilities): ParsedBa
 
   if (!PROCESS_WRAPPERS.has(name)) return cmd;
 
+  // stdbuf's -i/-o/-e modes may be attached to the option (`-o0`,
+  // `-oL`) or supplied as the following token (`-o 0`). The old generic
+  // wrapper stripping skipped all flag-looking tokens and then always
+  // skipped one more positional, which swallowed the actual command in
+  // the overwhelmingly common attached form: `stdbuf -o0 rm ...`
+  // became a command named `-rf`. Parse stdbuf's option arity directly.
+  if (name === "stdbuf") {
+    let index = 0;
+    while (index < cmd.argv.length) {
+      const value = cmd.argv[index]!.value;
+      if (value === "--") {
+        index++;
+        break;
+      }
+      if (/^-[ioe]$/.test(value)) {
+        index += 2;
+        continue;
+      }
+      if (/^-[ioe].+/.test(value) || /^--(?:input|output|error)=/.test(value)) {
+        index++;
+        continue;
+      }
+      if (value.startsWith("-")) {
+        index++;
+        continue;
+      }
+      break;
+    }
+    if (index < cmd.argv.length) {
+      const newName = cmd.argv[index]!;
+      return {
+        text: cmd.text,
+        name: newName.value,
+        nameToken: newName,
+        argv: cmd.argv.slice(index + 1),
+        envAssignments: cmd.envAssignments,
+      };
+    }
+    return cmd;
+  }
+
   let skip = 0;
   while (skip < cmd.argv.length && cmd.argv[skip]!.value.startsWith("-")) skip++;
-  if ((name === "timeout" || name === "stdbuf") && skip < cmd.argv.length) {
+  if (name === "timeout" && skip < cmd.argv.length) {
     if (!cmd.argv[skip]!.value.startsWith("-")) skip++;
   }
   if (skip < cmd.argv.length) {
@@ -369,7 +410,6 @@ function rmIsCatastrophic(cmd: ParsedBashCommand, ctx: ClassifyCtx): boolean {
 }
 
 function isDangerousRmTarget(t: BashToken, ctx: ClassifyCtx): boolean {
-  if (t.kind === "home_reference") return true;
   let v = t.value;
   if (v === "$HOME" || v.startsWith("$HOME/")) {
     v = v === "$HOME" ? "~" : "~" + v.slice("$HOME".length);
@@ -499,13 +539,56 @@ function classifyFind(cmd: ParsedBashCommand, ctx: ClassifyCtx): PermissionClass
 // Git detailed classification
 // ------------------------------------------------------------------
 
-// Flags whose next token is a value, not a flag/positional. Without
-// skipping these, `git -C /tmp push` reads "/tmp" as the subcommand and
-// `git commit -m "-f"` reads a commit message as a force flag.
-const GIT_VALUE_FLAGS = new Set([
-  "-C", "-c", "--git-dir", "--work-tree", "--namespace",
-  "-m", "--message", "-F", "--file", "--author", "--date",
+// Long flags whose separated next token is a value, not a flag or a
+// positional. Without skipping these, `git -C /tmp push` reads "/tmp" as
+// the subcommand and `git commit --message "-f"` reads a commit message
+// as a force flag.
+const GIT_LONG_VALUE_FLAGS = new Set([
+  "--git-dir", "--work-tree", "--namespace",
+  "--message", "--file", "--author", "--date", "--exclude",
 ]);
+
+// git's own pre-subcommand short options that take a value.
+const GIT_GLOBAL_VALUE_SHORTS = new Set(["-C", "-c"]);
+
+/**
+ * Per-subcommand short-option arity, from `git <sub> -h`.
+ *  - `value`: requires a value — attached (`-mfix`) or next token (`-m fix`).
+ *  - `optAttached`: optional value, attached form only (`-S[<keyid>]`,
+ *    `-U<n>`; a separated `-U 1` leaves `1` a positional — verified).
+ *  - `boolean`: flag-only letters; clusters of these expand safely.
+ * Short-option arity is subcommand-dependent (`-m` is a message on
+ * commit, a boolean rename on branch, a boolean merge on checkout), so a
+ * global table cannot be right. Subcommands not listed here get no
+ * cluster expansion at all; a letter not listed for a listed subcommand
+ * marks the parse ambiguous, which blocks pattern memoization.
+ */
+interface GitShortArity { value: string; optAttached: string; boolean: string }
+const GIT_SUBCOMMAND_SHORTS: Record<string, GitShortArity> = {
+  commit: { value: "mFcCt", optAttached: "Su", boolean: "aqvseipon" },
+  checkout: { value: "bB", optAttached: "t", boolean: "lqmdfp" },
+  switch: { value: "cC", optAttached: "t", boolean: "qmdf" },
+  restore: { value: "s", optAttached: "", boolean: "SWqmp" },
+  reset: { value: "", optAttached: "", boolean: "qpN" },
+  clean: { value: "e", optAttached: "", boolean: "qnfidxX" },
+  branch: { value: "u", optAttached: "t", boolean: "vqradDmMcClf" },
+  tag: { value: "mFu", optAttached: "n", boolean: "ldvaesfi" },
+  stash: { value: "m", optAttached: "", boolean: "pqkua" },
+  push: { value: "o", optAttached: "", boolean: "vqdnfu" },
+  fetch: { value: "j", optAttached: "", boolean: "fqvnptka" },
+  pull: { value: "jsX", optAttached: "", boolean: "fqvnr" },
+  merge: { value: "mFsX", optAttached: "", boolean: "qven" },
+  rebase: { value: "sXx", optAttached: "C", boolean: "iqvfnmr" },
+  "cherry-pick": { value: "mX", optAttached: "", boolean: "nesqx" },
+  revert: { value: "mX", optAttached: "", boolean: "nesq" },
+  rm: { value: "", optAttached: "", boolean: "frnq" },
+  mv: { value: "", optAttached: "", boolean: "fknv" },
+  log: { value: "SGLnOI", optAttached: "MCBU", boolean: "pqzwtrcmb" },
+  show: { value: "SGLnOI", optAttached: "MCBU", boolean: "pqzwtrcmb" },
+  diff: { value: "SGLnOIl", optAttached: "MCBU", boolean: "pqzwtrcb" },
+  grep: { value: "efmABC", optAttached: "", boolean: "ivwnlLcqzpohEGFP" },
+  config: { value: "f", optAttached: "", boolean: "le" },
+};
 
 const GIT_SAFE_SUBCOMMANDS = new Set([
   "status", "log", "diff", "show",
@@ -532,31 +615,117 @@ const GIT_DANGER_SUBCOMMANDS = new Set([
 interface GitParts {
   positionals: string[];
   flags: Set<string>;
+  /** Shorts that consumed a value (`-m fix`, `-bname`): they are real
+   *  flags, but their letter carries no boolean/risk semantics. */
+  valueFlags: Set<string>;
+  /** A cluster contained a letter the arity table does not know: the
+   *  flag set may hold phantom risk flags, so memoization must not
+   *  persist a pattern derived from it. */
+  ambiguous: boolean;
   /** Value of `-C <path>` when present (affects effective cwd). */
   cwdOverride?: string;
 }
 
 function splitGitArgv(cmd: ParsedBashCommand): GitParts {
-  const parts: GitParts = { positionals: [], flags: new Set<string>() };
+  const parts: GitParts = {
+    positionals: [],
+    flags: new Set<string>(),
+    valueFlags: new Set<string>(),
+    ambiguous: false,
+  };
   const argv = cmd.argv;
+  let sub: string | null = null;
+  let afterDoubleDash = false;
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!;
     if (token.kind !== "literal") continue;
     const v = token.value;
-    if (v.startsWith("-")) {
-      parts.flags.add(v);
-      if (GIT_VALUE_FLAGS.has(v)) {
-        const value = argv[i + 1];
-        if (v === "-C" && value && value.kind === "literal") {
-          parts.cwdOverride = value.value;
-        }
-        i++; // skip the value token
-      }
-    } else {
+
+    if (afterDoubleDash || !v.startsWith("-") || v === "-") {
       parts.positionals.push(v);
+      sub ??= v;
+      continue;
+    }
+    if (v === "--") {
+      parts.flags.add("--");
+      afterDoubleDash = true;
+      continue;
+    }
+    parts.flags.add(v);
+
+    // Normalize --flag=value so classification and memoization see the
+    // same risk flag as the separated spelling. In particular,
+    // --force-with-lease=<ref> must not collapse back to `git push`.
+    if (v.startsWith("--")) {
+      const equals = v.indexOf("=");
+      if (equals > 2) {
+        parts.flags.add(v.slice(0, equals));
+      } else if (GIT_LONG_VALUE_FLAGS.has(v)) {
+        i++; // skip the separated value token
+      }
+      continue;
+    }
+
+    // Short option or cluster, before the subcommand: git's own options.
+    if (sub === null) {
+      const head = v.slice(0, 2);
+      if (GIT_GLOBAL_VALUE_SHORTS.has(head)) {
+        parts.flags.add(head);
+        parts.valueFlags.add(head);
+        if (v.length > 2) {
+          if (head === "-C") parts.cwdOverride = v.slice(2);
+        } else {
+          const value = argv[i + 1];
+          if (head === "-C" && value && value.kind === "literal") {
+            parts.cwdOverride = value.value;
+          }
+          i++; // skip the value token
+        }
+      }
+      continue;
+    }
+
+    // Short option or cluster after the subcommand. Parse left to right
+    // with the subcommand's arity: a value-taking letter consumes the
+    // rest of the token (or the next token) as its value — `-amfix` is
+    // `-a -m fix`, and the `f` in the message is not a force flag.
+    const arity = GIT_SUBCOMMAND_SHORTS[sub];
+    if (!arity) continue; // unlisted subcommand: no cluster expansion
+    const cluster = v.slice(1);
+    for (let c = 0; c < cluster.length; c++) {
+      const flag = `-${cluster[c]!}`;
+      if (arity.value.includes(cluster[c]!)) {
+        parts.flags.add(flag);
+        parts.valueFlags.add(flag);
+        if (c === cluster.length - 1) i++; // separated value token
+        break; // attached remainder (if any) is the value
+      }
+      if (arity.optAttached.includes(cluster[c]!)) {
+        parts.flags.add(flag);
+        if (c < cluster.length - 1) {
+          parts.valueFlags.add(flag);
+          break; // attached value; never consumes the next token
+        }
+        continue; // bare at cluster end: plain flag
+      }
+      parts.flags.add(flag);
+      if (!arity.boolean.includes(cluster[c]!)) parts.ambiguous = true;
     }
   }
   return parts;
+}
+
+/**
+ * True when git short-cluster parsing hit a letter outside the arity
+ * table: the derived flag set may contain phantom risk flags, so a
+ * persisted pattern could cover more (or less) than what was approved.
+ */
+export function gitArgvParseIsAmbiguous(
+  cmd: ParsedBashCommand,
+  caps: OsCapabilities = osCapabilities,
+): boolean {
+  if (normalizedCommandName(cmd.name, caps) !== "git") return false;
+  return splitGitArgv(cmd).ambiguous;
 }
 
 /** `git -C <path>` target, for external-cwd detection in classify.ts. */
@@ -565,14 +734,17 @@ export function extractGitCwdOverride(cmd: ParsedBashCommand): string | null {
 }
 
 export function classifyGitDetailed(cmd: ParsedBashCommand, ctx: ClassifyCtx): PermissionClass {
-  const { positionals, flags } = splitGitArgv(cmd);
+  const { positionals, flags, valueFlags } = splitGitArgv(cmd);
 
   const sub = positionals[0] ?? "";
   const sub2 = positionals[1] ?? "";
   if (!sub) return "write_potent";
 
-  // Global flag escalation — flags that discard state.
-  if (flags.has("--force") || flags.has("-f") || flags.has("--force-with-lease")) return "write_danger";
+  // Global flag escalation — flags that discard state. A `-f` that
+  // consumed a value is a file argument (`git config -f x`,
+  // `git grep -f pats`), not force.
+  if (flags.has("--force") || flags.has("--force-with-lease")) return "write_danger";
+  if (flags.has("-f") && !valueFlags.has("-f")) return "write_danger";
   if (flags.has("--hard") || flags.has("--discard-changes")) return "write_danger";
 
   switch (sub) {
@@ -696,7 +868,9 @@ export function buildCanonicalPatternFromParsed(
     if (name === "git") {
       const parts = splitGitArgv(cmd);
       if (parts.positionals[0]) base = `${name} ${parts.positionals[0]}`;
-      riskSource = parts.flags;
+      // A short that consumed a value is not a risk flag (`git config
+      // -f x` must not persist as "git config -f").
+      riskSource = [...parts.flags].filter((f) => !parts.valueFlags.has(f));
     } else {
       const first = cmd.argv.find((t) => t.kind === "literal" && !t.value.startsWith("-"))?.value;
       if (first) base = `${name} ${first}`;
@@ -862,6 +1036,49 @@ export function resolvePSCommandName(rawName: string, caps: OsCapabilities = osC
   return PS_ALIASES.get(name) ?? name;
 }
 
+/**
+ * Modules that ship with PowerShell itself. A `Module\Cmdlet` spelling
+ * with one of these prefixes deterministically resolves to the genuine
+ * cmdlet: command discovery searches cmdlets (module-qualified names
+ * included, auto-loading the module) before it ever probes the
+ * filesystem, and these modules exist on every PowerShell install.
+ * Unknown prefixes get no such guarantee — if the module is absent on
+ * the target machine, PowerShell falls through to relative-path +
+ * PATHEXT lookup — so they stay path-qualified.
+ */
+const PS_FIRST_PARTY_MODULES = new Set([
+  "microsoft.powershell.management",
+  "microsoft.powershell.utility",
+  "microsoft.powershell.core",
+  "microsoft.powershell.security",
+  "microsoft.powershell.host",
+  "microsoft.powershell.diagnostics",
+  "microsoft.wsman.management",
+  "microsoft.powershell.archive",
+  "cimcmdlets",
+]);
+
+/** `Microsoft.PowerShell.Management\Get-Content`-style spelling that can
+ *  only be the first-party cmdlet, never a filesystem path. */
+function isFirstPartyModuleQualifiedPS(rawName: string, caps: OsCapabilities): boolean {
+  let name = rawName.toLowerCase();
+  if ((name.startsWith('"') && name.endsWith('"')) || (name.startsWith("'") && name.endsWith("'"))) {
+    name = name.slice(1, -1);
+  }
+  if (name.includes("/") || name.includes(":") || name.startsWith(".")) return false;
+  const backslash = name.indexOf("\\");
+  if (backslash <= 0 || backslash !== name.lastIndexOf("\\")) return false;
+  if (!PS_FIRST_PARTY_MODULES.has(name.slice(0, backslash))) return false;
+  const cmdName = name.slice(backslash + 1);
+  if (!cmdName) return false;
+  // Module-qualified cmdlet names never carry executable extensions; an
+  // `.exe`/`.ps1` suffix means a filesystem path.
+  for (const ext of caps.strippableExecutableExtensions) {
+    if (cmdName.endsWith(ext)) return false;
+  }
+  return true;
+}
+
 // PowerShell accepts unambiguous parameter prefixes: -e, -en, -enc, ...
 // all resolve to -EncodedCommand. Minimum 2 chars after dash.
 function isEncodedCommandFlag(value: string): boolean {
@@ -894,6 +1111,30 @@ export function classifyPSCommand(cmd: ParsedBashCommand, ctx: ClassifyCtx): Per
   if (rawLower === "sc" || rawLower === "sc.exe") return "write_danger";
 
   const name = resolvePSCommandName(cmd.name, caps);
+  const detailed = classifyPSResolved(name, cmd, ctx);
+
+  // An explicitly path-qualified executable is not the trusted cmdlet or
+  // system binary whose basename/alias it happens to share. The detailed
+  // classification is applied as a conservative FLOOR-raise only:
+  // severity is never lost — a path- or module-spelled Remove-Item wipe
+  // stays catastrophic — while read/reversible is never granted to
+  // `C:\\tmp\\Get-Content.exe` or `.\\cat.exe` (PowerShell counterpart
+  // of the Bash P0-15 fix). First-party module-qualified spellings are
+  // exempt from the floor: cmdlet resolution runs before any filesystem
+  // probing, so for modules shipped with PowerShell the genuine cmdlet
+  // always wins over a same-named relative path.
+  if (isPathQualifiedName(cmd.name) && !isFirstPartyModuleQualifiedPS(cmd.name, caps)) {
+    return maxOfClasses(detailed, "write_potent");
+  }
+  return detailed;
+}
+
+function classifyPSResolved(name: string, cmd: ParsedBashCommand, ctx: ClassifyCtx): PermissionClass {
+  const caps = ctx.caps;
+
+  // `sc` resolved from a path form (`C:\\x\\sc.exe`): same ambiguity as
+  // the bare spelling, same conservative answer.
+  if (name === "sc") return "write_danger";
 
   // Eval-equivalent commands are always dangerous.
   if (PS_EVAL_COMMANDS.has(name)) return "write_danger";

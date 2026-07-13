@@ -43,3 +43,64 @@ describe("/permission command", () => {
     }
   });
 });
+
+describe("/permissions command", () => {
+  it("only audits rules and revokes approval-generated grants", async () => {
+    const registry = buildDefaultRegistry();
+    const cmd = registry.lookup("/permissions");
+    expect(cmd).toBeTruthy();
+
+    const addRule = mock();
+    const revokeRule = mock(() => true);
+    let shownOptions: Array<{ label: string; value: string; detail?: string }> = [];
+    const ctx: CommandContext = {
+      ...baseContext(registry),
+      session: {
+        permissionRuleStore: {
+          getAllRules: () => [
+            {
+              id: "p_allow",
+              type: "tool_pattern",
+              action: "allow",
+              tool: "bash",
+              pattern: "git push",
+              scope: "project",
+              createdAt: 0,
+            },
+            {
+              id: "g_deny",
+              type: "tool_pattern",
+              action: "deny",
+              tool: "web_fetch",
+              scope: "global",
+              createdAt: 0,
+            },
+          ],
+          getLoadErrors: () => [],
+          revokeRule,
+          addRule,
+        },
+      },
+      promptCommandPicker: mock(async (options) => {
+        shownOptions = options;
+        return undefined;
+      }),
+    };
+
+    await cmd!.handler(ctx, "");
+
+    expect(shownOptions.some((option) => option.label.includes("Add deny"))).toBe(false);
+    expect(shownOptions.find((option) => option.label.includes("allow"))?.value).toBe("revoke:p_allow");
+    expect(shownOptions.find((option) => option.label.includes("deny"))?.value).toBe("file-managed:global");
+
+    await cmd!.handler(ctx, "deny bash git push");
+    expect(addRule).not.toHaveBeenCalled();
+    expect(ctx.showMessage).toHaveBeenLastCalledWith("Usage: /permissions [list | revoke <id>]");
+
+    await cmd!.handler(ctx, "revoke g_deny");
+    expect(revokeRule).not.toHaveBeenCalled();
+    expect(ctx.showMessage).toHaveBeenLastCalledWith(
+      "Rule g_deny is file-managed; edit its permissions.json instead.",
+    );
+  });
+});

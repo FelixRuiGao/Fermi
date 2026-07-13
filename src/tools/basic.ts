@@ -340,12 +340,79 @@ function splitCompoundBash(command: string): string[] {
  * Extract cd target from a bash segment (for mutation tracking).
  * Inline version — avoids importing cd-context.ts to prevent circular deps.
  */
-function extractCdTargetForBash(segment: string): string | null {
+function splitLiteralBashWords(input: string): string[] | null {
+  const words: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let started = false;
+
+  const push = (): void => {
+    if (!started) return;
+    words.push(current);
+    current = "";
+    started = false;
+  };
+
+  for (let index = 0; index < input.length; index++) {
+    const ch = input[index]!;
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+        started = true;
+        continue;
+      }
+      if (ch === "\\" && quote === '"') {
+        if (index + 1 >= input.length) return null;
+        current += input[++index]!;
+        started = true;
+        continue;
+      }
+      current += ch;
+      started = true;
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      started = true;
+      continue;
+    }
+    if (ch === "\\") {
+      if (index + 1 >= input.length) return null;
+      current += input[++index]!;
+      started = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      push();
+      continue;
+    }
+    current += ch;
+    started = true;
+  }
+
+  if (quote) return null;
+  push();
+  return words;
+}
+
+export function extractCdTargetForBash(segment: string): string | null {
   const trimmed = segment.trim().replace(/^(\s*[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)+/, "");
-  const parts = trimmed.split(/\s+/);
+  const parts = splitLiteralBashWords(trimmed);
+  if (!parts) return null;
   if (parts[0] !== "cd") return null;
   if (parts.length === 1) return homedir();
-  const target = parts[1]!;
+  let targetIndex = 1;
+  while (targetIndex < parts.length && parts[targetIndex]!.startsWith("-") && parts[targetIndex] !== "-") {
+    if (parts[targetIndex] === "--") {
+      targetIndex++;
+      break;
+    }
+    targetIndex++;
+  }
+  const target = parts[targetIndex];
+  if (target === undefined) return homedir(); // `cd`, `cd -P`, `cd --`
+  if (target === "") return null; // `cd ""` errors in the shell; never $HOME
   if (target === "-" || (target.startsWith("$") && target !== "$HOME") || target.includes("`") || target.includes("$(")) return null;
   if (target === "$HOME" || target === "~") return homedir();
   if (target.startsWith("~/")) return path.join(homedir(), target.slice(2));
@@ -3219,7 +3286,7 @@ function createDispatch(ctx?: ExecuteToolContext): Record<string, ToolExecutor> 
             }
             // Skip mutation tracking for external paths
             const rel = path.relative(projectRoot, segmentCwd);
-            if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+            if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) continue;
             const state = prepareBashPreExec(segments[i]!, backupsDir, segmentCwd);
             if (state) preExecStates.push({ segmentIndex: i, state });
           }

@@ -298,7 +298,7 @@ Three orthogonal pieces: the **mode**, the **rules**, and **workspace trust**.
 - `allow` rules carry `maxClass` — the risk tier recorded when the rule was created. The rule only covers invocations at or below it, so approving `git push` never silently covers `git push --force`. Rules written by hand without the field are capped at `write_reversible`.
 - `scope` is derived from the file a rule lives in; a `scope` field inside the file is ignored.
 - `external_path` rules grant access outside the project root (`accessKind`: `read` or `write_reversible`). A read grant never widens writes.
-- Manage with `/permissions` (list, revoke, add a deny rule). Invalid entries are isolated and reported rather than silently dropping the file.
+- `/permissions` lists rules and parse errors and can revoke grants created by approval prompts. `deny` policy is file-managed only: add, change, or remove deny entries by editing the appropriate workspace/project/global `permissions.json` directly.
 
 ## Workspace Trust
 
@@ -320,7 +320,7 @@ A repository can ship configuration that executes code the moment the project is
 | `/theme` | Set theme mode (auto / light / dark) |
 | `/diff` | Set write/edit diff display (compact / full) |
 | `/permission` | Set permission mode (read_only / reversible / yolo) |
-| `/permissions` | Manage permission rules (list by source, revoke, add a deny rule) |
+| `/permissions` | Audit permission rules and revoke grants created by approval prompts |
 | `/trust` | Review & decide on repo-shipped executable config (MCP servers / hooks / allow rules) |
 | `/mode` | Switch agent mode (default / vibe / scale / auto) — picker; **Tab** cycles modes, **Shift+Tab** cycles permission modes, and both bottom-row labels click-to-cycle |
 | `/goal` | Set a completion condition the session keeps working toward across turns (status / clear / replace via picker) |

@@ -2510,7 +2510,7 @@ export function buildDefaultRegistry(): CommandRegistry {
   registry.register({ name: "/agents", description: "Toggle agents panel", handler: cmdAgents });
   registry.register({ name: "/todos", description: "Toggle todo panel", handler: cmdTodos });
   registry.register({ name: "/permission", description: "Set permission mode", handler: cmdPermission });
-  registry.register({ name: "/permissions", description: "Manage permission rules (list / revoke / add deny)", handler: cmdPermissions, options: permissionsRulesOptions, pickerTitle: "Permission Rules" });
+  registry.register({ name: "/permissions", description: "Audit permission rules and revoke saved grants", handler: cmdPermissions, options: permissionsRulesOptions, pickerTitle: "Permission Rules" });
   registry.register({ name: "/trust", description: "Review workspace-shipped executable config (MCP / hooks / allow rules)", handler: cmdTrust });
   registry.register({ name: "/rewind", description: "Rewind to a previous turn", handler: cmdRewind, aliases: ["/undo"] });
   registry.register({ name: "/hooks", description: "Manage registered hooks", handler: cmdHooks, options: hooksOptions, pickerTitle: "Hooks" });
@@ -3110,7 +3110,7 @@ function persistPermissionMode(ctx: CommandContext): void {
 }
 
 // ------------------------------------------------------------------
-// /permissions — manage persisted permission rules (list / revoke / deny)
+// /permissions — audit rules and revoke approval-generated grants
 // ------------------------------------------------------------------
 
 function describePermissionRule(rule: Record<string, any>): string {
@@ -3128,11 +3128,14 @@ function permissionsRulesOptions(ctx: CommandOptionsContext): CommandOption[] {
   const rules: Array<Record<string, any>> =
     typeof store?.getAllRules === "function" ? store.getAllRules() : [];
   for (const rule of rules) {
-    const revocable = rule.scope !== "workspace";
+    // Only grants created by Fermi's approval flow are mutable here.
+    // Deny policy and workspace-authored rules remain configuration-file
+    // owned so there is a single, auditable way to author policy.
+    const revocable = rule.action === "allow" && rule.scope !== "workspace";
     options.push({
       label: describePermissionRule(rule),
-      value: revocable ? `revoke:${rule.id}` : "workspace-readonly",
-      detail: revocable ? "revoke" : "read-only file",
+      value: revocable ? `revoke:${rule.id}` : `file-managed:${rule.scope}`,
+      detail: revocable ? "revoke grant" : "edit permissions.json",
     });
   }
   const errors: Array<{ sourcePath: string; index: number; reason: string }> =
@@ -3143,38 +3146,19 @@ function permissionsRulesOptions(ctx: CommandOptionsContext): CommandOption[] {
       value: "noop",
     });
   }
-  options.push({
-    label: "Add deny rule…",
-    value: "deny",
-    customInput: true,
-    inputLabel: "tool [pattern]",
-    inputPlaceholder: "e.g. \"bash git push\" or \"web_fetch\"",
-  });
   if (rules.length === 0 && errors.length === 0) {
     options.unshift({ label: "No permission rules recorded.", value: "noop" });
   }
   return options;
 }
 
-function addDenyRuleFromInput(ctx: CommandContext, input: string): string {
-  const parts = input.trim().split(/\s+/);
-  const tool = parts[0];
-  if (!tool) return "Usage: <tool> [pattern] — e.g. \"bash git push\" or \"web_fetch\"";
-  const pattern = parts.slice(1).join(" ");
-  const store = ctx.session?.permissionRuleStore;
-  if (!store || typeof store.addRule !== "function") return "Permission rule store unavailable.";
-  // Deny rules default to the widest scope the session can persist —
-  // they are protective, and a session-only deny silently expiring is
-  // the surprising outcome.
-  const scope = "global";
-  const rule = store.addRule({
-    type: "tool_pattern",
-    action: "deny",
-    tool,
-    ...(pattern ? { pattern } : {}),
-    scope,
-  });
-  return `Deny rule added (${scope}): ${describePermissionRule(rule)}`;
+function revokeApprovalGrant(store: any, ruleId: string): "revoked" | "file_managed" | "not_found" {
+  const rule = typeof store?.getAllRules === "function"
+    ? (store.getAllRules() as Array<Record<string, any>>).find((candidate) => candidate.id === ruleId)
+    : undefined;
+  if (!rule) return "not_found";
+  if (rule.action !== "allow" || rule.scope === "workspace") return "file_managed";
+  return store.revokeRule(ruleId) ? "revoked" : "not_found";
 }
 
 async function cmdPermissions(ctx: CommandContext, args: string): Promise<void> {
@@ -3187,19 +3171,20 @@ async function cmdPermissions(ctx: CommandContext, args: string): Promise<void> 
   }
 
   const trimmed = args.trim();
-  // Inline advanced usage: /permissions revoke <id> | /permissions deny <tool> [pattern]
+  // Inline advanced usage: /permissions revoke <id>
   if (trimmed) {
     if (trimmed.startsWith("revoke ") || trimmed.startsWith("revoke:")) {
       const id = trimmed.replace(/^revoke[ :]/, "").trim();
-      hint(store.revokeRule(id) ? `Rule ${id} revoked.` : `Rule ${id} not found (workspace rules are file-managed).`);
-      return;
-    }
-    if (trimmed.startsWith("deny ")) {
-      hint(addDenyRuleFromInput(ctx, trimmed.slice(5)));
+      const result = revokeApprovalGrant(store, id);
+      hint(result === "revoked"
+        ? `Rule ${id} revoked.`
+        : result === "file_managed"
+          ? `Rule ${id} is file-managed; edit its permissions.json instead.`
+          : `Rule ${id} not found.`);
       return;
     }
     if (trimmed !== "list") {
-      ctx.showMessage("Usage: /permissions [list | revoke <id> | deny <tool> [pattern]]");
+      ctx.showMessage("Usage: /permissions [list | revoke <id>]");
       return;
     }
   }
@@ -3224,18 +3209,15 @@ async function cmdPermissions(ctx: CommandContext, args: string): Promise<void> 
     );
     if (!picked) return;
     if (picked.value === "noop") continue;
-    if (picked.value === "workspace-readonly") {
-      hint("Workspace rules live in .fermi/permissions.json — edit the file to change them.");
+    if (picked.value.startsWith("file-managed:")) {
+      const scope = picked.value.slice("file-managed:".length);
+      hint(`${scope} policy is file-managed — edit that scope's permissions.json to change it.`);
       continue;
     }
     if (picked.value.startsWith("revoke:")) {
       const id = picked.value.slice("revoke:".length);
-      hint(store.revokeRule(id) ? `Rule ${id} revoked.` : `Failed to revoke ${id}.`);
+      hint(revokeApprovalGrant(store, id) === "revoked" ? `Rule ${id} revoked.` : `Failed to revoke ${id}.`);
       continue; // reopen with the updated list
-    }
-    if (picked.value === "deny") {
-      hint(addDenyRuleFromInput(ctx, picked.note ?? ""));
-      continue;
     }
     return;
   }

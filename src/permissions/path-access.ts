@@ -16,7 +16,7 @@
  * (`/tmp` → `/private/tmp`).
  */
 
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { toPosixPath } from "../security/path.js";
 import { osCapabilities } from "../platform/index.js";
@@ -46,36 +46,54 @@ function isWithin(baseAbs: string, candidateAbs: string): boolean {
   const rel = path.relative(base, candidate);
   if (rel === "") return true;
   if (path.isAbsolute(rel)) return false; // Windows cross-drive safety
-  return !rel.startsWith("..");
-}
-
-function nearestExistingAncestor(targetAbs: string): string | null {
-  let current = targetAbs;
-  while (true) {
-    if (existsSync(current)) return current;
-    const parent = path.dirname(current);
-    if (parent === current) return null;
-    current = parent;
-  }
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`);
 }
 
 /**
- * realpath for existing paths; for missing ones, realpath of the nearest
- * existing ancestor with the untraversed lexical remainder re-appended.
- * Falls back to the lexical path when canonicalization fails outright
- * (permission errors, dangling mounts) — lexical checks still apply.
+ * Canonicalize existing and to-be-created paths, including dangling
+ * symlink components. `existsSync` follows symlinks and therefore reports
+ * a dangling link as absent; simply walking to the nearest "existing"
+ * parent skips the link and misclassifies `project/link/new` as internal
+ * even when `link -> /external/missing`. We walk components with lstat,
+ * expand every symlink lexically, and then continue canonicalization from
+ * its target. A depth guard handles loops conservatively.
  */
-export function canonicalizePath(absPath: string): string {
+export function canonicalizePath(absPath: string, symlinkDepth = 0): string {
+  const resolved = path.resolve(absPath);
   try {
-    if (existsSync(absPath)) return realpathSync(absPath);
-    const ancestor = nearestExistingAncestor(absPath);
-    if (!ancestor) return absPath;
-    const ancestorCanonical = realpathSync(ancestor);
-    const remainder = path.relative(ancestor, absPath);
-    return remainder ? path.join(ancestorCanonical, remainder) : ancestorCanonical;
-  } catch {
-    return absPath;
+    return realpathSync(resolved);
+  } catch { /* missing target or dangling component — resolve below */ }
+
+  if (symlinkDepth >= 40) return resolved;
+
+  const root = path.parse(resolved).root;
+  const relative = path.relative(root, resolved);
+  const components = relative ? relative.split(path.sep).filter(Boolean) : [];
+  let current = root;
+
+  for (let index = 0; index < components.length; index++) {
+    const candidate = path.join(current, components[index]!);
+    try {
+      const stat = lstatSync(candidate);
+      if (stat.isSymbolicLink()) {
+        const linkTarget = readlinkSync(candidate);
+        const targetAbs = path.isAbsolute(linkTarget)
+          ? path.resolve(linkTarget)
+          : path.resolve(path.dirname(candidate), linkTarget);
+        const remainder = components.slice(index + 1);
+        return canonicalizePath(path.join(targetAbs, ...remainder), symlinkDepth + 1);
+      }
+      current = candidate;
+    } catch {
+      // The first missing component is not a symlink. Canonicalize the
+      // prefix accumulated so far and append the untouched remainder.
+      let prefix = current;
+      try { prefix = realpathSync(current); } catch { /* lexical fallback */ }
+      return path.join(prefix, ...components.slice(index));
+    }
   }
+
+  return current;
 }
 
 /**

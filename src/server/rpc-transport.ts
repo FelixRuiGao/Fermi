@@ -40,6 +40,23 @@ export const RPC_ERROR = {
   SESSION_ERROR: -32000,
 } as const;
 
+/** Handler-thrown JSON-RPC error with an explicit wire code. */
+export class RpcRequestError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+
+  constructor(code: number, message: string, data?: unknown) {
+    super(message);
+    this.name = "RpcRequestError";
+    this.code = code;
+    this.data = data;
+  }
+}
+
+export function invalidParams(message: string, data?: unknown): RpcRequestError {
+  return new RpcRequestError(RPC_ERROR.INVALID_PARAMS, message, data);
+}
+
 export type RpcHandler = (params: unknown) => unknown | Promise<unknown>;
 
 export interface RpcServer {
@@ -105,9 +122,11 @@ export function createRpcServer(
       writeFrame({ id: frame.id, result: result ?? null } satisfies RpcResponseOk);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const code = err instanceof RpcRequestError ? err.code : RPC_ERROR.INTERNAL;
+      const data = err instanceof RpcRequestError ? err.data : undefined;
       writeFrame({
         id: frame.id,
-        error: { code: RPC_ERROR.INTERNAL, message },
+        error: { code, message, ...(data !== undefined ? { data } : {}) },
       } satisfies RpcResponseErr);
     }
   };
