@@ -223,6 +223,20 @@ Create `{PROJECT}/.fermi/settings.json` to override global settings for a specif
 
 There are two local layers: the **project-store** layer (`~/.fermi/projects/<slug>/.fermi/settings.json`, system-managed) and the **workspace** layer (`{cwd}/.fermi/settings.json`, user-authored). When both exist, workspace wins on conflict (same merge rules).
 
+## Automatic model-registry refresh
+
+TUI startup checks the signed registry cache with a 6-hour refresh interval.
+A successful background download takes effect on the next startup; there is
+no running-session hot swap. GUI/VS Code server startup does not currently
+trigger the background refresh. Failures keep the previous cache silently.
+
+Every catalog publication must update **both JSON files and their Ed25519
+signatures**: run `bun run scripts/sign-registry.ts fermi-registry-key.pem`,
+verify, then commit/push the JSON and `.sig` files together. The private key
+never goes into Git. Builds and registry tests verify the actual signatures.
+Models needing a newer adapter are excluded from remote tables by
+`minAppVersion`; upgrading catalog data cannot upgrade installed runtime code.
+
 ## Bundled Provider Catalog (verified 2026-10-09)
 
 Model/provider data is maintained in `assets/model-registry/models.json` and

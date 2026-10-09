@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import {
   readCacheMeta,
   shouldRefetch,
   verifyDetachedEd25519,
+  REGISTRY_PUBLIC_KEY_PEM,
 } from "../src/registry-fetch.js";
 import { selectEffectiveRegistry } from "../src/registry-effective.js";
 import { FACTORY_REGISTRY_REVISION } from "../src/model-registry.js";
@@ -50,6 +51,12 @@ function freshHome(): string {
 }
 
 describe("verifyDetachedEd25519", () => {
+  it.each(["models", "providers"])("verifies the published %s registry's actual bytes and signature", (name) => {
+    const data = readFileSync(new URL(`../assets/model-registry/${name}.json`, import.meta.url));
+    const signature = readFileSync(new URL(`../assets/model-registry/${name}.json.sig`, import.meta.url), "utf8");
+    expect(verifyDetachedEd25519(data, signature.trim(), REGISTRY_PUBLIC_KEY_PEM)).toBe(true);
+  });
+
   it("accepts a valid signature, rejects tampering and an empty key", () => {
     const data = new TextEncoder().encode("hello");
     expect(verifyDetachedEd25519(data, sig("hello"), PUB)).toBe(true);

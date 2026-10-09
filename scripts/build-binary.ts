@@ -34,6 +34,14 @@ const host = detectHost();
 // expensive compile so bad registry data can never ship.
 try {
   await import("../src/model-registry.js");
+  const { verifyDetachedEd25519, REGISTRY_PUBLIC_KEY_PEM } = await import("../src/registry-fetch.js");
+  for (const name of ["models", "providers"]) {
+    const data = new Uint8Array(await Bun.file(new URL(`../assets/model-registry/${name}.json`, import.meta.url)).arrayBuffer());
+    const signature = await Bun.file(new URL(`../assets/model-registry/${name}.json.sig`, import.meta.url)).text();
+    if (!verifyDetachedEd25519(data, signature.trim(), REGISTRY_PUBLIC_KEY_PEM)) {
+      throw new Error(`${name}.json signature invalid; re-sign both registry files before building`);
+    }
+  }
   console.log("model/provider registry: valid");
 } catch (err) {
   console.error("model/provider registry INVALID — aborting build:");

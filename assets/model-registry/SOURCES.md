@@ -13,6 +13,15 @@ remote delivery. Factory registries load them immediately. `registryRevision`
 and provider revisions must match. Do not distribute a
 signed remote registry to older binaries without these gates.
 
+## Publication and refresh
+
+Catalog updates must be signed with `scripts/sign-registry.ts` and pushed with
+their `.sig` files. Builds and tests verify these signatures against the embedded
+public key. TUI refresh is checked at startup with a 6-hour cache interval and
+takes effect on the next launch. It is not a running-session hot swap. A newer
+model table cannot replace an older binary’s adapters; `minAppVersion` still
+applies. Server-mode clients currently do not trigger the refresh.
+
 ## OpenAI API and ChatGPT Login
 
 - [Model catalog](https://developers.openai.com/api/docs/models)
