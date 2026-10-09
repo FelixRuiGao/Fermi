@@ -9,6 +9,8 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+## v0.4.2
+
 ### Providers and models
 
 - Model catalogs now check immediately on startup and every 3 minutes in TUI, init, and GUI/VS Code server mode. Verified newer catalogs switch live, refreshing model choices and configuration without a restart; active requests finish safely and the next request uses the new settings.
