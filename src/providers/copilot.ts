@@ -28,6 +28,8 @@ import {
 } from "./base.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAIResponsesProvider } from "./openai-responses.js";
+import { OpenAIChatProvider } from "./openai-chat.js";
+import { isCopilotChatModel } from "../thinking-artifact.js";
 import {
   buildCopilotRequestHeaders,
   detectAgentInMessages,
@@ -161,6 +163,41 @@ class CopilotResponsesImpl extends OpenAIResponsesProvider {
   }
 }
 
+// Gemini and Kimi are advertised on /chat/completions, not /responses.
+class CopilotChatImpl extends OpenAIChatProvider {
+  protected override _applyThinkingParams(kwargs: Record<string, unknown>, options?: SendMessageOptions): void {
+    if (!this._config.supportsThinking) return;
+    kwargs["reasoning_effort"] = options?.thinkingLevel ?? "high";
+    if (this._config.model.startsWith("kimi-")) {
+      delete kwargs["temperature"];
+    }
+  }
+
+  private async _refreshClient(vision: boolean, isAgent: boolean): Promise<void> {
+    const token = await copilotTokenManager.getToken();
+    this._client = new OpenAI({
+      apiKey: token.token,
+      baseURL: token.endpointApi,
+      defaultHeaders: buildCopilotRequestHeaders({ vision, isAgent }),
+      maxRetries: 0,
+    });
+  }
+
+  override async sendMessage(messages: Message[], tools?: ToolDef[], options?: SendMessageOptions): Promise<ProviderResponse> {
+    const vision = detectVisionInMessages(messages);
+    const isAgent = detectAgentInMessages(messages);
+    await this._refreshClient(vision, isAgent);
+    try {
+      return await super.sendMessage(messages, tools, options);
+    } catch (error) {
+      if (!is401Error(error)) throw error;
+      copilotTokenManager.invalidate();
+      await this._refreshClient(vision, isAgent);
+      return await super.sendMessage(messages, tools, options);
+    }
+  }
+}
+
 // =============================================================================
 // Dispatcher: the only class exposed to registry.ts
 // =============================================================================
@@ -187,6 +224,8 @@ export class CopilotProvider extends BaseProvider {
 
     if (isAnthropicShapedModel(modelId)) {
       this._inner = new CopilotAnthropicImpl(config);
+    } else if (isCopilotChatModel(modelId)) {
+      this._inner = new CopilotChatImpl(config);
     } else {
       this._inner = new CopilotResponsesImpl(config);
     }

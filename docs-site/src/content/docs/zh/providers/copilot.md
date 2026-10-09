@@ -30,7 +30,7 @@ GitHub token 保存在 `~/.fermi/state/oauth.json` 的 `github_copilot` 字段�
 
 ## 可用模型
 
-登录后，模型列表会从 GitHub 的 Copilot catalog（`/models`）实时获取，因此 `/model` 选择器会准确反映你的订阅可以调用的模型。新模型会自动出现，你的套餐无法使用的模型会被隐藏。典型模型包括 Claude Opus 4.8 / 4.7、Claude Sonnet 4.6，以及 GPT-5.x 系列（5.3 Codex、5.4、5.4 Mini、5.5、5 Mini）。
+Fermi 的预设包括 Claude 5.5/Fable 5.1、GPT-6/6.1/5.6、Gemini 3.7/3.8 Flash、Kimi K3、MAI-Code-1.1 Flash 和仍受支持的旧型号。登录后通过 `/models` 的账号策略过滤显示；厂商自己的客户端有模型，不代表当前第三方入口也能调用。Opus 4.7 已退役；Sonnet 4.6 仅保留给符合条件的年付 Pro/Pro+ 账号。
 
 ## 计费
 

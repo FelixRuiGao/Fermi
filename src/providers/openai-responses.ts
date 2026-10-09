@@ -33,7 +33,8 @@ import {
 
 // Models that don't support `temperature` on OpenAI Responses API.
 const O_SERIES_RE = /^o\d/;
-const GPT5_SERIES_RE = /^gpt-5(?:$|[.-])/;
+const GPT_REASONING_SERIES_RE = /^gpt-[56](?:$|[.-])/;
+const NEW_CACHE_MODEL_RE = /^gpt-(?:6(?:$|[.-])|5\.6(?:$|[.-]))/;
 
 function normalizeModelId(model: string): string {
   const idx = model.lastIndexOf("/");
@@ -44,7 +45,7 @@ function supportsTemperature(model: string): boolean {
   const normalized = normalizeModelId(model).toLowerCase();
   return !(
     O_SERIES_RE.test(normalized)
-    || GPT5_SERIES_RE.test(normalized)
+    || GPT_REASONING_SERIES_RE.test(normalized)
   );
 }
 
@@ -426,7 +427,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
       usage = new Usage(
         (respUsage["input_tokens"] as number) || 0,
         (respUsage["output_tokens"] as number) || 0,
-        0, // no cache creation for OpenAI
+        inputDetails?.["cache_write_tokens"] ?? 0,
         inputDetails?.["cached_tokens"] ?? 0,
       );
     }
@@ -459,12 +460,13 @@ export class OpenAIResponsesProvider extends BaseProvider {
     const level = options?.thinkingLevel;
 
     if (level === "off" || level === "none") {
-      kwargs["reasoning"] = { effort: "none", summary: "auto" };
+      const alwaysReasoning = /^gpt-(?:6-astra|6\.1-sol)(?:$|-)/.test(normalizeModelId(this._config.model));
+      kwargs["reasoning"] = { effort: alwaysReasoning ? "low" : "none", summary: "auto" };
       return;
     }
 
     let effort: string;
-    if (level && ["minimal", "low", "medium", "high", "xhigh"].includes(level)) {
+    if (level && ["minimal", "low", "medium", "high", "xhigh", "max"].includes(level)) {
       effort = level;
     } else {
       // default: derive from budget
@@ -628,6 +630,23 @@ export class OpenAIResponsesProvider extends BaseProvider {
     if (!this._isStatelessResponsesBackend() && getExtendedCacheSupport(this._config.model)) {
       kwargs["prompt_cache_retention"] = "24h";
     }
+    // GPT-5.6/6 replaced retention with cache options. Only OpenAI's API
+    // accepts this policy; Codex and Copilot manage their own caches.
+    if (this._config.provider === "openai" && NEW_CACHE_MODEL_RE.test(normalizeModelId(this._config.model))) {
+      delete kwargs["prompt_cache_retention"];
+      kwargs["prompt_cache_options"] = {
+        ttl: "30m",
+        ...((kwargs["prompt_cache_options"] as Record<string, unknown>) ?? {}),
+      };
+    }
+    // Enforce the new reasoning-model sampling contract after extra config.
+    if (NEW_CACHE_MODEL_RE.test(normalizeModelId(this._config.model))
+      && (kwargs["reasoning"] as Record<string, unknown> | undefined)?.["effort"] !== "none") {
+      for (const key of ["temperature", "top_p", "top_logprobs"]) delete kwargs[key];
+      if (Array.isArray(kwargs["include"])) {
+        kwargs["include"] = (kwargs["include"] as string[]).filter((value) => value !== "message.output_text.logprobs");
+      }
+    }
 
     // The Codex backend (chatgpt.com) silently degrades — not 4xx — on fields the
     // official Codex CLI never sends, which is one suspected source of fixed-latency
@@ -641,6 +660,7 @@ export class OpenAIResponsesProvider extends BaseProvider {
         "top_p",
         "metadata",
         "prompt_cache_retention",
+        "prompt_cache_options",
       ]) {
         delete kwargs[field];
       }

@@ -26,17 +26,28 @@ export class GLMProvider extends OpenAIChatProvider {
   ): void {
     if (!this._config.supportsThinking) return;
     const level = options?.thinkingLevel;
+    // GLM-5.2 has high/max effort; GLM-5.3 adds low and cannot turn
+    // thinking off. Older models still use the binary thinking switch.
+    if (/^glm-5\.[23](?:$|-)/.test(this._config.model)) {
+      const forced = this._config.model.startsWith("glm-5.3");
+      if (forced || (level !== "off" && level !== "none")) {
+        Object.assign(kwargs, {
+          thinking: { type: "enabled", clear_thinking: false },
+          reasoning_effort: forced && (level === "low" || level === "off" || level === "none") ? "low" : level === "high" ? "high" : "max",
+          ...(options?.onTextChunk || options?.onReasoningChunk || options?.onToolCallPartial ? { tool_stream: true } : {}),
+        });
+        return;
+      }
+    }
     if (level === "off" || level === "none") {
-      kwargs["extra_body"] = {
-        ...((kwargs["extra_body"] as Record<string, unknown>) || {}),
+      Object.assign(kwargs, {
         thinking: { type: "disabled" },
-      };
+      });
       return;
     }
-    kwargs["extra_body"] = {
-      ...((kwargs["extra_body"] as Record<string, unknown>) || {}),
+    Object.assign(kwargs, {
       thinking: { type: "enabled", clear_thinking: false },
-    };
+    });
   }
 
   protected override _convertTools(

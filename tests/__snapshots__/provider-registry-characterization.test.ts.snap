@@ -7,6 +7,46 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "anthropic",
     "models": [
       {
+        "id": "claude-fable-5-1",
+        "key": "claude-fable-5-1",
+        "label": "Claude Fable 5.1",
+      },
+      {
+        "id": "claude-opus-5-5",
+        "key": "claude-opus-5-5",
+        "label": "Claude Opus 5.5",
+      },
+      {
+        "id": "claude-sonnet-5-5",
+        "key": "claude-sonnet-5-5",
+        "label": "Claude Sonnet 5.5",
+      },
+      {
+        "id": "claude-haiku-5-5",
+        "key": "claude-haiku-5-5",
+        "label": "Claude Haiku 5.5",
+      },
+      {
+        "id": "claude-fable-5",
+        "key": "claude-fable-5",
+        "label": "Claude Fable 5",
+      },
+      {
+        "id": "claude-opus-5",
+        "key": "claude-opus-5",
+        "label": "Claude Opus 5",
+      },
+      {
+        "id": "claude-sonnet-5",
+        "key": "claude-sonnet-5",
+        "label": "Claude Sonnet 5",
+      },
+      {
+        "id": "claude-opus-4-8",
+        "key": "claude-opus-4-8",
+        "label": "Claude Opus 4.8",
+      },
+      {
         "id": "claude-haiku-4-5",
         "key": "claude-haiku-4-5",
         "label": "Claude Haiku 4.5",
@@ -18,15 +58,12 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
-          "betas": [
-            "context-1m-2025-08-07",
-          ],
           "context_length": 1000000,
         },
         "id": "claude-sonnet-4-6",
         "key": "claude-sonnet-4-6-1m",
-        "label": "Claude Sonnet 4.6 (1M context beta)",
-        "optionNote": "1M context beta",
+        "label": "Claude Sonnet 4.6 (1M context)",
+        "optionNote": "1M context (legacy selector)",
       },
       {
         "id": "claude-opus-4-6",
@@ -35,15 +72,12 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
-          "betas": [
-            "context-1m-2025-08-07",
-          ],
           "context_length": 1000000,
         },
         "id": "claude-opus-4-6",
         "key": "claude-opus-4-6-1m",
-        "label": "Claude Opus 4.6 (1M context beta)",
-        "optionNote": "1M context beta",
+        "label": "Claude Opus 4.6 (1M context)",
+        "optionNote": "1M context (legacy selector)",
       },
       {
         "id": "claude-opus-4-7",
@@ -58,6 +92,41 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "openai",
     "models": [
       {
+        "id": "gpt-6.1-sol",
+        "key": "gpt-6.1-sol",
+        "label": "GPT-6.1 Sol",
+      },
+      {
+        "id": "gpt-6-astra",
+        "key": "gpt-6-astra",
+        "label": "GPT-6 Astra",
+      },
+      {
+        "id": "gpt-6-sol",
+        "key": "gpt-6-sol",
+        "label": "GPT-6 Sol",
+      },
+      {
+        "id": "gpt-6-luna",
+        "key": "gpt-6-luna",
+        "label": "GPT-6 Luna",
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "key": "gpt-5.6-sol",
+        "label": "GPT-5.6 Sol",
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "key": "gpt-5.6-terra",
+        "label": "GPT-5.6 Terra",
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "key": "gpt-5.6-luna",
+        "label": "GPT-5.6 Luna",
+      },
+      {
         "id": "gpt-5.2",
         "key": "gpt-5.2",
         "label": "GPT-5.2",
@@ -71,6 +140,7 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "id": "gpt-5.3-codex",
         "key": "gpt-5.3-codex",
         "label": "GPT-5.3 Codex",
+        "optionNote": "Deprecated; retires 2027-04-01",
       },
       {
         "id": "gpt-5.4",
@@ -86,6 +156,7 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "id": "gpt-5.4-nano",
         "key": "gpt-5.4-nano",
         "label": "GPT-5.4 Nano",
+        "optionNote": "Deprecated; retires 2027-04-01",
       },
       {
         "id": "gpt-5.5",
@@ -101,43 +172,77 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "models": [
       {
         "config": {
+          "context_length": 272000,
           "store": false,
           "supports_web_search": false,
         },
-        "id": "gpt-5.2-codex",
-        "key": "gpt-5.2-codex",
-        "label": "GPT-5.2 Codex",
+        "id": "gpt-6.1-sol",
+        "key": "gpt-6.1-sol",
+        "label": "GPT-6.1 Sol",
       },
       {
         "config": {
+          "context_length": 272000,
           "store": false,
           "supports_web_search": false,
         },
-        "id": "gpt-5.3-codex",
-        "key": "gpt-5.3-codex",
-        "label": "GPT-5.3 Codex",
+        "id": "gpt-6-astra",
+        "key": "gpt-6-astra",
+        "label": "GPT-6 Astra",
       },
       {
         "config": {
+          "context_length": 272000,
           "store": false,
           "supports_web_search": false,
         },
-        "id": "gpt-5.4",
-        "key": "gpt-5.4",
-        "label": "GPT-5.4",
+        "id": "gpt-6-sol",
+        "key": "gpt-6-sol",
+        "label": "GPT-6 Sol",
       },
       {
         "config": {
+          "context_length": 272000,
           "store": false,
           "supports_web_search": false,
         },
-        "id": "gpt-5.4-mini",
-        "key": "gpt-5.4-mini",
-        "label": "GPT-5.4 Mini",
+        "id": "gpt-6-luna",
+        "key": "gpt-6-luna",
+        "label": "GPT-6 Luna",
       },
       {
         "config": {
-          "context_length": 400000,
+          "context_length": 272000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-5.6-sol",
+        "key": "gpt-5.6-sol",
+        "label": "GPT-5.6 Sol",
+      },
+      {
+        "config": {
+          "context_length": 272000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-5.6-terra",
+        "key": "gpt-5.6-terra",
+        "label": "GPT-5.6 Terra",
+      },
+      {
+        "config": {
+          "context_length": 272000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-5.6-luna",
+        "key": "gpt-5.6-luna",
+        "label": "GPT-5.6 Luna",
+      },
+      {
+        "config": {
+          "context_length": 272000,
           "store": false,
           "supports_web_search": false,
         },
@@ -154,6 +259,78 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "models": [
       {
         "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-fable-5.1",
+        "key": "claude-fable-5.1",
+        "label": "Claude Fable 5.1",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-opus-5.5",
+        "key": "claude-opus-5.5",
+        "label": "Claude Opus 5.5",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-sonnet-5.5",
+        "key": "claude-sonnet-5.5",
+        "label": "Claude Sonnet 5.5",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-haiku-5.5",
+        "key": "claude-haiku-5.5",
+        "label": "Claude Haiku 5.5",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-fable-5",
+        "key": "claude-fable-5",
+        "label": "Claude Fable 5",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-opus-5",
+        "key": "claude-opus-5",
+        "label": "Claude Opus 5",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-sonnet-5",
+        "key": "claude-sonnet-5",
+        "label": "Claude Sonnet 5",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
           "supports_web_search": false,
         },
         "id": "claude-opus-4.8",
@@ -162,11 +339,23 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
           "supports_web_search": false,
         },
-        "id": "claude-opus-4.7",
-        "key": "claude-opus-4.7",
-        "label": "Claude Opus 4.7",
+        "id": "claude-opus-4.8-fast",
+        "key": "claude-opus-4.8-fast",
+        "label": "Claude Opus 4.8",
+      },
+      {
+        "config": {
+          "context_length": 200000,
+          "max_tokens": 32000,
+          "supports_web_search": false,
+        },
+        "id": "claude-haiku-4.5",
+        "key": "claude-haiku-4.5",
+        "label": "Claude Haiku 4.5",
       },
       {
         "config": {
@@ -175,9 +364,89 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "id": "claude-sonnet-4.6",
         "key": "claude-sonnet-4.6",
         "label": "Claude Sonnet 4.6",
+        "optionNote": "Annual Pro/Pro+ plans only",
       },
       {
         "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-6.1-sol",
+        "key": "gpt-6.1-sol",
+        "label": "GPT-6.1 Sol",
+      },
+      {
+        "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-6-astra",
+        "key": "gpt-6-astra",
+        "label": "GPT-6 Astra",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-6-sol",
+        "key": "gpt-6-sol",
+        "label": "GPT-6 Sol",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-6-luna",
+        "key": "gpt-6-luna",
+        "label": "GPT-6 Luna",
+      },
+      {
+        "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-5.6-sol",
+        "key": "gpt-5.6-sol",
+        "label": "GPT-5.6 Sol",
+      },
+      {
+        "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-5.6-terra",
+        "key": "gpt-5.6-terra",
+        "label": "GPT-5.6 Terra",
+      },
+      {
+        "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gpt-5.6-luna",
+        "key": "gpt-5.6-luna",
+        "label": "GPT-5.6 Luna",
+      },
+      {
+        "config": {
+          "context_length": 400000,
+          "max_tokens": 32000,
           "store": false,
           "supports_web_search": false,
         },
@@ -187,6 +456,8 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
           "store": false,
           "supports_web_search": false,
         },
@@ -196,6 +467,8 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
+          "context_length": 400000,
+          "max_tokens": 32000,
           "store": false,
           "supports_web_search": false,
         },
@@ -205,6 +478,8 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
+          "context_length": 1050000,
+          "max_tokens": 32000,
           "store": false,
           "supports_web_search": false,
         },
@@ -214,12 +489,58 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
       },
       {
         "config": {
+          "context_length": 264000,
+          "max_tokens": 32000,
           "store": false,
           "supports_web_search": false,
         },
         "id": "gpt-5-mini",
         "key": "gpt-5-mini",
         "label": "GPT-5 Mini",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gemini-3.8-flash",
+        "key": "gemini-3.8-flash",
+        "label": "Gemini 3.8 Flash",
+      },
+      {
+        "config": {
+          "context_length": 1000000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "gemini-3.7-flash",
+        "key": "gemini-3.7-flash",
+        "label": "Gemini 3.7 Flash",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "kimi-k3",
+        "key": "kimi-k3",
+        "label": "Kimi K3",
+      },
+      {
+        "config": {
+          "context_length": 256000,
+          "max_tokens": 32000,
+          "store": false,
+          "supports_web_search": false,
+        },
+        "id": "mai-code-1.1-flash",
+        "key": "mai-code-1.1-flash",
+        "label": "MAI-Code-1.1 Flash",
       },
     ],
     "name": "GitHub Copilot",
@@ -231,19 +552,84 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "qwen",
     "models": [
       {
-        "id": "qwen3.6-plus",
-        "key": "qwen3.6-plus",
-        "label": "Qwen3.6 Plus",
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-max",
+        "key": "qwen3.8-max",
+        "label": "Qwen3.8 Max",
       },
       {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-max-0902",
+        "key": "qwen3.8-max-0902",
+        "label": "Qwen3.8 Max (0902)",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-flash",
+        "key": "qwen3.8-flash",
+        "label": "Qwen3.8 Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-omni-flash",
+        "key": "qwen3.8-omni-flash",
+        "label": "Qwen3.8 Omni Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
         "id": "qwen3.7-plus",
         "key": "qwen3.7-plus",
         "label": "Qwen3.7 Plus",
       },
       {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.7-flash",
+        "key": "qwen3.7-flash",
+        "label": "Qwen3.7 Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-27b",
+        "key": "qwen3.8-27b",
+        "label": "Qwen3.8 27B",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-2.4t-a95b",
+        "key": "qwen3.8-2.4t-a95b",
+        "label": "Qwen3.8 2.4T A95B",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
         "id": "qwen3.7-max",
         "key": "qwen3.7-max",
         "label": "Qwen3.7 Max",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.6-plus",
+        "key": "qwen3.6-plus",
+        "label": "Qwen3.6 Plus",
       },
     ],
     "name": "Qwen / DashScope (China)",
@@ -256,19 +642,84 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "qwen-intl",
     "models": [
       {
-        "id": "qwen3.6-plus",
-        "key": "qwen3.6-plus",
-        "label": "Qwen3.6 Plus",
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-max",
+        "key": "qwen3.8-max",
+        "label": "Qwen3.8 Max",
       },
       {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-max-0902",
+        "key": "qwen3.8-max-0902",
+        "label": "Qwen3.8 Max (0902)",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-flash",
+        "key": "qwen3.8-flash",
+        "label": "Qwen3.8 Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-omni-flash",
+        "key": "qwen3.8-omni-flash",
+        "label": "Qwen3.8 Omni Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
         "id": "qwen3.7-plus",
         "key": "qwen3.7-plus",
         "label": "Qwen3.7 Plus",
       },
       {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.7-flash",
+        "key": "qwen3.7-flash",
+        "label": "Qwen3.7 Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-27b",
+        "key": "qwen3.8-27b",
+        "label": "Qwen3.8 27B",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-2.4t-a95b",
+        "key": "qwen3.8-2.4t-a95b",
+        "label": "Qwen3.8 2.4T A95B",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
         "id": "qwen3.7-max",
         "key": "qwen3.7-max",
         "label": "Qwen3.7 Max",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.6-plus",
+        "key": "qwen3.6-plus",
+        "label": "Qwen3.6 Plus",
       },
     ],
     "name": "Qwen / DashScope (Singapore)",
@@ -281,19 +732,68 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "qwen-us",
     "models": [
       {
-        "id": "qwen3.6-plus",
-        "key": "qwen3.6-plus",
-        "label": "Qwen3.6 Plus",
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-max",
+        "key": "qwen3.8-max",
+        "label": "Qwen3.8 Max",
       },
       {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-max-0902",
+        "key": "qwen3.8-max-0902",
+        "label": "Qwen3.8 Max (0902)",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-flash",
+        "key": "qwen3.8-flash",
+        "label": "Qwen3.8 Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.8-omni-flash",
+        "key": "qwen3.8-omni-flash",
+        "label": "Qwen3.8 Omni Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
         "id": "qwen3.7-plus",
         "key": "qwen3.7-plus",
         "label": "Qwen3.7 Plus",
       },
       {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.7-flash",
+        "key": "qwen3.7-flash",
+        "label": "Qwen3.7 Flash",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
         "id": "qwen3.7-max",
         "key": "qwen3.7-max",
         "label": "Qwen3.7 Max",
+      },
+      {
+        "config": {
+          "context_length": 800000,
+        },
+        "id": "qwen3.6-plus",
+        "key": "qwen3.6-plus",
+        "label": "Qwen3.6 Plus",
       },
     ],
     "name": "Qwen / DashScope (US)",
@@ -306,24 +806,24 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "kimi",
     "models": [
       {
+        "id": "kimi-k3",
+        "key": "kimi-k3",
+        "label": "Kimi K3",
+      },
+      {
         "id": "kimi-k2.7-code",
         "key": "kimi-k2.7-code",
         "label": "Kimi K2.7 Code",
       },
       {
+        "id": "kimi-k2.7-code-highspeed",
+        "key": "kimi-k2.7-code-highspeed",
+        "label": "Kimi K2.7 Code Highspeed",
+      },
+      {
         "id": "kimi-k2.6",
         "key": "kimi-k2.6",
         "label": "Kimi K2.6",
-      },
-      {
-        "id": "kimi-k2.5",
-        "key": "kimi-k2.5",
-        "label": "Kimi K2.5",
-      },
-      {
-        "id": "kimi-k2-instruct",
-        "key": "kimi-k2-instruct",
-        "label": "Kimi K2 Instruct",
       },
     ],
     "name": "Moonshot (Kimi) Global",
@@ -336,24 +836,24 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "kimi-cn",
     "models": [
       {
+        "id": "kimi-k3",
+        "key": "kimi-k3",
+        "label": "Kimi K3",
+      },
+      {
         "id": "kimi-k2.7-code",
         "key": "kimi-k2.7-code",
         "label": "Kimi K2.7 Code",
       },
       {
+        "id": "kimi-k2.7-code-highspeed",
+        "key": "kimi-k2.7-code-highspeed",
+        "label": "Kimi K2.7 Code Highspeed",
+      },
+      {
         "id": "kimi-k2.6",
         "key": "kimi-k2.6",
         "label": "Kimi K2.6",
-      },
-      {
-        "id": "kimi-k2.5",
-        "key": "kimi-k2.5",
-        "label": "Kimi K2.5",
-      },
-      {
-        "id": "kimi-k2-instruct",
-        "key": "kimi-k2-instruct",
-        "label": "Kimi K2 Instruct",
       },
     ],
     "name": "Moonshot (Kimi) China",
@@ -366,24 +866,29 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "kimi-code",
     "models": [
       {
-        "id": "kimi-k2.7-code",
-        "key": "kimi-k2.7-code",
-        "label": "Kimi K2.7 Code",
+        "config": {
+          "context_length": 1048576,
+        },
+        "id": "k3",
+        "key": "k3",
+        "label": "Kimi K3",
+        "optionNote": "1M requires Pro/Allegretto or higher",
       },
       {
-        "id": "kimi-k2.6",
-        "key": "kimi-k2.6",
-        "label": "Kimi K2.6",
+        "id": "k3-256k",
+        "key": "k3-256k",
+        "label": "Kimi K3 (256K)",
       },
       {
-        "id": "kimi-k2.5",
-        "key": "kimi-k2.5",
-        "label": "Kimi K2.5",
+        "id": "kimi-for-coding",
+        "key": "kimi-for-coding",
+        "label": "Kimi K2.8 Preview",
       },
       {
-        "id": "kimi-k2-instruct",
-        "key": "kimi-k2-instruct",
-        "label": "Kimi K2 Instruct",
+        "id": "kimi-for-coding-highspeed",
+        "key": "kimi-for-coding-highspeed",
+        "label": "Kimi K2.7 Code Highspeed",
+        "optionNote": "Pro/Allegretto or higher",
       },
     ],
     "name": "Kimi Code (Coding Plan)",
@@ -395,6 +900,12 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "MiniMax",
     "id": "minimax",
     "models": [
+      {
+        "id": "MiniMax-M3.1-Flash-Preview",
+        "key": "MiniMax-M3.1-Flash-Preview",
+        "label": "MiniMax M3.1 Flash Preview",
+        "optionNote": "M Plan only (preview)",
+      },
       {
         "id": "MiniMax-M3",
         "key": "MiniMax-M3",
@@ -431,6 +942,12 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "minimax-cn",
     "models": [
       {
+        "id": "MiniMax-M3.1-Flash-Preview",
+        "key": "MiniMax-M3.1-Flash-Preview",
+        "label": "MiniMax M3.1 Flash Preview",
+        "optionNote": "M Plan only (preview)",
+      },
+      {
         "id": "MiniMax-M3",
         "key": "MiniMax-M3",
         "label": "MiniMax M3",
@@ -465,6 +982,26 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "z.ai (GLM/Zhipu)",
     "id": "glm",
     "models": [
+      {
+        "id": "glm-5.3",
+        "key": "glm-5.3",
+        "label": "GLM-5.3",
+      },
+      {
+        "id": "glm-5.3-flash",
+        "key": "glm-5.3-flash",
+        "label": "GLM-5.3 Flash",
+      },
+      {
+        "id": "glm-5.3-flashx",
+        "key": "glm-5.3-flashx",
+        "label": "GLM-5.3 FlashX",
+      },
+      {
+        "id": "glm-5.2",
+        "key": "glm-5.2",
+        "label": "GLM-5.2",
+      },
       {
         "id": "glm-5.1",
         "key": "glm-5.1",
@@ -501,6 +1038,26 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "glm-intl",
     "models": [
       {
+        "id": "glm-5.3",
+        "key": "glm-5.3",
+        "label": "GLM-5.3",
+      },
+      {
+        "id": "glm-5.3-flash",
+        "key": "glm-5.3-flash",
+        "label": "GLM-5.3 Flash",
+      },
+      {
+        "id": "glm-5.3-flashx",
+        "key": "glm-5.3-flashx",
+        "label": "GLM-5.3 FlashX",
+      },
+      {
+        "id": "glm-5.2",
+        "key": "glm-5.2",
+        "label": "GLM-5.2",
+      },
+      {
         "id": "glm-5.1",
         "key": "glm-5.1",
         "label": "GLM-5.1",
@@ -535,6 +1092,16 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "groupLabel": "z.ai (GLM/Zhipu)",
     "id": "glm-code",
     "models": [
+      {
+        "id": "glm-5.3",
+        "key": "glm-5.3",
+        "label": "GLM-5.3",
+      },
+      {
+        "id": "glm-5.3-flash",
+        "key": "glm-5.3-flash",
+        "label": "GLM-5.3 Flash",
+      },
       {
         "id": "glm-5.2",
         "key": "glm-5.2",
@@ -576,6 +1143,16 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "glm-intl-code",
     "models": [
       {
+        "id": "glm-5.3",
+        "key": "glm-5.3",
+        "label": "GLM-5.3",
+      },
+      {
+        "id": "glm-5.3-flash",
+        "key": "glm-5.3-flash",
+        "label": "GLM-5.3 Flash",
+      },
+      {
         "id": "glm-5.2",
         "key": "glm-5.2",
         "label": "GLM-5.2",
@@ -614,14 +1191,24 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "deepseek",
     "models": [
       {
+        "id": "deepseek-flash",
+        "key": "deepseek-flash",
+        "label": "DeepSeek V4.1 Flash",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "supports_multimodal": true,
+        },
         "id": "deepseek-v4-flash",
         "key": "deepseek-v4-flash",
-        "label": "DeepSeek V4 Flash",
+        "label": "DeepSeek V4.1 Flash (legacy V4 Flash ID)",
+        "optionNote": "Routes to V4.1 Flash",
       },
       {
         "id": "deepseek-v4-pro",
         "key": "deepseek-v4-pro",
-        "label": "DeepSeek V4 Pro",
+        "label": "DeepSeek V4 Pro (0813)",
       },
     ],
     "name": "DeepSeek",
@@ -631,14 +1218,32 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "xiaomi",
     "models": [
       {
+        "id": "mimo-v2.6-pro",
+        "key": "mimo-v2.6-pro",
+        "label": "MiMo V2.6 Pro",
+      },
+      {
+        "id": "mimo-v2.6-flash",
+        "key": "mimo-v2.6-flash",
+        "label": "MiMo V2.6 Flash",
+      },
+      {
+        "id": "mimo-v2.6-pro-ultraspeed",
+        "key": "mimo-v2.6-pro-ultraspeed",
+        "label": "MiMo V2.6 Pro UltraSpeed",
+        "optionNote": "Access required",
+      },
+      {
         "id": "mimo-v2.5",
         "key": "mimo-v2.5",
         "label": "MiMo V2.5",
+        "optionNote": "Retires 2026-10-21",
       },
       {
         "id": "mimo-v2.5-pro",
         "key": "mimo-v2.5-pro",
         "label": "MiMo V2.5 Pro",
+        "optionNote": "Retires 2026-10-21",
       },
     ],
     "name": "Xiaomi (MiMo)",
@@ -672,9 +1277,315 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
     "id": "openrouter",
     "models": [
       {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-fable-5.1",
+        "key": "anthropic/claude-fable-5.1",
+        "label": "Claude Fable 5.1",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-opus-5.5",
+        "key": "anthropic/claude-opus-5.5",
+        "label": "Claude Opus 5.5",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-sonnet-5.5",
+        "key": "anthropic/claude-sonnet-5.5",
+        "label": "Claude Sonnet 5.5",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-haiku-5.5",
+        "key": "anthropic/claude-haiku-5.5",
+        "label": "Claude Haiku 5.5",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-fable-5",
+        "key": "anthropic/claude-fable-5",
+        "label": "Claude Fable 5",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-opus-5",
+        "key": "anthropic/claude-opus-5",
+        "label": "Claude Opus 5",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-sonnet-5",
+        "key": "anthropic/claude-sonnet-5",
+        "label": "Claude Sonnet 5",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "anthropic/claude-opus-4.8",
+        "key": "anthropic/claude-opus-4.8",
+        "label": "Claude Opus 4.8",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6.1-sol",
+        "key": "openai/gpt-6.1-sol",
+        "label": "GPT-6.1 Sol",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6-astra",
+        "key": "openai/gpt-6-astra",
+        "label": "GPT-6 Astra",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6-sol",
+        "key": "openai/gpt-6-sol",
+        "label": "GPT-6 Sol",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6-luna",
+        "key": "openai/gpt-6-luna",
+        "label": "GPT-6 Luna",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.6-sol",
+        "key": "openai/gpt-5.6-sol",
+        "label": "GPT-5.6 Sol",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.6-terra",
+        "key": "openai/gpt-5.6-terra",
+        "label": "GPT-5.6 Terra",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.6-luna",
+        "key": "openai/gpt-5.6-luna",
+        "label": "GPT-5.6 Luna",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.4-mini",
+        "key": "openai/gpt-5.4-mini",
+        "label": "GPT-5.4 Mini",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.4-nano",
+        "key": "openai/gpt-5.4-nano",
+        "label": "GPT-5.4 Nano",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.8-max-0902",
+        "key": "qwen/qwen3.8-max-0902",
+        "label": "Qwen3.8 Max (0902)",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.8-max-prime",
+        "key": "qwen/qwen3.8-max-prime",
+        "label": "Qwen3.8 Max Prime",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.8-flash",
+        "key": "qwen/qwen3.8-flash",
+        "label": "Qwen3.8 Flash",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.8-omni-flash",
+        "key": "qwen/qwen3.8-omni-flash",
+        "label": "Qwen3.8 Omni Flash",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.8-27b",
+        "key": "qwen/qwen3.8-27b",
+        "label": "Qwen3.8 27B",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.8-2.4t-a95b",
+        "key": "qwen/qwen3.8-2.4t-a95b",
+        "label": "Qwen3.8 2.4T A95B",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "qwen/qwen3.7-flash",
+        "key": "qwen/qwen3.7-flash",
+        "label": "Qwen3.7 Flash",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "moonshotai/kimi-k3",
+        "key": "moonshotai/kimi-k3",
+        "label": "Kimi K3",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "moonshotai/kimi-k2.7-code",
+        "key": "moonshotai/kimi-k2.7-code",
+        "label": "Kimi K2.7 Code",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "supports_web_search": false,
+        },
+        "id": "z-ai/glm-5.3",
+        "key": "z-ai/glm-5.3",
+        "label": "GLM-5.3",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "z-ai/glm-5.3-prime",
+        "key": "z-ai/glm-5.3-prime",
+        "label": "GLM 5.3 Prime",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "supports_web_search": false,
+        },
+        "id": "z-ai/glm-5.3-flash",
+        "key": "z-ai/glm-5.3-flash",
+        "label": "GLM-5.3 Flash",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "supports_web_search": false,
+        },
+        "id": "z-ai/glm-5.3-flashx",
+        "key": "z-ai/glm-5.3-flashx",
+        "label": "GLM-5.3 FlashX",
+      },
+      {
+        "config": {
+          "context_length": 1048576,
+          "supports_web_search": false,
+        },
+        "id": "z-ai/glm-5.2",
+        "key": "z-ai/glm-5.2",
+        "label": "GLM-5.2",
+      },
+      {
+        "config": {
+          "context_length": 1050000,
+          "supports_web_search": false,
+        },
+        "id": "xiaomi/mimo-v2.6-flash",
+        "key": "xiaomi/mimo-v2.6-flash",
+        "label": "MiMo V2.6 Flash",
+      },
+      {
+        "config": {
+          "context_length": 1050000,
+          "supports_web_search": false,
+        },
+        "id": "xiaomi/mimo-v2.6-pro",
+        "key": "xiaomi/mimo-v2.6-pro",
+        "label": "MiMo V2.6 Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+        "key": "xiaomi/mimo-v2.6-pro-ultraspeed",
+        "label": "MiMo V2.6 Pro UltraSpeed",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "deepseek/deepseek-v4.1-flash",
+        "key": "deepseek/deepseek-v4.1-flash",
+        "label": "DeepSeek V4.1 Flash",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "deepseek/deepseek-v4-pro-0813",
+        "key": "deepseek/deepseek-v4-pro-0813",
+        "label": "DeepSeek V4 Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "deepseek/deepseek-v4-flash-0731",
+        "key": "deepseek/deepseek-v4-flash-0731",
+        "label": "DeepSeek V4 Flash",
+      },
+      {
         "aliases": [
           "anthropic/claude-haiku-4-5",
         ],
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "anthropic/claude-haiku-4.5",
         "key": "anthropic/claude-haiku-4.5",
         "label": "Claude Haiku 4.5",
@@ -685,6 +1596,7 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         ],
         "config": {
           "context_length": 1000000,
+          "supports_web_search": false,
         },
         "id": "anthropic/claude-sonnet-4.6",
         "key": "anthropic/claude-sonnet-4.6",
@@ -697,6 +1609,7 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         ],
         "config": {
           "context_length": 1000000,
+          "supports_web_search": false,
         },
         "id": "anthropic/claude-opus-4.6",
         "key": "anthropic/claude-opus-4.6",
@@ -707,110 +1620,239 @@ exports[`provider registry characterization (Phase 2 baseline) freezes PROVIDER_
         "aliases": [
           "anthropic/claude-opus-4-7",
         ],
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "anthropic/claude-opus-4.7",
         "key": "anthropic/claude-opus-4.7",
         "label": "Claude Opus 4.7",
         "optionNote": "1M context",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "openai/gpt-5.2",
         "key": "openai/gpt-5.2",
         "label": "GPT-5.2",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "openai/gpt-5.2-codex",
         "key": "openai/gpt-5.2-codex",
         "label": "GPT-5.2 Codex",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "openai/gpt-5.3-codex",
         "key": "openai/gpt-5.3-codex",
         "label": "GPT-5.3 Codex",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "openai/gpt-5.4",
         "key": "openai/gpt-5.4",
         "label": "GPT-5.4",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "openai/gpt-5.5",
         "key": "openai/gpt-5.5",
         "label": "GPT-5.5",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "qwen/qwen3.6-plus",
         "key": "qwen/qwen3.6-plus",
         "label": "Qwen3.6 Plus",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "qwen/qwen3.7-plus",
         "key": "qwen/qwen3.7-plus",
         "label": "Qwen3.7 Plus",
       },
       {
+        "config": {
+          "supports_multimodal": false,
+          "supports_web_search": false,
+        },
         "id": "qwen/qwen3.7-max",
         "key": "qwen/qwen3.7-max",
         "label": "Qwen3.7 Max",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "deepseek/deepseek-v4-flash",
         "key": "deepseek/deepseek-v4-flash",
         "label": "DeepSeek V4 Flash",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "deepseek/deepseek-v4-pro",
         "key": "deepseek/deepseek-v4-pro",
         "label": "DeepSeek V4 Pro",
       },
       {
+        "config": {
+          "context_length": 1050000,
+          "supports_web_search": false,
+        },
         "id": "xiaomi/mimo-v2.5",
         "key": "xiaomi/mimo-v2.5",
         "label": "MiMo V2.5",
       },
       {
+        "config": {
+          "context_length": 1050000,
+          "supports_multimodal": false,
+          "supports_web_search": false,
+        },
         "id": "xiaomi/mimo-v2.5-pro",
         "key": "xiaomi/mimo-v2.5-pro",
         "label": "MiMo V2.5 Pro",
       },
       {
+        "config": {
+          "context_length": 262144,
+          "supports_web_search": false,
+        },
         "id": "moonshotai/kimi-k2.5",
         "key": "moonshotai/kimi-k2.5",
         "label": "Kimi K2.5",
       },
       {
+        "config": {
+          "context_length": 1048576,
+          "supports_web_search": false,
+        },
         "id": "minimax/minimax-m3",
         "key": "minimax/minimax-m3",
         "label": "MiniMax M3",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "minimax/minimax-m2.5",
         "key": "minimax/minimax-m2.5",
         "label": "MiniMax M2.5",
       },
       {
+        "config": {
+          "supports_web_search": false,
+        },
         "id": "minimax/minimax-m2.7",
         "key": "minimax/minimax-m2.7",
         "label": "MiniMax M2.7",
       },
       {
+        "config": {
+          "context_length": 204800,
+          "supports_web_search": false,
+        },
         "id": "z-ai/glm-5",
         "key": "z-ai/glm-5",
         "label": "GLM-5",
       },
       {
+        "config": {
+          "context_length": 202752,
+          "supports_web_search": false,
+        },
         "id": "z-ai/glm-5-turbo",
         "key": "z-ai/glm-5-turbo",
         "label": "GLM-5 Turbo",
       },
       {
+        "config": {
+          "context_length": 202752,
+          "supports_web_search": false,
+        },
         "id": "z-ai/glm-5v-turbo",
         "key": "z-ai/glm-5v-turbo",
         "label": "GLM-5V Turbo",
       },
       {
+        "config": {
+          "context_length": 204800,
+          "supports_web_search": false,
+        },
         "id": "z-ai/glm-4.7",
         "key": "z-ai/glm-4.7",
         "label": "GLM-4.7",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6.1-sol-pro",
+        "key": "openai/gpt-6.1-sol-pro",
+        "label": "GPT-6.1 Sol Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6-astra-pro",
+        "key": "openai/gpt-6-astra-pro",
+        "label": "GPT-6 Astra Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6-sol-pro",
+        "key": "openai/gpt-6-sol-pro",
+        "label": "GPT-6 Sol Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-6-luna-pro",
+        "key": "openai/gpt-6-luna-pro",
+        "label": "GPT-6 Luna Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.6-sol-pro",
+        "key": "openai/gpt-5.6-sol-pro",
+        "label": "GPT-5.6 Sol Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.6-terra-pro",
+        "key": "openai/gpt-5.6-terra-pro",
+        "label": "GPT-5.6 Terra Pro",
+      },
+      {
+        "config": {
+          "supports_web_search": false,
+        },
+        "id": "openai/gpt-5.6-luna-pro",
+        "key": "openai/gpt-5.6-luna-pro",
+        "label": "GPT-5.6 Luna Pro",
       },
     ],
     "name": "OpenRouter",

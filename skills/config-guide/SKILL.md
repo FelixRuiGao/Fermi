@@ -67,20 +67,20 @@ The single user-editable config file. Supports `//` and `/* */` comments (JSONC)
   // ── Model ──
   // Declarative default model. Overrides state/model-selection.json on every
   // startup. Omit to let /model selections persist automatically.
-  "default_model": "anthropic:claude-opus-4-6",
+  "default_model": "anthropic:claude-opus-5-5",
   "thinking_level": "high",                       // Default thinking level
   "context_budget_percent": 100,                   // Main-session context budget (1-100)
 
   // ── Sub-agent model tiers ──
   "model_tiers": {
-    "high":   { "provider": "anthropic", "selection_key": "claude-opus-4-6", "model_id": "claude-opus-4-6", "thinking_level": "high" },
-    "medium": { "provider": "kimi-cn",   "selection_key": "kimi-k2.5",      "model_id": "kimi-k2.5",      "thinking_level": "medium" },
+    "high":   { "provider": "anthropic", "selection_key": "claude-opus-5-5", "model_id": "claude-opus-5-5", "thinking_level": "high" },
+    "medium": { "provider": "kimi-cn",   "selection_key": "kimi-k3",      "model_id": "kimi-k3",      "thinking_level": "high" },
     "low":    { "provider": "ollama",    "selection_key": "qwen3.5:9b",     "model_id": "qwen3.5:9b",     "thinking_level": "none" }
   },
 
   // ── Agent model pins (per-template, same shape as model_tiers entries) ──
   "agent_models": {
-    "reviewer": { "provider": "anthropic", "selection_key": "claude-sonnet-4-6", "model_id": "claude-sonnet-4-6", "thinking_level": "high" }
+    "reviewer": { "provider": "anthropic", "selection_key": "claude-sonnet-5-5", "model_id": "claude-sonnet-5-5", "thinking_level": "high" }
   },
 
   // ── Provider registration ──
@@ -205,9 +205,9 @@ Create `{PROJECT}/.fermi/settings.json` to override global settings for a specif
 
 ```jsonc
 {
-  "default_model": "anthropic:claude-opus-4-6",
+  "default_model": "anthropic:claude-opus-5-5",
   "model_tiers": {
-    "low": { "provider": "kimi-cn", "selection_key": "kimi-k2.5", "model_id": "kimi-k2.5", "thinking_level": "medium" }
+    "low": { "provider": "kimi-cn", "selection_key": "kimi-k3", "model_id": "kimi-k3", "thinking_level": "high" }
   }
 }
 ```
@@ -222,6 +222,35 @@ Create `{PROJECT}/.fermi/settings.json` to override global settings for a specif
 | `providers`, `diff_display`, `auto_update` | **Global only**, local value ignored |
 
 There are two local layers: the **project-store** layer (`~/.fermi/projects/<slug>/.fermi/settings.json`, system-managed) and the **workspace** layer (`{cwd}/.fermi/settings.json`, user-authored). When both exist, workspace wins on conflict (same merge rules).
+
+## Bundled Provider Catalog (verified 2026-10-09)
+
+Model/provider data is maintained in `assets/model-registry/models.json` and
+`providers.json`; the source audit is `assets/model-registry/SOURCES.md`.
+All 22 registered endpoints are covered, including regional and Coding variants.
+Use `/model` to view actual choices; provider access can depend on your plan.
+
+| Provider | Current families / constraints |
+|---|---|
+| OpenAI API | GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna; Astra and 6.1 Sol use low–max, never none. Pro is an API option, not a direct-API model ID. |
+| ChatGPT Login | Current GPT-6/5.6 rollout plus GPT-5.5; retired GPT-5.4/mini are removed. Configured context is 272k from the Codex catalog, distinct from API limits. |
+| Anthropic | Fable 5.1, Opus/Sonnet/Haiku 5.5 and active prior models. Opus 5.5/Fable always think; Sonnet 5.5 has no fully-off setting. Haiku 5.5 supports off. |
+| Copilot | Current Claude/GPT, Gemini 3.7/3.8 Flash, Kimi K3, MAI-Code-1.1 Flash presets, filtered by the signed-in account catalog. Context/transport follow the gateway. |
+| Qwen CN/Intl/US | Qwen3.8 Max/Flash/Omni, 3.7 Plus/Flash and compatible older models; open 3.8 models in CN/Intl. Responses uses `/compatible-mode/v1`. Native context is 1M; the effective preset budget is 800k because Responses reserves about 20%. |
+| Kimi Global/CN | K3, K2.7 Code/Highspeed, K2.6. K3 supports low/high/max and always thinks; K2.5/K2 are discontinued. |
+| Kimi Coding | IDs `k3`, `k3-256k`, `kimi-for-coding` (K2.8 Preview), `kimi-for-coding-highspeed`. 1M K3/Highspeed require eligible plans. Disabling K3 thinking routes to K2.8. |
+| GLM API/Coding | GLM-5.3, 5.3 Flash, 5.2 and prior models; FlashX is API-only. 5.3 uses low/high/max with forced thinking. |
+| MiniMax Global/CN | M3.1 Flash Preview (M Plan only), M3, M2.7/2.5 and Highspeed. M3/3.1 use adaptive thinking; preview supports low–max and cannot disable it. |
+| DeepSeek | `deepseek-flash` (V4.1 Flash, vision) and V4 Pro (0813, text); the legacy V4 Flash ID redirects to V4.1. |
+| MiMo | V2.6 Pro/Flash/UltraSpeed; UltraSpeed needs access. V2.5 retires October 21, 2026. |
+| OpenRouter | Current presets verified against its own model catalog; native and gateway IDs/limits may differ. |
+| Ollama/oMLX/LM Studio | Discover installed models via `/v1/models`; no fixed list of “latest local models”. |
+
+The two registry files share a monotonic `registryRevision`; remote caches older
+than the factory catalog are ignored, and mismatched pairs are rejected.
+
+New models requiring adapter changes are gated at Fermi 0.4.2 for remote registry
+delivery; bundled factory data is available in the build containing those changes.
 
 ## Model Selection
 
@@ -244,8 +273,8 @@ Each tier entry has four required fields:
 ```jsonc
 {
   "provider": "anthropic",
-  "selection_key": "claude-opus-4-6",
-  "model_id": "claude-opus-4-6",
+  "selection_key": "claude-opus-5-5",
+  "model_id": "claude-opus-5-5",
   "thinking_level": "high"        // required: a tier-eligible level (not "off" or "none")
 }
 ```

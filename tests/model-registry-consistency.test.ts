@@ -81,10 +81,7 @@ describe("provider wire-axis data matches thinking-artifact (anti-drift)", () =>
 });
 
 describe("preset coverage", () => {
-  // Provider model ids that intentionally have no ModelSpec. gpt-5-mini's exact
-  // specs (output tokens / thinking levels) couldn't be sourced reliably, so it
-  // stays spec-less rather than carry invented data.
-  const SPECLESS_OK = new Set(["gpt-5-mini"]);
+  const SPECLESS_OK = new Set<string>();
 
   it("every provider model id maps to a known spec (normalized), except known spec-less ones", () => {
     const knownIds = new Set(FACTORY_MODEL_SPECS.flatMap(modelSpecIds));

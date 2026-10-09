@@ -78,9 +78,9 @@ describe("Config model validation", () => {
 
   it("applies the documented DashScope Responses base URLs for direct Qwen providers", () => {
     const cases = [
-      ["qwenChina", "qwen", "https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"],
-      ["qwenIntl", "qwen-intl", "https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"],
-      ["qwenUs", "qwen-us", "https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1"],
+      ["qwenChina", "qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"],
+      ["qwenIntl", "qwen-intl", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"],
+      ["qwenUs", "qwen-us", "https://dashscope-us.aliyuncs.com/compatible-mode/v1"],
     ] as const;
 
     for (const [name, provider, baseUrl] of cases) {

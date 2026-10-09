@@ -373,6 +373,11 @@ export function isOpenAIFamilyModel(model: string): boolean {
   return normalized.startsWith("gpt-") || /^o\d/.test(normalized);
 }
 
+/** Copilot's live catalog exposes these families only through Chat Completions. */
+export function isCopilotChatModel(model: string): boolean {
+  return /^(?:gemini-|kimi-)/i.test(stripVendorPrefix(model));
+}
+
 export function resolveTransportProtocol(
   provider: string,
   model: string,
@@ -383,7 +388,7 @@ export function resolveTransportProtocol(
   if (id === "qwen" || id === "qwen-intl" || id === "qwen-us") return "responses";
   if (id === "anthropic") return "anthropic";
   if (id === "copilot") {
-    return isAnthropicFamilyModel(model) ? "anthropic" : "responses";
+    return isAnthropicFamilyModel(model) ? "anthropic" : isCopilotChatModel(model) ? "chat" : "responses";
   }
   if (
     id === "kimi" || id === "kimi-cn" || id === "kimi-ai" || id === "kimi-code"
@@ -429,6 +434,7 @@ export function resolveSealedSchema(
   if (id === "anthropic") return SEALED_SCHEMA_ANTHROPIC_MESSAGES;
   if (id === "openai" || id === "openai-codex") return SEALED_SCHEMA_OPENAI_RESPONSES;
   if (id === "copilot") {
+    if (isCopilotChatModel(model)) return null;
     return isAnthropicFamilyModel(model)
       ? SEALED_SCHEMA_ANTHROPIC_MESSAGES
       : SEALED_SCHEMA_OPENAI_RESPONSES;

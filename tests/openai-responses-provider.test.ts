@@ -82,6 +82,17 @@ async function captureRequestKwargs(model: string): Promise<Record<string, unkno
 }
 
 describe("OpenAIResponsesProvider temperature support", () => {
+  it("records GPT-5.6/6 cache writes separately from cache reads", async () => {
+    const provider = new OpenAIResponsesProvider(modelConfig({ model: "gpt-6.1-sol" }));
+    (provider as any)._client = { responses: { create: mock(async () => ({
+      output: [], usage: { input_tokens: 1200, output_tokens: 100,
+        input_tokens_details: { cached_tokens: 200, cache_write_tokens: 800 } },
+    })) } };
+    const response = await provider.sendMessage([{ role: "user", content: "hi" }]);
+    expect(response.usage.cacheCreationTokens).toBe(800);
+    expect(response.usage.cacheReadTokens).toBe(200);
+  });
+
   it.each([
     "gpt-5.2",
     "gpt-5.2-codex",

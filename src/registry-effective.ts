@@ -26,6 +26,8 @@ import {
   loadModelSpecs,
   loadProviderSpecs,
   modelSpecIds,
+  registryRevision,
+  FACTORY_REGISTRY_REVISION,
 } from "./model-registry.js";
 
 // ------------------------------------------------------------------
@@ -73,6 +75,9 @@ export function loadRemoteRegistry(
   bundle: RawRegistryBundle,
   appVersion: string,
 ): { models: ModelSpec[]; providers: ProviderSpec[] } {
+  if (registryRevision(bundle.models) !== registryRevision(bundle.providers)) {
+    throw new Error("model/provider registry revisions must match");
+  }
   const allModels = loadModelSpecs(bundle.models);
   const models = allModels.filter(
     (s) => !s.minAppVersion || isVersionAtLeast(appVersion, s.minAppVersion),
@@ -140,6 +145,12 @@ export function selectEffectiveRegistry(homeDir: string, appVersion: string): Ef
     const cached = tryReadCachedRemoteSync(homeDir);
     if (cached) {
       try {
+        // A previously signed catalog must not roll back a newer binary's
+        // bundled model list. Date-style monotonic revisions are independent
+        // of minAppVersion, which gates adapter compatibility rather than age.
+        if (registryRevision(cached.models) < FACTORY_REGISTRY_REVISION) {
+          return { models: FACTORY_MODEL_SPECS, providers: FACTORY_PROVIDER_SPECS, source: "factory" };
+        }
         const { models, providers } = loadRemoteRegistry(cached, appVersion);
         return { models, providers, source: "remote" };
       } catch {

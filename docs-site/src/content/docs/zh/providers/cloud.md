@@ -6,7 +6,7 @@ title: "云端提供商"
 
 ## Anthropic
 
-**模型：** Claude Haiku 4.5、Sonnet 4.6、Sonnet 4.6（1M 上下文）、Opus 4.6、Opus 4.6（1M 上下文）、Opus 4.7
+**模型：** Claude Fable 5.1/5、Opus 5.5/5/4.8、Sonnet 5.5/5、Haiku 5.5，以及仍可用的 4.x 型号。
 
 1. 从 [console.anthropic.com](https://console.anthropic.com/) 获取 API key。
 2. 运行 `fermi init` 并选择 **Anthropic (Claude)**。
@@ -14,15 +14,15 @@ title: "云端提供商"
 
 key 会以 `ANTHROPIC_API_KEY` 保存到 `~/.fermi/.env`。
 
-### 1M Context Beta
+### 上下文与思考
 
-Sonnet 4.6 和 Opus 4.6 的 1M 上下文变体会作为独立模型选项出现。它们使用 Anthropic 的 extended context beta，允许最多 1,000,000 token 的上下文。
+Opus/Sonnet 4.6 的 1M 上下文已正式开放，不再需要 beta header。新 5.x 型号同样支持 1M。保留旧 1M 选择键用于兼容配置。
 
-**Thinking levels：** Opus 4.7: off, low, medium, high, xhigh, max。Opus 4.6: off, low, medium, high, max。Sonnet/Haiku: off, low, medium, high。
+Opus 5.5/Fable 强制思考，Sonnet 5.5 也不能完全关闭思考；它们提供 low/medium/high/xhigh/max。Haiku 5.5 还支持 off。
 
 ## OpenAI
 
-**模型：** GPT-5.2、GPT-5.2 Codex、GPT-5.3 Codex、GPT-5.4、GPT-5.4 Mini、GPT-5.4 Nano、GPT-5.5
+**模型：** GPT-6.1 Sol、GPT-6 Astra/Sol/Luna、GPT-5.6 Sol/Terra/Luna、GPT-5.5/5.4/5.2
 
 1. 从 [platform.openai.com](https://platform.openai.com/) 获取 API key。
 2. 运行 `fermi init` 并选择 **OpenAI**。
@@ -32,11 +32,11 @@ key 会以 `OPENAI_API_KEY` 保存到 `~/.fermi/.env`。
 
 也可以通过 OAuth 使用 ChatGPT 账号。见 [ChatGPT OAuth 登录](/zh/providers/openai-oauth)。
 
-**Thinking levels：** none, low, medium, high, xhigh。
+**Thinking levels：** GPT-5.6 与 GPT-6 Sol/Luna：none、low、medium、high、xhigh、max；Astra 与 6.1 Sol：low 至 max。Ultra 不是 API 思考档位。
 
 ## DeepSeek
 
-**模型：** DeepSeek V4 Flash、DeepSeek V4 Pro
+**模型：** DeepSeek V4.1 Flash（`deepseek-flash`，支持图片）、V4 Pro（0813，纯文本）。旧 V4 Flash ID 兼容转发到 V4.1。
 
 1. 从 DeepSeek 开发者门户获取 API key。
 2. 运行 `fermi init` 并选择 **DeepSeek**。
@@ -46,7 +46,7 @@ key 会作为托管槽位保存到 `~/.fermi/.env`。
 
 ## Kimi / Moonshot
 
-**模型：** Kimi K2.7 Code、K2.6、K2.5、K2 Instruct
+**模型：** 标准 API：Kimi K3、K2.7 Code/Highspeed、K2.6。Coding：`k3`、`k3-256k`、`kimi-for-coding`（K2.8 Preview）、`kimi-for-coding-highspeed`。
 
 提供三个端点变体：
 
@@ -66,7 +66,7 @@ Kimi-Code 端点仅对白名单代理开放。你可能会收到 403 错误。�
 
 ## GLM / Zhipu
 
-**模型：** GLM-5.1、GLM-5、GLM-5 Turbo、GLM-5V Turbo、GLM-4.7。两个 coding 端点还额外提供 **GLM-5.2**。
+**模型：** GLM-5.3、5.3 Flash、5.2 和兼容的旧型号；5.3 FlashX 仅标准 API 可用。5.3 支持 low/high/max，不能关闭思考。
 
 提供四个端点变体：
 
@@ -87,7 +87,7 @@ GLM coding 端点仅对白名单代理开放。请改用 `glm` 或 `glm-intl`（
 
 ## MiniMax
 
-**模型：** MiniMax M3、M2.5、M2.5 Highspeed、M2.7、M2.7 Highspeed
+**模型：** MiniMax M3.1 Flash Preview（仅 M Plan）、M3、M2.7/2.5 及 Highspeed。
 
 提供两个端点变体：
 
@@ -102,7 +102,7 @@ GLM coding 端点仅对白名单代理开放。请改用 `glm` 或 `glm-intl`（
 
 ## Xiaomi (MiMo)
 
-**模型：** MiMo V2.5、MiMo V2.5 Pro
+**模型：** MiMo V2.6 Pro、Flash、UltraSpeed（需要权限）；V2.5/Pro 将于 2026-10-21 退役。
 
 1. 从 Xiaomi 开发者门户获取 API key。
 2. 运行 `fermi init` 并选择 **Xiaomi (MiMo)**。
@@ -112,7 +112,7 @@ key 会作为托管槽位保存到 `~/.fermi/.env`。
 
 ## Qwen / DashScope
 
-**模型：** Qwen3.6 Plus、Qwen3.7 Plus、Qwen3.7 Max
+**模型：** Qwen3.8 Max、Max 0902、Flash、Omni Flash，3.7 Plus/Flash；中国/国际入口还提供 3.8 27B、2.4T A95B。保留兼容旧型号。
 
 提供三个区域端点变体：
 
@@ -125,6 +125,9 @@ key 会作为托管槽位保存到 `~/.fermi/.env`。
 1. 从 Alibaba Cloud 的 DashScope 控制台获取 API key。
 2. 运行 `fermi init` 并选择 **Qwen / DashScope**，然后选择区域。
 3. 导入检测到的环境变量或粘贴 API key。
+
+
+Responses 使用新的 `/compatible-mode/v1` 路径。模型原生上下文为 1M，但 API 预留约 20%，超出输入可能被静默截断，因此 Fermi 默认预算为 800k。3.8 提供 none/low/medium/xhigh；2.4T 开源模型仅支持思考。
 
 ## OpenRouter
 

@@ -73,9 +73,9 @@ describe("QwenResponsesProvider request shaping", () => {
     expect(create).toHaveBeenCalledTimes(1);
     const params = create.mock.calls[0]![0] as Record<string, unknown>;
     expect(params["tools"]).toEqual([{ type: "web_search" }]);
-    expect(params["enable_thinking"]).toBe(false);
-    expect(params["reasoning"]).toBeUndefined();
-    expect(params["max_output_tokens"]).toBeUndefined();
+    expect(params["enable_thinking"]).toBeUndefined();
+    expect(params["reasoning"]).toEqual({ effort: "none" });
+    expect(params["max_output_tokens"]).toBe(4096);
     expect(params["prompt_cache_key"]).toBeUndefined();
   });
 
@@ -117,7 +117,8 @@ describe("QwenResponsesProvider request shaping", () => {
 
     const params = create.mock.calls[0]![0] as Record<string, unknown>;
     expect(params["stream"]).toBe(true);
-    expect(params["enable_thinking"]).toBe(true);
+    expect(params["enable_thinking"]).toBeUndefined();
+    expect(params["reasoning"]).toEqual({ effort: "high" });
     expect(params["tools"]).toEqual([
       {
         type: "function",

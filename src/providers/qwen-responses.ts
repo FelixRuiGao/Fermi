@@ -18,7 +18,14 @@ export class QwenResponsesProvider extends OpenAIResponsesProvider {
 
     const level = options?.thinkingLevel;
     const thinkingOff = level === "off" || level === "none";
-    kwargs["enable_thinking"] = !thinkingOff;
+    delete kwargs["enable_thinking"];
+    const qwen38 = /^qwen3\.8/.test(this._config.model);
+    const thinkingOnly = this._config.model === "qwen3.8-2.4t-a95b";
+    kwargs["reasoning"] = {
+      effort: thinkingOff && !thinkingOnly ? "none"
+        : qwen38 ? (level === "low" || level === "medium" ? level : "xhigh")
+        : "high",
+    };
   }
 
   protected override _nativeWebSearchTool(): Record<string, unknown> {
@@ -26,7 +33,7 @@ export class QwenResponsesProvider extends OpenAIResponsesProvider {
   }
 
   protected override _supportsMaxOutputTokens(): boolean {
-    return false;
+    return true;
   }
 
   protected override _supportsPromptCacheKey(): boolean {

@@ -9,6 +9,12 @@ Release notes. A missing or empty section fails CI.
 
 ## Unreleased
 
+### Providers and models
+
+- Updated all 22 provider endpoints against current official catalogs: GPT-6.1/6/5.6, Claude 5.5/Fable, Qwen3.8, Kimi K3/K2.8 Coding, GLM-5.3/Flash/FlashX, MiniMax M3.1 Preview, DeepSeek V4.1 Flash, and MiMo V2.6; expanded verified OpenRouter presets and removed retired endpoint-specific choices.
+- Fixed current reasoning, sampling, caching, Qwen Responses paths/output budgets, and Copilot Gemini/Kimi Chat routing. GLM/OpenRouter vendor parameters now reach the Node SDK request at the correct top level.
+- Older remote model catalogs can no longer override a newer bundled catalog; mismatched model/provider revisions are rejected. Official source links and access/retirement constraints are recorded in `assets/model-registry/SOURCES.md`.
+
 ### Permissions overhaul
 
 - **Added: workspace trust.** A repository can ship configuration that runs code the moment you open the project — MCP server commands and hooks in `.fermi/`, plus `allow` rules in `.fermi/permissions.json`. None of it loads now until you approve that exact content once. The decision is stored outside the repo and bound to a content fingerprint, so any later edit re-asks. `deny` rules always apply (there is nothing to exploit in a deny), and repositories carrying none of these three things never see a prompt. Review and decide with `/trust`.

@@ -23,12 +23,12 @@ function modelConfig(overrides?: Partial<ModelConfig>): ModelConfig {
 }
 
 describe("OpenRouter _applyThinkingParams", () => {
-  it("sets reasoning.effort in extra_body for default level", () => {
+  it("sets reasoning.effort at top level for default level", () => {
     const provider = new OpenRouterProvider(modelConfig());
     const kwargs: Record<string, unknown> = { temperature: 0.7, max_tokens: 4096 };
     (provider as any)._applyThinkingParams(kwargs, {});
 
-    const extraBody = kwargs["extra_body"] as Record<string, unknown>;
+    const extraBody = kwargs;
     expect(extraBody).toBeDefined();
     expect(extraBody["reasoning"]).toEqual({ effort: "high" });
   });
@@ -41,7 +41,7 @@ describe("OpenRouter _applyThinkingParams", () => {
       { level: "medium", expected: "medium" },
       { level: "high", expected: "high" },
       { level: "xhigh", expected: "xhigh" },
-      { level: "max", expected: "xhigh" },
+      { level: "max", expected: "max" },
       { level: "minimal", expected: "minimal" },
       { level: "on", expected: "high" },
     ];
@@ -50,7 +50,7 @@ describe("OpenRouter _applyThinkingParams", () => {
       const kwargs: Record<string, unknown> = {};
       (provider as any)._applyThinkingParams(kwargs, { thinkingLevel: level });
 
-      const extraBody = kwargs["extra_body"] as Record<string, unknown>;
+      const extraBody = kwargs;
       expect(extraBody["reasoning"]).toEqual({ effort: expected });
     }
   });
@@ -60,7 +60,7 @@ describe("OpenRouter _applyThinkingParams", () => {
     const kwargs: Record<string, unknown> = {};
     (provider as any)._applyThinkingParams(kwargs, { thinkingLevel: "off" });
 
-    const extraBody = kwargs["extra_body"] as Record<string, unknown>;
+    const extraBody = kwargs;
     expect(extraBody["reasoning"]).toEqual({ effort: "none" });
   });
 
@@ -69,7 +69,7 @@ describe("OpenRouter _applyThinkingParams", () => {
     const kwargs: Record<string, unknown> = {};
     (provider as any)._applyThinkingParams(kwargs, { thinkingLevel: "none" });
 
-    const extraBody = kwargs["extra_body"] as Record<string, unknown>;
+    const extraBody = kwargs;
     expect(extraBody["reasoning"]).toEqual({ effort: "none" });
   });
 
@@ -78,7 +78,7 @@ describe("OpenRouter _applyThinkingParams", () => {
     const kwargs: Record<string, unknown> = {};
     (provider as any)._applyThinkingParams(kwargs, {});
 
-    const extraBody = kwargs["extra_body"] as Record<string, unknown>;
+    const extraBody = kwargs;
     expect(extraBody["reasoning"]).toEqual({ max_tokens: 8000 });
   });
 
@@ -114,8 +114,8 @@ describe("OpenRouter _applyThinkingParams", () => {
     };
     (provider as any)._applyThinkingParams(kwargs, {});
 
-    const extraBody = kwargs["extra_body"] as Record<string, unknown>;
-    expect(extraBody["some_field"]).toBe("value");
+    const extraBody = kwargs;
+    expect((kwargs["extra_body"] as Record<string, unknown>)["some_field"]).toBe("value");
     expect(extraBody["reasoning"]).toEqual({ effort: "high" });
   });
 });

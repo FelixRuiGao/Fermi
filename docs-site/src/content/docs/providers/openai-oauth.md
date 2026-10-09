@@ -58,11 +58,12 @@ When you run `fermi init`, one of the provider options is **OpenAI (ChatGPT Logi
 
 Once authenticated, the following models become available:
 
-- GPT-5.2 Codex
-- GPT-5.3 Codex
-- GPT-5.4
-- GPT-5.4 Mini
-- GPT-5.5 (context capped at 400K vs 1M on the standard API)
+- GPT-6.1 Sol
+- GPT-6 Astra / Sol / Luna
+- GPT-5.6 Sol / Terra / Luna
+- GPT-5.5
+
+Fermi uses the current Codex catalog’s 272k default context budget, distinct from the API’s 1.05M specification. GPT-5.4/mini retired from ChatGPT Login on 2026-08-31. Access depends on account, plan, and rollout.
 
 ## Limitations
 

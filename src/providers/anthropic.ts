@@ -5,8 +5,8 @@
  *   - thinking.signature round-trip (closed-source: integrity-checked reasoning)
  *   - cache_control breakpoint placement (mandatory for prompt caching)
  *   - betas forwarding (anthropic-beta header via SDK option)
- *   - adaptive thinking for Claude 4.6 / 4.7 vs. manual budget_tokens for 4.5-
- *   - Claude 4.7 sampling lockout (no temperature / top_p / top_k)
+ *   - adaptive thinking for Claude 4.6+ / 5 vs. manual budget_tokens for 4.5-
+ *   - model-specific forced thinking and sampling lockout
  *   - native web_search_20250305 server tool
  */
 
@@ -28,15 +28,18 @@ export class AnthropicProvider extends BaseAnthropicProvider {
    * suffixes like `-fast`) used by GitHub Copilot's model catalog.
    */
   private static readonly _ADAPTIVE_MODEL_RE =
-    /^claude-(opus|sonnet)-4[.-][67]/;
+    /^claude-(?:(?:opus|sonnet)-4[.-][678]|(?:opus|sonnet|haiku|fable|mythos)-5(?:$|[.-]))/;
 
   /** Opus 4.7+ rejects any non-default temperature/top_p/top_k with HTTP 400. */
   private static readonly _NO_SAMPLING_PARAMS_RE =
-    /^claude-(opus|sonnet)-4[.-]7/;
+    /^claude-(?:(?:opus|sonnet)-4[.-][78]|(?:opus|sonnet|haiku|fable|mythos)-5(?:$|[.-]))/;
 
   /** Opus 4.7 introduced the `xhigh` effort level (between high and max). */
   private static readonly _XHIGH_EFFORT_RE =
-    /^claude-(opus|sonnet)-4[.-]7/;
+    /^claude-(?:(?:opus|sonnet)-4[.-][78]|(?:opus|sonnet|haiku|fable|mythos)-5(?:$|[.-]))/;
+
+  private static readonly _ALWAYS_THINKING_RE =
+    /^claude-(?:(?:fable|mythos)-5(?:$|[.-])|opus-5[.-]5|sonnet-5[.-]5)/;
 
   protected override _emitSignature(): boolean {
     return true;
@@ -75,8 +78,13 @@ export class AnthropicProvider extends BaseAnthropicProvider {
     const model = this._config.model;
     const noSamplingParams = AnthropicProvider._NO_SAMPLING_PARAMS_RE.test(model);
 
-    if (level === "off" || level === "none") {
+    const alwaysThinking = AnthropicProvider._ALWAYS_THINKING_RE.test(model);
+    if ((level === "off" || level === "none") && !alwaysThinking) {
       kwargs["thinking"] = { type: "disabled" };
+      if (AnthropicProvider._ADAPTIVE_MODEL_RE.test(model)) {
+        // Haiku 5.5 and Opus 5 reject disabled thinking at xhigh/max.
+        kwargs["output_config"] = { effort: "low" };
+      }
       return;
     }
 
@@ -87,10 +95,12 @@ export class AnthropicProvider extends BaseAnthropicProvider {
         ? ["low", "medium", "high", "xhigh", "max"]
         : ["low", "medium", "high", "max"];
       let effort: string;
-      if (level && validEfforts.includes(level)) {
+      if (alwaysThinking && (level === "off" || level === "none")) {
+        effort = "low";
+      } else if (level && validEfforts.includes(level)) {
         effort = level;
       } else {
-        effort = "high";
+        effort = /^claude-(opus|haiku)-5[.-]5/.test(model) ? "medium" : "high";
       }
       kwargs["output_config"] = { effort };
     } else {
@@ -113,6 +123,9 @@ export class AnthropicProvider extends BaseAnthropicProvider {
     }
     if (!noSamplingParams) {
       kwargs["temperature"] = 1; // 4.6 and earlier require temperature=1 with thinking
+    } else {
+      // Also strip sampling fields supplied through config.extra.
+      for (const key of ["temperature", "top_p", "top_k"]) delete kwargs[key];
     }
   }
 

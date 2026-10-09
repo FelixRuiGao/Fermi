@@ -29,6 +29,15 @@ import {
 
 type ToolArgsMode = "legacy" | "auto";
 
+// extra_body is a Python SDK convention. The Node SDK serializes its input
+// literally, so vendor extensions must be flattened before both request paths.
+function chatRequestBody(kwargs: Record<string, unknown>): Record<string, unknown> {
+  const { extra_body: extraBody, ...body } = kwargs;
+  return extraBody && typeof extraBody === "object" && !Array.isArray(extraBody)
+    ? { ...(extraBody as Record<string, unknown>), ...body }
+    : body;
+}
+
 export class OpenAIChatProvider extends BaseProvider {
   protected _config: ModelConfig;
   protected _client: OpenAI;
@@ -419,7 +428,7 @@ export class OpenAIChatProvider extends BaseProvider {
     }
 
     const resp = await this._client.chat.completions.create(
-      kwargs as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+      chatRequestBody(kwargs) as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
       options?.signal ? { signal: options.signal } : undefined,
     );
     return this._parseResponse(resp);
@@ -569,7 +578,7 @@ export class OpenAIChatProvider extends BaseProvider {
     }
 
     const response = await this._client.chat.completions.create(
-      kwargs as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+      chatRequestBody(kwargs) as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
       signal ? { signal } : undefined,
     );
 

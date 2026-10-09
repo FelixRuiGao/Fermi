@@ -8,15 +8,15 @@ Fermi 支持云端 API 和本地推理服务器。使用 `fermi init` 配置任�
 
 | 提供商 | 模型 | 认证 |
 |--------|------|------|
-| **Anthropic** | Claude Haiku 4.5、Sonnet 4.6（含 1M 上下文 beta）、Opus 4.6（含 1M 上下文 beta）、Opus 4.7 | `ANTHROPIC_API_KEY` |
-| **OpenAI** | GPT-5.2、5.2 Codex、5.3 Codex、5.4、5.4 Mini、5.4 Nano、5.5 | `OPENAI_API_KEY` 或 OAuth |
-| **GitHub Copilot** | 从你的套餐目录实时获取，例如 Claude Opus 4.8/4.7、Sonnet 4.6、GPT-5.3 Codex、5.4、5.4 Mini、5.5、5 Mini | `/copilot` device-flow 登录 |
-| **DeepSeek** | V4 Flash、V4 Pro | 托管槽位 (`FERMI_DEEPSEEK_*`) |
-| **Kimi / Moonshot** | K2.7 Code、K2.6、K2.5、K2 Instruct（Global、China、Code 变体） | 托管槽位 (`FERMI_KIMI_*`) |
-| **MiniMax** | M3、M2.5、M2.5 Highspeed、M2.7、M2.7 Highspeed（Global、China） | 托管槽位 (`FERMI_MINIMAX_*`) |
-| **GLM / Zhipu** | GLM-5.2（Code）、5.1、5、5 Turbo、5V Turbo、4.7（China、Global、Code 变体） | 托管槽位 (`FERMI_GLM_*`) |
-| **Xiaomi (MiMo)** | V2.5、V2.5 Pro | 托管槽位 (`FERMI_XIAOMI_*`) |
-| **Qwen / DashScope** | Qwen3.6 Plus、Qwen3.7 Plus、Qwen3.7 Max（中国、新加坡、美国区域） | 托管槽位 (`FERMI_QWEN_*`) |
+| **Anthropic** | Claude Fable 5.1, Opus/Sonnet/Haiku 5.5, active earlier models | `ANTHROPIC_API_KEY` |
+| **OpenAI** | GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, active earlier models | `OPENAI_API_KEY` 或 OAuth |
+| **GitHub Copilot** | Current Claude/GPT, Gemini Flash, Kimi K3, MAI-Code; filtered by account catalog | `/copilot` device-flow 登录 |
+| **DeepSeek** | V4.1 Flash (vision), V4 Pro (0813, text) | 托管槽位 (`FERMI_DEEPSEEK_*`) |
+| **Kimi / Moonshot** | K3, K2.7 Code/Highspeed, K2.6; separate Coding IDs | 托管槽位 (`FERMI_KIMI_*`) |
+| **MiniMax** | M3.1 Flash Preview (M Plan), M3, M2.7/2.5 + Highspeed | 托管槽位 (`FERMI_MINIMAX_*`) |
+| **GLM / Zhipu** | 5.3, 5.3 Flash, 5.2; FlashX on standard API only | 托管槽位 (`FERMI_GLM_*`) |
+| **Xiaomi (MiMo)** | V2.6 Pro/Flash/UltraSpeed; V2.5 retires 2026-10-21 | 托管槽位 (`FERMI_XIAOMI_*`) |
+| **Qwen / DashScope** | 3.8 Max/Flash/Omni, 3.7 Plus/Flash, regional open models | 托管槽位 (`FERMI_QWEN_*`) |
 | **OpenRouter** | 多厂商精选预设（Claude、GPT、Kimi、MiniMax、GLM、DeepSeek、Qwen、Xiaomi）+ 任意自定义模型 | `OPENROUTER_API_KEY` |
 | **Ollama** | 任意本地模型（动态发现） | — |
 | **oMLX** | 任意本地 MLX 模型（动态发现） | — |

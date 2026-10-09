@@ -24,6 +24,7 @@ import {
   SEALED_SCHEMA_OPENROUTER_CHAT,
   isAnthropicFamilyModel,
   isOpenAIFamilyModel,
+  isCopilotChatModel,
 } from "./thinking-artifact.js";
 
 // ------------------------------------------------------------------
@@ -64,10 +65,26 @@ export interface ModelSpec {
 /** Shape of `assets/model-registry/models.json`. */
 export interface RawModelRegistry {
   schemaVersion: number;
+  registryRevision?: number;
   models: ModelSpec[];
 }
 
 export const MODEL_REGISTRY_SCHEMA_VERSION = 1;
+
+/** Monotonic catalog revision; unversioned legacy tables count as revision 0. */
+export function registryRevision(raw: unknown): number {
+  const revision = (raw as { registryRevision?: unknown } | null)?.registryRevision;
+  if (revision === undefined) return 0;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error("model registry: registryRevision must be a non-negative safe integer");
+  }
+  return revision;
+}
+
+export const FACTORY_REGISTRY_REVISION = registryRevision(factoryModelsRaw);
+if (FACTORY_REGISTRY_REVISION !== registryRevision(factoryProvidersRaw)) {
+  throw new Error("model/provider registry revisions must match");
+}
 
 const VALID_THINKING_LEVEL = /^[a-z]+$/;
 
@@ -88,6 +105,7 @@ export function isThinkingSpec(spec: ModelSpec): boolean {
  * not just the first, so a bad data file is fixed in one pass.
  */
 export function loadModelSpecs(raw: unknown): ModelSpec[] {
+  registryRevision(raw);
   const problems: string[] = [];
   const reg = raw as RawModelRegistry;
 
@@ -324,6 +342,7 @@ export interface ProviderSpec {
 
 export interface RawProviderRegistry {
   schemaVersion: number;
+  registryRevision?: number;
   providers: ProviderSpec[];
 }
 
@@ -375,7 +394,7 @@ export function resolveProviderWireAxes(
 ): { transport: TransportProtocol; encryption: ThinkingEncryption; sealedSchema: SealedSchema | null } {
   const transport: TransportProtocol =
     wire.transportProtocol === "by-family"
-      ? (isAnthropicFamilyModel(model) ? "anthropic" : "responses")
+      ? (isAnthropicFamilyModel(model) ? "anthropic" : isCopilotChatModel(model) ? "chat" : "responses")
       : wire.transportProtocol;
 
   const encryption: ThinkingEncryption =
@@ -389,7 +408,7 @@ export function resolveProviderWireAxes(
 
   let sealedSchema: SealedSchema | null;
   if (wire.sealedSchema === "by-family") {
-    sealedSchema = isAnthropicFamilyModel(model)
+    sealedSchema = isCopilotChatModel(model) ? null : isAnthropicFamilyModel(model)
       ? SEALED_SCHEMA_ANTHROPIC_MESSAGES
       : SEALED_SCHEMA_OPENAI_RESPONSES;
   } else if (wire.sealedSchema === "openrouter") {
@@ -407,6 +426,7 @@ export function resolveProviderWireAxes(
  * model.spec reference resolves. Throws listing ALL problems.
  */
 export function loadProviderSpecs(raw: unknown, knownModelIds: ReadonlySet<string>): ProviderSpec[] {
+  registryRevision(raw);
   const problems: string[] = [];
   const reg = raw as RawProviderRegistry;
 

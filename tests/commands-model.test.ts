@@ -114,7 +114,9 @@ describe("/model command", () => {
     expect(openai).toBeTruthy();
     expect(anthropic!.children?.some((c) => c.label.includes("Claude Haiku 4.5"))).toBe(true);
     expect(anthropic!.children?.some((c) => c.label.includes("Claude Sonnet 4.6  (current)"))).toBe(true);
-    expect(anthropic!.children?.some((c) => c.label.includes("Claude Sonnet 4.6  (1M context beta)"))).toBe(true);
+    const legacySonnet = anthropic!.children?.find((c) => c.value === "anthropic:claude-sonnet-4-6-1m");
+    expect(legacySonnet?.label).toContain("1M context");
+    expect(legacySonnet?.label).not.toContain("beta");
     expect(
       openai!.children?.some((c) => c.label.includes("GPT-5.2  (key missing: run fermi init)")),
     ).toBe(true);
@@ -528,7 +530,6 @@ describe("/model command", () => {
         model: "claude-sonnet-4-6",
         api_key: "${ANTHROPIC_API_KEY}",
         context_length: 1_000_000,
-        betas: ["context-1m-2025-08-07"],
       }),
     );
     expect(switchModel).toHaveBeenCalledWith("runtime-anthropic-claude-sonnet-4-6-1m");

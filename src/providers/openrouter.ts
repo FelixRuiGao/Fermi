@@ -3,7 +3,7 @@
  *
  * Extends OpenAIChatProvider with:
  * - Automatic base_url defaulting and HTTP-Referer / X-Title headers
- * - OpenRouter-style reasoning params (reasoning: { effort } in extra_body)
+ * - OpenRouter-style reasoning params (top-level reasoning: { effort })
  * - reasoning_details extraction from non-streaming responses
  * - reasoning_details round-trip on assistant messages
  */
@@ -35,7 +35,7 @@ const EFFORT_MAP: Record<string, string> = {
   medium: "medium",
   high: "high",
   xhigh: "xhigh",
-  max: "xhigh",    // Anthropic "max" → OpenRouter's highest effort
+  max: "max",
   on: "high",       // binary on/off models → default to high
 };
 
@@ -85,9 +85,7 @@ export class OpenRouterProvider extends OpenAIChatProvider {
 
     // Explicitly disable reasoning
     if (level === "off" || level === "none") {
-      const extraBody = (kwargs["extra_body"] as Record<string, unknown>) || {};
-      extraBody["reasoning"] = { effort: "none" };
-      kwargs["extra_body"] = extraBody;
+      kwargs["reasoning"] = { effort: "none" };
       return;
     }
 
@@ -105,9 +103,7 @@ export class OpenRouterProvider extends OpenAIChatProvider {
       reasoningConfig["effort"] = effort;
     }
 
-    const extraBody = (kwargs["extra_body"] as Record<string, unknown>) || {};
-    extraBody["reasoning"] = reasoningConfig;
-    kwargs["extra_body"] = extraBody;
+    kwargs["reasoning"] = reasoningConfig;
 
     // Do NOT delete temperature or swap max_tokens → max_completion_tokens.
     // OpenRouter normalizes these per-model internally.

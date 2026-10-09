@@ -30,7 +30,7 @@ The GitHub token is stored in `~/.fermi/state/oauth.json` under the `github_copi
 
 ## Available Models
 
-The model list is fetched live from GitHub's Copilot catalog (`/models`) after you log in, so the `/model` picker always reflects exactly what your subscription can call — new models appear automatically, and models your plan can't use are hidden. Typical models include Claude Opus 4.8 / 4.7, Claude Sonnet 4.6, and the GPT-5.x family (5.3 Codex, 5.4, 5.4 Mini, 5.5, 5 Mini).
+Fermi presets include Claude 5.5/Fable 5.1, GPT-6/6.1/5.6, Gemini 3.7/3.8 Flash, Kimi K3, MAI-Code-1.1 Flash, and supported prior models. The signed-in account’s `/models` policy filters visibility. Availability in GitHub’s own clients does not guarantee third-party gateway access. Opus 4.7 retired; Sonnet 4.6 remains only for eligible annual Pro/Pro+ accounts.
 
 ## Billing
 

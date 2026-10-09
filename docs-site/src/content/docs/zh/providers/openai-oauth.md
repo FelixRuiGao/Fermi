@@ -58,11 +58,12 @@ fermi oauth logout
 
 认证后，以下模型可用：
 
-- GPT-5.2 Codex
-- GPT-5.3 Codex
-- GPT-5.4
-- GPT-5.4 Mini
-- GPT-5.5（上下文上限 400K，而标准 API 为 1M）
+- GPT-6.1 Sol
+- GPT-6 Astra / Sol / Luna
+- GPT-5.6 Sol / Terra / Luna
+- GPT-5.5
+
+Fermi 使用当前 Codex 目录的 272k 默认上下文预算，与 API 的 1.05M 规格区分。GPT-5.4/mini 已于 2026-08-31 从 ChatGPT 登录入口退役；可用性取决于账号、套餐和上线进度。
 
 ## 限制
 

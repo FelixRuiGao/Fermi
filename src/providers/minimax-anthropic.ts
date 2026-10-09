@@ -14,8 +14,8 @@
  * blocks, but it is NOT cryptographically validated — a fake signature
  * round-trips successfully. Open-source model, so we do not round-trip it.
  *
- * Vendor quirks: temperature is constrained to (0.0, 1.0) — exclusive of
- * both endpoints. We clamp on the boundaries.
+ * Current API sampling range is [0, 2]. M3 uses adaptive thinking; M3.1
+ * Preview always thinks and accepts output_config.effort.
  */
 
 import { BaseAnthropicProvider } from "./anthropic-base.js";
@@ -38,10 +38,30 @@ export class MiniMaxAnthropicProvider extends BaseAnthropicProvider {
   ): void {
     const raw = options?.temperature !== undefined ? options.temperature : this._config.temperature;
     if (raw === undefined) return;
-    // MiniMax: temperature ∈ (0.0, 1.0), exclusive on both ends.
-    let t = raw;
-    if (t <= 0) t = 0.01;
-    if (t >= 1) t = 0.99;
-    kwargs["temperature"] = t;
+    kwargs["temperature"] = Math.max(0, Math.min(2, raw));
+  }
+
+  protected override _applyThinkingParams(
+    kwargs: Record<string, unknown>,
+    options?: SendMessageOptions,
+  ): void {
+    if (!this._config.supportsThinking) return;
+    const model = this._config.model.toLowerCase();
+    const level = options?.thinkingLevel;
+    if (model.startsWith("minimax-m3.1")) {
+      kwargs["thinking"] = { type: "adaptive" };
+      kwargs["output_config"] = {
+        effort: level && ["low", "medium", "high", "xhigh", "max"].includes(level) ? level
+          : level === "off" || level === "none" ? "low" : "max",
+      };
+    } else if (model === "minimax-m3") {
+      kwargs["thinking"] = { type: level === "off" || level === "none" ? "disabled" : "adaptive" };
+    } else {
+      kwargs["thinking"] = { type: "adaptive" };
+    }
+  }
+
+  protected override _convertWebSearchTool(): Record<string, unknown> {
+    return { type: "web_search_20250305", name: "web_search" };
   }
 }

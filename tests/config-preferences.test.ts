@@ -10,25 +10,25 @@ describe("Config preference-backed models", () => {
       },
     });
 
-    expect(config.modelNames).toContain("openai-codex:gpt-5.2-codex");
+    expect(config.modelNames).toContain("openai-codex:gpt-6.1-sol");
     expect(config.listModelEntries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          name: "openai-codex:gpt-5.2-codex",
+          name: "openai-codex:gpt-6.1-sol",
           provider: "openai-codex",
-          model: "gpt-5.2-codex",
+          model: "gpt-6.1-sol",
           apiKeyRaw: "oauth:openai-codex",
         }),
         expect.objectContaining({
-          name: "openai-codex:gpt-5.3-codex",
+          name: "openai-codex:gpt-6-astra",
           apiKeyRaw: "oauth:openai-codex",
         }),
         expect.objectContaining({
-          name: "openai-codex:gpt-5.4",
+          name: "openai-codex:gpt-6-sol",
           apiKeyRaw: "oauth:openai-codex",
         }),
         expect.objectContaining({
-          name: "openai-codex:gpt-5.4-mini",
+          name: "openai-codex:gpt-6-luna",
           apiKeyRaw: "oauth:openai-codex",
         }),
       ]),
@@ -39,7 +39,7 @@ describe("Config preference-backed models", () => {
     const config = new Config({});
     config.upsertModelRaw("runtime-test", {
       provider: "openai-codex",
-      model: "gpt-5.4",
+      model: "gpt-6-sol",
       api_key: "old-token",
     });
 

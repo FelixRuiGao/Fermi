@@ -1,4 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { FACTORY_REGISTRY_REVISION } from "../src/model-registry.js";
 
 import {
   compareVersions,
@@ -86,6 +90,33 @@ describe("loadRemoteRegistry — validation + version gating", () => {
 });
 
 describe("selectEffectiveRegistry", () => {
+  it("ignores older signed catalogs but accepts newer paired revisions", () => {
+    const home = mkdtempSync(join(tmpdir(), "fermi-reg-revision-"));
+    const dir = join(home, "model-registry", "cache");
+    mkdirSync(dir, { recursive: true });
+    const previous = process.env.FERMI_REGISTRY_NO_REMOTE;
+    delete process.env.FERMI_REGISTRY_NO_REMOTE;
+    const write = (revision?: number) => {
+      const meta = revision === undefined ? {} : { registryRevision: revision };
+      writeFileSync(join(dir, "models.json"), JSON.stringify({ schemaVersion: 1, ...meta, models: [model({ id: "remote" })] }));
+      writeFileSync(join(dir, "providers.json"), JSON.stringify({ schemaVersion: 1, ...meta, providers: [provider({ id: "p1", models: [{ spec: "remote" }] })] }));
+    };
+    try {
+      write();
+      expect(selectEffectiveRegistry(home, "1.0.0").source).toBe("factory");
+      write(FACTORY_REGISTRY_REVISION - 1);
+      expect(selectEffectiveRegistry(home, "1.0.0").source).toBe("factory");
+      write(FACTORY_REGISTRY_REVISION + 1);
+      expect(selectEffectiveRegistry(home, "1.0.0").models.map(m => m.id)).toEqual(["remote"]);
+      writeFileSync(join(dir, "providers.json"), JSON.stringify({ schemaVersion: 1, registryRevision: FACTORY_REGISTRY_REVISION, providers: [] }));
+      expect(selectEffectiveRegistry(home, "1.0.0").source).toBe("factory");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.FERMI_REGISTRY_NO_REMOTE;
+      else process.env.FERMI_REGISTRY_NO_REMOTE = previous;
+    }
+  });
+
   it("falls back to factory when forced or when no cache exists", () => {
     const prev = process.env.FERMI_REGISTRY_NO_REMOTE;
     process.env.FERMI_REGISTRY_NO_REMOTE = "1";

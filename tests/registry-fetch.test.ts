@@ -11,6 +11,7 @@ import {
   verifyDetachedEd25519,
 } from "../src/registry-fetch.js";
 import { selectEffectiveRegistry } from "../src/registry-effective.js";
+import { FACTORY_REGISTRY_REVISION } from "../src/model-registry.js";
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const PUB = publicKey.export({ type: "spki", format: "pem" }) as string;
@@ -18,10 +19,12 @@ const sig = (text: string) => cryptoSign(null, Buffer.from(text), privateKey).to
 
 const MODELS = JSON.stringify({
   schemaVersion: 1,
+  registryRevision: FACTORY_REGISTRY_REVISION,
   models: [{ id: "m", displayName: "M", contextLength: 1000, multimodal: false, thinkingLevels: [], webSearch: true }],
 });
 const PROVIDERS = JSON.stringify({
   schemaVersion: 1,
+  registryRevision: FACTORY_REGISTRY_REVISION,
   providers: [{
     id: "p", name: "P", brand: "P",
     credential: { kind: "env", envVar: "X" },

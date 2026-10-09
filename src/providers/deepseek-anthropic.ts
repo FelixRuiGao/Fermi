@@ -7,7 +7,7 @@
  * automatic prefix cache (no `cache_control` needed); thinking is server-side
  * default-enabled — must explicitly send `{ type: "disabled" }` to turn off.
  *
- * Thinking effort is controlled via `output_config.effort: "high" | "max"`
+ * Thinking effort is controlled via `output_config.effort: "low" | "high" | "max"`
  * (max measurably expands the prompt server-side; budget_tokens is ignored).
  *
  * The vendor sends a placeholder `signature` field on thinking blocks (value
@@ -37,6 +37,6 @@ export class DeepSeekAnthropicProvider extends BaseAnthropicProvider {
     }
 
     kwargs["thinking"] = { type: "enabled" };
-    kwargs["output_config"] = { effort: level === "max" ? "max" : "high" };
+    kwargs["output_config"] = { effort: level === "max" ? "max" : level === "low" ? "low" : "high" };
   }
 }
