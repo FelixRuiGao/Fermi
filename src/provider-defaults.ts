@@ -1,13 +1,13 @@
 /**
  * Shared default base URLs for provider transports.
  *
- * Derived from the provider registry (FACTORY_PROVIDER_SPECS); the few valid
+ * Derived from the live provider registry (EFFECTIVE_PROVIDER_SPECS); the few valid
  * provider ids that are not picker presets (openai-chat, the kimi-ai alias)
  * keep explicit fallbacks here. Both Config resolution and provider subclasses
  * read this so transport migration doesn't drift into duplicated fallbacks.
  */
 
-import { EFFECTIVE_PROVIDER_SPECS } from "./registry-effective.js";
+import { EFFECTIVE_PROVIDER_SPECS, subscribeEffectiveRegistry } from "./registry-effective.js";
 
 /** Base-url fallbacks for provider ids that are valid but not picker presets. */
 const EXTRA_BASE_URLS: Record<string, string> = {
@@ -22,6 +22,14 @@ export const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = (() => {
   }
   return out;
 })();
+
+subscribeEffectiveRegistry(() => {
+  for (const id of Object.keys(PROVIDER_DEFAULT_BASE_URLS)) delete PROVIDER_DEFAULT_BASE_URLS[id];
+  Object.assign(PROVIDER_DEFAULT_BASE_URLS, EXTRA_BASE_URLS);
+  for (const spec of EFFECTIVE_PROVIDER_SPECS) {
+    if (spec.defaultBaseUrl !== undefined) PROVIDER_DEFAULT_BASE_URLS[spec.id] = spec.defaultBaseUrl;
+  }
+}, "derived");
 
 export function getProviderDefaultBaseUrl(providerId: string): string | undefined {
   return PROVIDER_DEFAULT_BASE_URLS[providerId];

@@ -6,6 +6,7 @@ import { OPENROUTER_VENDOR_BRAND } from "./model-registry.js";
 import {
   EFFECTIVE_MODEL_TABLES,
   EFFECTIVE_PROVIDER_SPECS,
+  subscribeEffectiveRegistry,
 } from "./registry-effective.js";
 
 function normalizeModelId(model: string): string {
@@ -55,6 +56,15 @@ const OPENROUTER_VENDOR_LABELS: Record<string, string> = OPENROUTER_VENDOR_BRAND
  * word-heuristic, same as before.
  */
 const MODEL_LABEL_OVERRIDES: Record<string, string> = EFFECTIVE_MODEL_TABLES.labelOverrides;
+
+subscribeEffectiveRegistry(() => {
+  for (const id of Object.keys(BRAND_LABEL_OVERRIDES)) delete BRAND_LABEL_OVERRIDES[id];
+  for (const id of Object.keys(PROVIDER_LABEL_OVERRIDES)) delete PROVIDER_LABEL_OVERRIDES[id];
+  for (const spec of EFFECTIVE_PROVIDER_SPECS) {
+    BRAND_LABEL_OVERRIDES[spec.id] = spec.brand;
+    if (spec.providerLabel !== undefined) PROVIDER_LABEL_OVERRIDES[spec.id] = spec.providerLabel;
+  }
+}, "derived");
 
 export interface ModelPresentation {
   brandKey: string;

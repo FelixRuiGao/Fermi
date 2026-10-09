@@ -1,9 +1,8 @@
 /**
  * Effective model/provider registry = factory defaults OR a validated, version-
- * gated remote override (integer table replacement — the table is chosen whole,
- * never merged; D8). Selected synchronously at module load so every consumer
- * derives from the effective tables with no mid-session swap (D9: default is
- * next-startup generation).
+ * gated remote override. Initialized from disk, then replaced atomically when
+ * a newer signed catalog arrives. Exported collections keep their identity so
+ * existing consumers see the new contents without restarting.
  *
  * Phase 5 only LOADS a locally-cached remote bundle if present and valid; the
  * network fetch + signature verification that POPULATE that cache live in
@@ -63,6 +62,7 @@ export interface EffectiveRegistry {
   models: ModelSpec[];
   providers: ProviderSpec[];
   source: "factory" | "remote";
+  revision: number;
 }
 
 /**
@@ -148,26 +148,79 @@ export function selectEffectiveRegistry(homeDir: string, appVersion: string): Ef
         // A previously signed catalog must not roll back a newer binary's
         // bundled model list. Date-style monotonic revisions are independent
         // of minAppVersion, which gates adapter compatibility rather than age.
-        if (registryRevision(cached.models) < FACTORY_REGISTRY_REVISION) {
-          return { models: FACTORY_MODEL_SPECS, providers: FACTORY_PROVIDER_SPECS, source: "factory" };
+        if (registryRevision(cached.models) <= FACTORY_REGISTRY_REVISION) {
+          return { models: FACTORY_MODEL_SPECS, providers: FACTORY_PROVIDER_SPECS, source: "factory", revision: FACTORY_REGISTRY_REVISION };
         }
         const { models, providers } = loadRemoteRegistry(cached, appVersion);
-        return { models, providers, source: "remote" };
+        return { models, providers, source: "remote", revision: registryRevision(cached.models) };
       } catch {
         // Corrupt / invalid / over-version cache → fall through to factory.
       }
     }
   }
-  return { models: FACTORY_MODEL_SPECS, providers: FACTORY_PROVIDER_SPECS, source: "factory" };
+  return { models: FACTORY_MODEL_SPECS, providers: FACTORY_PROVIDER_SPECS, source: "factory", revision: FACTORY_REGISTRY_REVISION };
 }
 
 const _effective = selectEffectiveRegistry(getFermiHomeDir(), VERSION);
 
 /** The model specs actually in effect this process (factory ∨ remote). */
-export const EFFECTIVE_MODEL_SPECS: ModelSpec[] = _effective.models;
+export const EFFECTIVE_MODEL_SPECS: ModelSpec[] = [..._effective.models];
 /** The provider specs actually in effect this process (factory ∨ remote). */
-export const EFFECTIVE_PROVIDER_SPECS: ProviderSpec[] = _effective.providers;
+export const EFFECTIVE_PROVIDER_SPECS: ProviderSpec[] = [..._effective.providers];
 /** Derived capability tables for the effective model specs. */
 export const EFFECTIVE_MODEL_TABLES: DerivedModelTables = deriveModelTables(_effective.models);
 /** Whether the effective registry came from the bundled defaults or a remote override. */
-export const EFFECTIVE_REGISTRY_SOURCE: "factory" | "remote" = _effective.source;
+export let EFFECTIVE_REGISTRY_SOURCE: "factory" | "remote" = _effective.source;
+
+let effectiveRevision = _effective.revision;
+let generation = 0;
+const derivedListeners = new Set<() => void>();
+const runtimeListeners = new Set<() => void>();
+
+export function getRegistryGeneration(): number { return generation; }
+export function getEffectiveRegistryRevision(): number { return effectiveRevision; }
+
+/** Derivations settle first; runtime/UI observers then see one coherent catalog. */
+export function subscribeEffectiveRegistry(listener: () => void, phase: "derived" | "runtime" = "runtime"): () => void {
+  const listeners = phase === "derived" ? derivedListeners : runtimeListeners;
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function replaceContents(next: { models: ModelSpec[]; providers: ProviderSpec[] }): void {
+  const tables = deriveModelTables(next.models);
+  EFFECTIVE_MODEL_SPECS.splice(0, EFFECTIVE_MODEL_SPECS.length, ...next.models);
+  EFFECTIVE_PROVIDER_SPECS.splice(0, EFFECTIVE_PROVIDER_SPECS.length, ...next.providers);
+  for (const key of ["contextLengths", "maxOutputTokens", "thinkingLevels", "labelOverrides"] as const) {
+    const target = EFFECTIVE_MODEL_TABLES[key];
+    for (const id of Object.keys(target)) delete target[id];
+    Object.assign(target, tables[key]);
+  }
+  for (const key of ["multimodal", "thinking", "noWebSearch", "extendedCache"] as const) {
+    const target = EFFECTIVE_MODEL_TABLES[key];
+    target.clear();
+    for (const id of tables[key]) target.add(id);
+  }
+  for (const listener of derivedListeners) listener();
+}
+
+/** Called only after signature verification; rejects rollback and duplicate revisions. */
+export function activateRemoteRegistry(bundle: RawRegistryBundle, appVersion = VERSION): boolean {
+  const next = loadRemoteRegistry(bundle, appVersion);
+  const revision = registryRevision(bundle.models);
+  if (revision <= effectiveRevision) return false;
+  const previous = { models: [...EFFECTIVE_MODEL_SPECS], providers: [...EFFECTIVE_PROVIDER_SPECS] };
+  try {
+    replaceContents(next);
+  } catch (error) {
+    replaceContents(previous);
+    throw error;
+  }
+  effectiveRevision = revision;
+  EFFECTIVE_REGISTRY_SOURCE = "remote";
+  generation++;
+  for (const listener of runtimeListeners) {
+    try { listener(); } catch { /* One UI observer cannot stop catalog delivery. */ }
+  }
+  return true;
+}

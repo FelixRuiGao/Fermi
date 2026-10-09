@@ -5,7 +5,7 @@
  * External shell env vars are treated only as import candidates during setup.
  */
 
-import { EFFECTIVE_PROVIDER_SPECS } from "./registry-effective.js";
+import { EFFECTIVE_PROVIDER_SPECS, subscribeEffectiveRegistry } from "./registry-effective.js";
 
 export interface ManagedProviderCredentialSpec {
   providerId: string;
@@ -35,6 +35,17 @@ export type ProviderCredentialKind = "env" | "managed" | "oauth" | "local";
 const CREDENTIAL_KIND_BY_PROVIDER = new Map<string, ProviderCredentialKind>(
   EFFECTIVE_PROVIDER_SPECS.map((spec) => [spec.id, spec.credential.kind] as const),
 );
+
+subscribeEffectiveRegistry(() => {
+  MANAGED_PROVIDER_CREDENTIAL_SPECS.splice(0, MANAGED_PROVIDER_CREDENTIAL_SPECS.length,
+    ...EFFECTIVE_PROVIDER_SPECS.flatMap(spec => spec.credential.kind === "managed"
+      ? [{ providerId: spec.id, internalEnvVar: spec.credential.internalEnvVar, externalEnvVars: [...spec.credential.externalEnvVars] }]
+      : []));
+  SPEC_BY_PROVIDER.clear();
+  for (const spec of MANAGED_PROVIDER_CREDENTIAL_SPECS) SPEC_BY_PROVIDER.set(spec.providerId, spec);
+  CREDENTIAL_KIND_BY_PROVIDER.clear();
+  for (const spec of EFFECTIVE_PROVIDER_SPECS) CREDENTIAL_KIND_BY_PROVIDER.set(spec.id, spec.credential.kind);
+}, "derived");
 
 /**
  * The credential kind of a registry provider, or undefined for providers not in

@@ -81,3 +81,7 @@ Fermi 允许你在会话中的任何时刻切换模型。Thinking level 会作�
 3. 对 OpenRouter，可使用其 API 提供的任意模型
 
 对 OpenAI（ChatGPT Login），使用 `fermi oauth` 或 `/codex` 认证。对 GitHub Copilot，先用 `/copilot` 登录。
+
+## 自动更新模型目录
+
+启动时立即检查远端模型表，运行中每 3 分钟检查一次。下载、验签和兼容性校验通过的新目录会自动生效，不需要重启；TUI、GUI 和 VS Code 均支持。正在进行的请求保持原配置，后续请求使用更新后的参数；当前选中的模型和手动配置保持。需要新 adapter 的型号仍要求相应版本的 Fermi。

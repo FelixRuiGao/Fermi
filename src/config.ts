@@ -31,8 +31,8 @@ import {
   resolveThinkingEncryption,
   resolveTransportProtocol,
 } from "./thinking-artifact.js";
-import { LEGACY_EXTENDED_CACHE_IDS } from "./model-registry.js";
-import { EFFECTIVE_MODEL_TABLES } from "./registry-effective.js";
+import { LEGACY_EXTENDED_CACHE_IDS, resolveProviderWireAxes } from "./model-registry.js";
+import { EFFECTIVE_MODEL_TABLES, EFFECTIVE_PROVIDER_SPECS, getRegistryGeneration, subscribeEffectiveRegistry } from "./registry-effective.js";
 
 export { FERMI_HOME_DIR } from "./home-path.js";
 
@@ -127,6 +127,11 @@ export const KNOWN_EXTENDED_CACHE_MODELS: Set<string> = new Set([
   ..._MODEL_TABLES.extendedCache,
   ...LEGACY_EXTENDED_CACHE_IDS,
 ]);
+
+subscribeEffectiveRegistry(() => {
+  KNOWN_EXTENDED_CACHE_MODELS.clear();
+  for (const id of [..._MODEL_TABLES.extendedCache, ...LEGACY_EXTENDED_CACHE_IDS]) KNOWN_EXTENDED_CACHE_MODELS.add(id);
+}, "derived");
 
 // ------------------------------------------------------------------
 // Max output tokens per model
@@ -544,6 +549,12 @@ export class Config {
   private _agentModels: Record<string, AgentModelEntry> = {};
   private _subAgentInheritMcp: boolean;
   private _subAgentInheritHooks: boolean;
+  private _registryGeneration = getRegistryGeneration();
+  private _preferenceProviderEnvVars: Record<string, string>;
+  private _preferenceLocalProviders: Record<string, LocalProviderConfig>;
+  private _generatedModels = new Map<string, Record<string, unknown>>();
+  private _removedModels = new Set<string>();
+  private _runtimePresets = new Map<string, { providerId: string; selectionKey: string; configKeys: string[] }>();
 
   constructor(opts: {
     providerEnvVars?: Record<string, string>;
@@ -559,10 +570,10 @@ export class Config {
     this._modelTiers = opts.modelTiers ?? {};
     this._subAgentInheritMcp = opts.subAgentInheritMcp ?? true;
     this._subAgentInheritHooks = opts.subAgentInheritHooks ?? true;
-    this._populateFromPreferences(
-      opts.providerEnvVars ?? {},
-      opts.localProviders ?? {},
-    );
+    this._preferenceProviderEnvVars = { ...(opts.providerEnvVars ?? {}) };
+    this._preferenceLocalProviders = { ...(opts.localProviders ?? {}) };
+    this._populateFromPreferences(this._preferenceProviderEnvVars, this._preferenceLocalProviders);
+    this._generatedModels = new Map(Object.entries(this._rawModels));
   }
 
   get subAgentInheritMcp(): boolean {
@@ -659,6 +670,8 @@ export class Config {
   private _buildModel(name: string, cfg: Record<string, unknown>): ModelConfig {
     const provider = requireConfigStringField(name, cfg, "provider");
     const modelName = requireConfigStringField(name, cfg, "model");
+    const providerSpec = EFFECTIVE_PROVIDER_SPECS.find(spec => spec.id === provider.toLowerCase());
+    const wire = providerSpec ? resolveProviderWireAxes(providerSpec.wire, modelName) : undefined;
     const apiKeyRaw = requireConfigStringField(name, cfg, "api_key");
     const baseUrl = optionalConfigStringField(name, cfg, "base_url") || getProviderDefaultBaseUrl(provider);
     const apiKeyEnv = parseEnvRef(apiKeyRaw);
@@ -726,18 +739,18 @@ export class Config {
       cfg,
       "transport_protocol",
       ["responses", "anthropic", "chat"] as const,
-    ) ?? resolveTransportProtocol(provider, modelName);
+    ) ?? wire?.transport ?? resolveTransportProtocol(provider, modelName);
     const thinkingEncryption = optionalConfigEnumField(
       name,
       cfg,
       "thinking_encryption",
       ["openai", "anthropic", "none"] as const,
-    ) ?? resolveThinkingEncryption(provider, modelName);
+    ) ?? wire?.encryption ?? resolveThinkingEncryption(provider, modelName);
     const sealedSchemaOverride = optionalConfigStringField(name, cfg, "sealed_schema");
     const sealedSchema =
       sealedSchemaOverride !== undefined
         ? (sealedSchemaOverride === "" ? null : sealedSchemaOverride)
-        : resolveSealedSchema(provider, modelName);
+        : wire ? wire.sealedSchema : resolveSealedSchema(provider, modelName);
     const guidance =
       optionalConfigEnumField(name, cfg, "guidance", ["standard", "detailed"] as const) ??
       resolveGuidanceTier(modelName);
@@ -774,6 +787,7 @@ export class Config {
   }
 
   getModel(name: string): ModelConfig {
+    this._ensureRegistryCurrent();
     const cached = this._models.get(name);
     if (cached) return cached;
 
@@ -801,6 +815,7 @@ export class Config {
   }
 
   get modelNames(): string[] {
+    this._ensureRegistryCurrent();
     return Object.keys(this._rawModels);
   }
 
@@ -809,6 +824,7 @@ export class Config {
    * Useful for UI that needs to show missing API keys instead of throwing.
    */
   listModelEntries(): ModelConfigEntry[] {
+    this._ensureRegistryCurrent();
     const out: ModelConfigEntry[] = [];
     for (const [name, cfg] of Object.entries(this._rawModels)) {
       const provider = typeof cfg["provider"] === "string" ? cfg["provider"] : "";
@@ -827,6 +843,7 @@ export class Config {
 
   /** Find the first model config name matching provider + model ID exactly. */
   findModelConfigName(provider: string, model: string): string | undefined {
+    this._ensureRegistryCurrent();
     for (const [name, cfg] of Object.entries(this._rawModels)) {
       if (cfg["provider"] === provider && cfg["model"] === model) {
         return name;
@@ -839,14 +856,62 @@ export class Config {
    * Insert or replace a raw model config at runtime (in-memory only).
    */
   upsertModelRaw(name: string, cfg: Record<string, unknown>): void {
+    this._ensureRegistryCurrent();
+    this._generatedModels.delete(name);
+    this._runtimePresets.delete(name);
+    this._removedModels.delete(name);
     this._rawModels[name] = { ...cfg };
     this._models.delete(name);
   }
 
   /** Remove a model from the runtime config (custom-provider management). */
   removeModel(name: string): void {
+    this._ensureRegistryCurrent();
+    this._generatedModels.delete(name);
+    this._runtimePresets.delete(name);
+    this._removedModels.add(name);
     delete this._rawModels[name];
     this._models.delete(name);
+  }
+
+  /** Runtime entries made by /model follow their preset; explicit user overrides do not. */
+  bindModelToPreset(name: string, providerId: string, selectionKey: string): void {
+    const preset = findProviderPresetModel(providerId, selectionKey);
+    if (preset) this._runtimePresets.set(name, { providerId, selectionKey, configKeys: Object.keys(preset.config ?? {}) });
+  }
+
+  /** Lazy invalidation avoids retaining finished child sessions in global listeners. */
+  private _ensureRegistryCurrent(): void {
+    const generation = getRegistryGeneration();
+    if (generation === this._registryGeneration) return;
+    const overrides = Object.fromEntries(Object.entries(this._rawModels)
+      .filter(([name, value]) => this._generatedModels.get(name) !== value));
+    this._rawModels = {};
+    this._populateFromPreferences(this._preferenceProviderEnvVars, this._preferenceLocalProviders);
+    this._generatedModels = new Map(Object.entries(this._rawModels));
+    for (const [name, binding] of this._runtimePresets) {
+      const raw = overrides[name];
+      if (!raw) continue;
+      const preset = findProviderPresetModel(binding.providerId, binding.selectionKey);
+      if (preset) {
+        const refreshed = { ...raw };
+        for (const key of binding.configKeys) delete refreshed[key];
+        Object.assign(refreshed, preset.config ?? {}, { model: preset.id });
+        overrides[name] = refreshed;
+        binding.configKeys = Object.keys(preset.config ?? {});
+      }
+      for (const model of findProviderPreset(binding.providerId)?.models ?? []) {
+        const presetName = `${binding.providerId}:${model.key}`;
+        if (this._rawModels[presetName]) continue;
+        const generated = { provider: binding.providerId, model: model.id, api_key: raw["api_key"], ...(model.config ?? {}) };
+        this._rawModels[presetName] = generated;
+        this._generatedModels.set(presetName, generated);
+      }
+    }
+    Object.assign(this._rawModels, overrides);
+    for (const name of this._removedModels) delete this._rawModels[name];
+    this._models.clear();
+    this._registryGeneration = generation;
   }
 
   /**

@@ -31,6 +31,7 @@ import { validateSummarizeHintLevels } from "../settings.js";
 import { InitService } from "../init-service.js";
 import { loadDotenv } from "../dotenv.js";
 import { getFermiHomeDir } from "../home-path.js";
+import { subscribeEffectiveRegistry } from "../registry-effective.js";
 import type {
   SessionMetaPayload as MetaPayload,
   SessionStatusPayload as StatusPayload,
@@ -605,6 +606,16 @@ export function registerSessionRpc(opts: SessionRpcOptions): { dispose: () => vo
   const { session, server, workDir, onShutdown } = opts;
   let sessionDir = opts.sessionDir;
   const disposers: Array<() => void> = [];
+
+  disposers.push(subscribeEffectiveRegistry(() => {
+    try {
+      if (!session.currentTurnRunning) session.refreshRegistryModelConfig?.();
+    } catch { /* Missing credentials surface on use; the catalog still refreshes. */ }
+    server.emit("model.changed", {
+      name: session.currentModelConfigName,
+      displayLabel: currentModelDisplayLabel(session),
+    });
+  }));
 
 
   const getCurrentSessionDir = (): string | null => {

@@ -225,15 +225,21 @@ There are two local layers: the **project-store** layer (`~/.fermi/projects/<slu
 
 ## Automatic model-registry refresh
 
-TUI startup checks the signed registry cache with a 6-hour refresh interval.
-A successful background download takes effect on the next startup; there is
-no running-session hot swap. GUI/VS Code server startup does not currently
-trigger the background refresh. Failures keep the previous cache silently.
+TUI, init, and GUI/VS Code server startup check the signed catalog immediately,
+even if the disk cache is fresh. Checks repeat every **3 minutes** while running.
+A verified newer revision is applied automatically in the current process. The
+model picker, capability tables, provider defaults, and Config caches refresh
+together. In-flight requests keep their original config; the next model request
+uses updated settings, preserving the selected model and explicit overrides.
+Failures retain the last-good catalog. Repeated checks share one in-flight fetch.
+This behavior does not add a settings.json field; FERMI_REGISTRY_NO_REMOTE=1
+still disables remote delivery. Program auto_update is a separate setting.
 
 Every catalog publication must update **both JSON files and their Ed25519
-signatures**: run `bun run scripts/sign-registry.ts fermi-registry-key.pem`,
-verify, then commit/push the JSON and `.sig` files together. The private key
-never goes into Git. Builds and registry tests verify the actual signatures.
+signatures**: first increase registryRevision in both JSON files, then run
+`bun run scripts/sign-registry.ts fermi-registry-key.pem`, verify, and commit/push
+the JSON and `.sig` files together. The private key never goes into Git.
+Builds and registry tests verify the actual signatures.
 Models needing a newer adapter are excluded from remote tables by
 `minAppVersion`; upgrading catalog data cannot upgrade installed runtime code.
 
@@ -260,8 +266,8 @@ Use `/model` to view actual choices; provider access can depend on your plan.
 | OpenRouter | Current presets verified against its own model catalog; native and gateway IDs/limits may differ. |
 | Ollama/oMLX/LM Studio | Discover installed models via `/v1/models`; no fixed list of “latest local models”. |
 
-The two registry files share a monotonic `registryRevision`; remote caches older
-than the factory catalog are ignored, and mismatched pairs are rejected.
+The two registry files share a monotonic `registryRevision`; remote caches at or below
+the factory revision are ignored, and mismatched pairs are rejected.
 
 New models requiring adapter changes are gated at Fermi 0.4.2 for remote registry
 delivery; bundled factory data is available in the build containing those changes.

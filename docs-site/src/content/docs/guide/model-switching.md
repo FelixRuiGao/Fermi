@@ -81,3 +81,7 @@ Models come from the providers you configure during `fermi init`. To add more:
 3. For OpenRouter, any model available through their API can be used
 
 For OpenAI (ChatGPT Login), use `fermi oauth` or `/codex` to authenticate. For GitHub Copilot, use `/copilot` to log in first.
+
+## Automatic catalog updates
+
+Fermi checks the remote catalog immediately on startup and every 3 minutes while running. A newer catalog switches live after download, signature verification, and compatibility validation. TUI, GUI, and VS Code support this without a restart. In-flight requests retain their original configuration; subsequent requests use the refreshed settings. Your selected model and explicit overrides remain intact. Models requiring new adapters still need a compatible Fermi version.

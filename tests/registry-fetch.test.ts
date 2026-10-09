@@ -20,12 +20,12 @@ const sig = (text: string) => cryptoSign(null, Buffer.from(text), privateKey).to
 
 const MODELS = JSON.stringify({
   schemaVersion: 1,
-  registryRevision: FACTORY_REGISTRY_REVISION,
+  registryRevision: FACTORY_REGISTRY_REVISION + 1,
   models: [{ id: "m", displayName: "M", contextLength: 1000, multimodal: false, thinkingLevels: [], webSearch: true }],
 });
 const PROVIDERS = JSON.stringify({
   schemaVersion: 1,
-  registryRevision: FACTORY_REGISTRY_REVISION,
+  registryRevision: FACTORY_REGISTRY_REVISION + 1,
   providers: [{
     id: "p", name: "P", brand: "P",
     credential: { kind: "env", envVar: "X" },

@@ -76,6 +76,7 @@ describe("OpenTUI runtime bootstrap", () => {
       homeDir: fermiHome,
       projectPath: projectRoot,
       initHighlighter: false,
+      refreshRegistry: async () => {},
     };
     const rt1 = await bootstrapOpenTuiRuntime(bootstrapOpts);
     (rt1.session as any)._turnCount = 4;

@@ -169,6 +169,7 @@ export class Agent {
 
     const result = await asyncRunToolLoop({
       provider: this._provider,
+      getProvider: () => this._provider,
       getMessages: runtime.getMessages,
       appendEntry: runtime.appendEntry,
       allocId: runtime.allocId,
@@ -202,6 +203,7 @@ export class Agent {
     return asyncRunToolLoop({
       ...opts,
       provider: this._provider,
+      getProvider: () => this._provider,
       tools: this.tools.length > 0 ? this.tools : undefined,
       toolExecutors: opts.toolExecutors ?? {},
       maxRounds: this.maxToolRounds,
@@ -217,7 +219,7 @@ export class Agent {
  */
 export type AgentRunWithMessagesOptions = Omit<
   ToolLoopOptions,
-  "provider" | "tools" | "toolsMap" | "maxRounds" | "agentName" | "builtinExecutor" | "toolExecutors"
+  "provider" | "getProvider" | "tools" | "toolsMap" | "maxRounds" | "agentName" | "builtinExecutor" | "toolExecutors"
 > & {
   toolExecutors?: Record<string, ToolExecutor>;
 };

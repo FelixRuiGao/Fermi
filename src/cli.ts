@@ -26,9 +26,9 @@ import {
 import { loadDotenv } from "./dotenv.js";
 import { applySystemProxyToEnv } from "./system-proxy.js";
 import { getFermiHomeDir } from "./home-path.js";
-import { startBackgroundRegistryRefresh } from "./registry-fetch.js";
 import { checkForUpdates, applyStaged, setUpdateStateGetter, setRelaunchCallback } from "./update-check.js";
 import { VERSION } from "./version.js";
+import { startBackgroundRegistryRefresh } from "./registry-fetch.js";
 import { hasAnyManagedCredential } from "./managed-provider-credentials.js";
 import { findSessionById } from "./session-resume.js";
 
@@ -52,6 +52,7 @@ export interface MainDeps {
   findSessionById?: typeof findSessionById;
   hasAnyManagedCredential?: typeof hasAnyManagedCredential;
   hasGitHubTokens?: () => boolean;
+  refreshRegistry?: (homeDir: string) => Promise<unknown>;
 }
 
 const VALUE_FLAGS = new Set([
@@ -286,6 +287,7 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
     .description("Initialize Fermi configuration")
     .action(async () => {
       ranSubcommand = true;
+      await (deps.refreshRegistry ? deps.refreshRegistry(homeDir) : startBackgroundRegistryRefresh({ homeDir }).ready);
       const runInitWizard = deps.runInitWizard ?? (await import("./init-wizard.js")).runInitWizard;
       await runInitWizard();
     });
@@ -425,12 +427,9 @@ export async function main(argv: string[] = process.argv, deps: MainDeps = {}): 
     console.debug = (...args: unknown[]) => origDebug("[DEBUG]", ...args);
   }
 
+  await (deps.refreshRegistry ? deps.refreshRegistry(homeDir) : startBackgroundRegistryRefresh({ homeDir }).ready);
   const globalSettings = await ensureProvidersConfigured(homeDir, deps);
   await warnIfCopilotCredentialsMissing(globalSettings, deps.hasGitHubTokens);
-
-  // Best-effort, non-blocking: refresh the remote model registry for NEXT
-  // startup. No-ops until a signing public key is embedded (registry-fetch.ts).
-  startBackgroundRegistryRefresh();
 
   await (deps.launchTui ?? launchTuiFromDefaultEntry)();
 }

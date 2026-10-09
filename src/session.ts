@@ -31,7 +31,8 @@ import type {
 import { createEphemeralLogState } from "./ephemeral-log.js";
 import { isCompactMarker, allocateContextId, stripContextTags, ContextTagStripBuffer } from "./context-rendering.js";
 import { estimateEntryTokens, generateShowContext } from "./show-context.js";
-import { getThinkingLevels, getHighestThinkingLevel, getModelMaxOutputTokens, type Config, type ModelConfig } from "./config.js";
+import { getThinkingLevels, getHighestThinkingLevel, getModelMaxOutputTokens, Config, type ModelConfig } from "./config.js";
+import { getRegistryGeneration } from "./registry-effective.js";
 import type { MCPClientManager } from "./mcp-client.js";
 import { ProgressEvent, type ProgressLevel, type ProgressReporter } from "./progress.js";
 import { ToolResult } from "./providers/base.js";
@@ -3294,6 +3295,21 @@ export class Session {
     this._rebuildSystemPromptForModelChange();
   }
 
+  private _modelRegistryGeneration = -1;
+
+  /** Keeps the selected model and in-flight requests stable across catalog updates. */
+  refreshRegistryModelConfig(): void {
+    const generation = getRegistryGeneration();
+    if (generation === this._modelRegistryGeneration || !(this.config instanceof Config)) return;
+    const name = this.currentModelConfigName;
+    // A retired model can finish its existing conversation; do not silently
+    // select a different provider/model on the user's behalf.
+    if (this.config.modelNames.includes(name) && this.config.getModel(name) !== this.primaryAgent.modelConfig) {
+      this.reloadCurrentModelConfig();
+    }
+    this._modelRegistryGeneration = generation;
+  }
+
   /**
    * Rebuild the cached system prompt after a model change so the
    * model-family overlay layer tracks the current model. Cheap to do
@@ -5851,6 +5867,8 @@ export class Session {
     };
 
     return this.primaryAgent.asyncRunWithMessages({
+      beforeProviderRequest: () => this.refreshRegistryModelConfig(),
+      getThinkingLevel: () => this._thinkingLevel === "none" ? undefined : this._thinkingLevel,
       getMessages,
       appendEntry,
       allocId,

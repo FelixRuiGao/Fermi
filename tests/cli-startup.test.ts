@@ -51,6 +51,7 @@ function startupDeps(extra: MainDeps = {}): MainDeps {
       serverCalls.push(opts);
     },
     hasGitHubTokens: () => hasGitHubTokens,
+    refreshRegistry: async () => { events.push("registry"); },
     ...extra,
   };
 }
@@ -77,7 +78,7 @@ describe("CLI startup", () => {
   it("loads dotenv before dispatching the init subcommand", async () => {
     await main(["node", "fermi", "init"], startupDeps());
 
-    expect(events).toEqual(["dotenv", "init:loaded"]);
+    expect(events).toEqual(["dotenv", "registry", "init:loaded"]);
   });
 
   it("runs startup preflight before launching the TUI", async () => {
@@ -100,7 +101,7 @@ describe("CLI startup", () => {
       "dotenv",
       "applyStaged",
       "checkForUpdates",
-
+      "registry",
       "launch",
     ]);
   });
@@ -143,6 +144,7 @@ describe("CLI startup", () => {
       "dotenv",
       "applyStaged",
       "checkForUpdates",
+      "registry",
       "init:loaded",
 
       "launch",
@@ -202,6 +204,7 @@ describe("CLI startup", () => {
     expect(events).toEqual([
       "dotenv",
       "applyStaged",
+      "registry",
       `launch:${sessionDir}`,
     ]);
   });
@@ -224,7 +227,7 @@ describe("CLI startup", () => {
       }));
 
       expect(warnSpy).toHaveBeenCalledWith("Warning: GitHub Copilot credentials missing.");
-      expect(events).toEqual(["dotenv", "applyStaged", "launch"]);
+      expect(events).toEqual(["dotenv", "applyStaged", "registry", "launch"]);
     } finally {
       warnSpy.mockRestore();
     }
@@ -237,7 +240,7 @@ describe("CLI startup", () => {
       },
     }));
 
-    expect(events).toEqual(["dotenv", "init:loaded"]);
+    expect(events).toEqual(["dotenv", "registry", "init:loaded"]);
   });
 
   it("keeps -v, -V, and --version working at the compiled entry", () => {

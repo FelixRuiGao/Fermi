@@ -39,6 +39,8 @@ import { getFermiHomeDir } from "../home-path.js";
 import type { PersistedModelSelection } from "../model-selection.js";
 import { applyPersistedModelSelectionToSession } from "../model-restore.js";
 import { hasAnyManagedCredential } from "../managed-provider-credentials.js";
+import { startBackgroundRegistryRefresh } from "../registry-fetch.js";
+import { applySystemProxyToEnv } from "../system-proxy.js";
 
 export interface ServerModeOptions {
   readonly workDir: string;
@@ -64,11 +66,14 @@ function identifyPrimaryAgent(agents: Record<string, Agent>, name = "main"): Age
 export async function runServerMode(opts: ServerModeOptions): Promise<void> {
   const homeDir = getFermiHomeDir();
   loadDotenv(homeDir);
+  applySystemProxyToEnv();
 
   const projectPath = opts.workDir;
   if (!existsSync(projectPath) || !statSync(projectPath).isDirectory()) {
     throw new Error(`work-dir does not exist or is not a directory: ${projectPath}`);
   }
+  const registryRefresh = startBackgroundRegistryRefresh({ homeDir });
+  await registryRefresh.ready;
 
   // The GUI subprocess wants its working directory to match the project.
   // This affects relative path resolution in tools and bash.
@@ -253,6 +258,7 @@ export async function runServerMode(opts: ServerModeOptions): Promise<void> {
   const shutdown = async (): Promise<void> => {
     if (shutdownRequested) return;
     shutdownRequested = true;
+    registryRefresh.stop();
     try {
       await session.close();
     } catch (err) {

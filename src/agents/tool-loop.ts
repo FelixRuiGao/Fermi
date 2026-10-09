@@ -680,6 +680,10 @@ export type ResolveToolCallVisibilityCallback = (
 
 export interface ToolLoopOptions {
   provider: BaseProvider;
+  /** Resolve refreshed provider/config only between requests, never in flight. */
+  beforeProviderRequest?: () => void;
+  getProvider?: () => BaseProvider;
+  getThinkingLevel?: () => string | undefined;
   /**
    * Returns the current API message sequence for the provider.
    * Called before each provider call.
@@ -1418,7 +1422,9 @@ export async function asyncRunToolLoop(
         throw new DOMException("The operation was aborted.", "AbortError");
       }
       try {
-        resp = await provider.asyncSendMessage(
+        opts.beforeProviderRequest?.();
+        const activeProvider = opts.getProvider?.() ?? provider;
+        resp = await activeProvider.asyncSendMessage(
           getMessages() as any,
           tools?.length ? tools : undefined,
           {
@@ -1427,7 +1433,7 @@ export async function asyncRunToolLoop(
             onToolCallPartial: wrappedToolCallPartial,
             onToolCallClosed: wrappedToolCallClosed,
             signal,
-            thinkingLevel,
+            thinkingLevel: opts.getThinkingLevel ? opts.getThinkingLevel() : thinkingLevel,
             promptCacheKey,
           },
         );

@@ -17,10 +17,13 @@ signed remote registry to older binaries without these gates.
 
 Catalog updates must be signed with `scripts/sign-registry.ts` and pushed with
 their `.sig` files. Builds and tests verify these signatures against the embedded
-public key. TUI refresh is checked at startup with a 6-hour cache interval and
-takes effect on the next launch. It is not a running-session hot swap. A newer
-model table cannot replace an older binary’s adapters; `minAppVersion` still
-applies. Server-mode clients currently do not trigger the refresh.
+public key. TUI and GUI/VS Code server startup check immediately, even with a
+fresh cache, then poll every three minutes. Verified newer revisions are applied
+to the live catalog automatically. Existing requests finish with their original
+config; subsequent requests refresh provider settings without changing the
+selected model. Duplicate revisions do not rebuild clients. Publication must
+increase the shared registryRevision; same/older revisions cannot replace the
+bundled or current generation. minAppVersion continues to gate adapter compatibility.
 
 ## OpenAI API and ChatGPT Login
 

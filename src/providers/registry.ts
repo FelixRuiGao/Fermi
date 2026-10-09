@@ -50,15 +50,10 @@ const EXTRA_PROVIDER_CLASSES: Record<string, ProviderClassKind> = {
   "kimi-ai": "kimi-anthropic",
 };
 
-const PROVIDER_CLASS_BY_ID: Map<string, ProviderClassKind> = (() => {
-  const m = new Map<string, ProviderClassKind>(Object.entries(EXTRA_PROVIDER_CLASSES));
-  for (const spec of EFFECTIVE_PROVIDER_SPECS) m.set(spec.id, spec.providerClass);
-  return m;
-})();
-
 export function createProvider(config: ModelConfig): BaseProvider {
   const provider = config.provider.toLowerCase();
-  const providerClass = PROVIDER_CLASS_BY_ID.get(provider);
+  const providerClass = EFFECTIVE_PROVIDER_SPECS.find(spec => spec.id === provider)?.providerClass
+    ?? EXTRA_PROVIDER_CLASSES[provider];
   if (providerClass) {
     return new CTOR_BY_CLASS[providerClass](config);
   }
@@ -70,6 +65,6 @@ export function createProvider(config: ModelConfig): BaseProvider {
       ? new AnthropicProvider(config)
       : new OpenAIChatProvider(config);
   }
-  const supported = [...PROVIDER_CLASS_BY_ID.keys()].sort().join(", ");
+  const supported = [...new Set([...EFFECTIVE_PROVIDER_SPECS.map(spec => spec.id), ...Object.keys(EXTRA_PROVIDER_CLASSES)])].sort().join(", ");
   throw new Error(`Unknown provider '${config.provider}'. Supported: ${supported}`);
 }

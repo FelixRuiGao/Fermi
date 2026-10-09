@@ -2,7 +2,7 @@
  * Shared provider/model catalog used by setup and runtime model picker.
  *
  * PROVIDER_PRESETS is now DERIVED from the provider registry
- * (assets/model-registry/providers.json via FACTORY_PROVIDER_SPECS). This file
+ * (assets/model-registry/providers.json via EFFECTIVE_PROVIDER_SPECS). This file
  * keeps the preset shape + the lookup helpers consumers rely on; the data lives
  * in the registry. See Docs/provider-model-maintainability-plan.md.
  */
@@ -17,6 +17,7 @@ import {
 import {
   EFFECTIVE_MODEL_SPECS,
   EFFECTIVE_PROVIDER_SPECS,
+  subscribeEffectiveRegistry,
 } from "./registry-effective.js";
 
 export interface ProviderPresetModel {
@@ -52,7 +53,7 @@ export interface ProviderPreset {
 }
 
 /** model id (incl. alias spellings) → displayName, for inheriting labels on spec refs. */
-const DISPLAY_NAME_BY_ID: ReadonlyMap<string, string> = new Map(
+const DISPLAY_NAME_BY_ID = new Map(
   EFFECTIVE_MODEL_SPECS.flatMap((s) => modelSpecIds(s).map((id) => [id, s.displayName] as const)),
 );
 
@@ -94,6 +95,14 @@ export function deriveProviderPresets(specs: readonly ProviderSpec[]): ProviderP
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = deriveProviderPresets(EFFECTIVE_PROVIDER_SPECS);
+
+subscribeEffectiveRegistry(() => {
+  DISPLAY_NAME_BY_ID.clear();
+  for (const spec of EFFECTIVE_MODEL_SPECS) {
+    for (const id of modelSpecIds(spec)) DISPLAY_NAME_BY_ID.set(id, spec.displayName);
+  }
+  PROVIDER_PRESETS.splice(0, PROVIDER_PRESETS.length, ...deriveProviderPresets(EFFECTIVE_PROVIDER_SPECS));
+}, "derived");
 
 export function findProviderPreset(providerId: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((preset) => preset.id === providerId);

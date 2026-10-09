@@ -17,6 +17,8 @@ import {
 } from "../src/persistence.js";
 import { loadDotenv } from "../src/dotenv.js";
 import { getFermiHomeDir } from "../src/home-path.js";
+import { startBackgroundRegistryRefresh } from "../src/registry-fetch.js";
+import { applySystemProxyToEnv } from "../src/system-proxy.js";
 import {
   buildDefaultRegistry,
   registerSkillCommands,
@@ -97,9 +99,15 @@ export async function bootstrapOpenTuiRuntime(opts?: {
   projectPath?: string;
   /** Deprecated: Shiki now always initializes lazily on first highlight. */
   initHighlighter?: boolean;
+  /** Startup refresh injection for isolated bootstrap tests. */
+  refreshRegistry?: (homeDir: string) => Promise<unknown>;
 }): Promise<OpenTuiRuntime> {
   const homeDir = opts?.homeDir ?? getFermiHomeDir();
   loadDotenv(homeDir);
+  applySystemProxyToEnv();
+  await (opts?.refreshRegistry
+    ? opts.refreshRegistry(homeDir)
+    : startBackgroundRegistryRefresh({ homeDir }).ready);
 
   const verbose = opts?.verbose ?? false;
   const projectPath = opts?.projectPath ?? process.cwd();

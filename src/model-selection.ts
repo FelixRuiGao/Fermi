@@ -400,6 +400,7 @@ export function resolveModelSelection(
             api_key: keySource,
           },
     );
+    if (presetModel) config.bindModelToPreset?.(runtimeName, parsed.provider, selectionKey);
     selectedConfigName = runtimeName;
   }
 
