@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import {
   fetchAndCacheRemoteRegistry,
@@ -55,6 +56,33 @@ describe("verifyDetachedEd25519", () => {
     const data = readFileSync(new URL(`../assets/model-registry/${name}.json`, import.meta.url));
     const signature = readFileSync(new URL(`../assets/model-registry/${name}.json.sig`, import.meta.url), "utf8");
     expect(verifyDetachedEd25519(data, signature.trim(), REGISTRY_PUBLIC_KEY_PEM)).toBe(true);
+  });
+
+  it("preserves signed registry bytes in a Git checkout with Windows line-ending conversion", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fermi-registry-checkout-"));
+    try {
+      const assets = join(repo, "assets", "model-registry");
+      mkdirSync(assets, { recursive: true });
+      cpSync(new URL("../.gitattributes", import.meta.url), join(repo, ".gitattributes"));
+      for (const name of ["models", "providers"]) {
+        for (const suffix of [".json", ".json.sig"]) {
+          cpSync(new URL(`../assets/model-registry/${name}${suffix}`, import.meta.url), join(assets, `${name}${suffix}`));
+        }
+      }
+      const git = (...args: string[]) => execFileSync("git", ["-C", repo, "-c", "core.autocrlf=true", ...args], { stdio: "pipe" });
+      git("init", "--quiet");
+      git("add", ".gitattributes", "assets");
+      const checkout = join(repo, "checkout");
+      git("checkout-index", "--all", "--prefix", checkout + sep);
+      for (const name of ["models", "providers"]) {
+        const data = readFileSync(join(checkout, "assets", "model-registry", `${name}.json`));
+        const signature = readFileSync(join(checkout, "assets", "model-registry", `${name}.json.sig`), "utf8");
+        expect(data.equals(readFileSync(new URL(`../assets/model-registry/${name}.json`, import.meta.url)))).toBe(true);
+        expect(verifyDetachedEd25519(data, signature.trim(), REGISTRY_PUBLIC_KEY_PEM)).toBe(true);
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("accepts a valid signature, rejects tampering and an empty key", () => {

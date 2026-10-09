@@ -1,0 +1,3 @@
+# Detached signatures cover the JSON bytes; Windows checkouts must preserve LF.
+assets/model-registry/*.json text eol=lf
+assets/model-registry/*.json.sig text eol=lf

@@ -17,7 +17,9 @@ signed remote registry to older binaries without these gates.
 
 Catalog updates must be signed with `scripts/sign-registry.ts` and pushed with
 their `.sig` files. Builds and tests verify these signatures against the embedded
-public key. TUI and GUI/VS Code server startup check immediately, even with a
+public key. `.gitattributes` keeps signed registry files at LF on all platforms;
+Git's Windows line-ending conversion must not alter the signed JSON bytes.
+TUI and GUI/VS Code server startup check immediately, even with a
 fresh cache, then poll every three minutes. Verified newer revisions are applied
 to the live catalog automatically. Existing requests finish with their original
 config; subsequent requests refresh provider settings without changing the

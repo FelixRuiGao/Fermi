@@ -240,6 +240,8 @@ signatures**: first increase registryRevision in both JSON files, then run
 `bun run scripts/sign-registry.ts fermi-registry-key.pem`, verify, and commit/push
 the JSON and `.sig` files together. The private key never goes into Git.
 Builds and registry tests verify the actual signatures.
+`.gitattributes` preserves LF in the signed registry files on all platforms,
+including Windows checkouts with core.autocrlf=true.
 Models needing a newer adapter are excluded from remote tables by
 `minAppVersion`; upgrading catalog data cannot upgrade installed runtime code.
 

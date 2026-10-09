@@ -16,6 +16,7 @@ Release notes. A missing or empty section fails CI.
 - Model catalogs now check immediately on startup and every 3 minutes in TUI, init, and GUI/VS Code server mode. Verified newer catalogs switch live, refreshing model choices and configuration without a restart; active requests finish safely and the next request uses the new settings.
 
 - Fixed remote model-registry delivery: re-signed the updated JSON tables; stale signatures had caused clients to reject them and retain the previous catalog. Builds and tests now verify the actual registry signatures.
+- Fixed Windows builds rejecting valid registry signatures after Git converted signed JSON to CRLF; registry files now retain LF on every platform, with a Git checkout regression test.
 
 - Updated all 22 provider endpoints against current official catalogs: GPT-6.1/6/5.6, Claude 5.5/Fable, Qwen3.8, Kimi K3/K2.8 Coding, GLM-5.3/Flash/FlashX, MiniMax M3.1 Preview, DeepSeek V4.1 Flash, and MiMo V2.6; expanded verified OpenRouter presets and removed retired endpoint-specific choices.
 - Fixed current reasoning, sampling, caching, Qwen Responses paths/output budgets, and Copilot Gemini/Kimi Chat routing. GLM/OpenRouter vendor parameters now reach the Node SDK request at the correct top level.
